@@ -23,6 +23,23 @@ TypeScript cannot handle type information for `.vue` imports by default, so we r
 
 See [Vite Configuration Reference](https://vite.dev/config/).
 
+## Auth (Supabase)
+
+Login and signup use Supabase Auth. On signup, the user is also inserted into `public.users` with the same `id` as the auth user.
+
+**Env:** Copy `.env.example` to `.env.local` and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
+
+**RLS for `public.users`:** If Row Level Security is enabled, add a policy so authenticated users can insert their own row, e.g.:
+
+```sql
+CREATE POLICY "Users can insert own row"
+ON public.users FOR INSERT
+TO authenticated
+WITH CHECK (auth.uid() = id);
+```
+
+(Adjust or add SELECT/UPDATE policies as needed.)
+
 ## Project Setup
 
 ```sh
