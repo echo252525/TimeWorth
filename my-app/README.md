@@ -23,22 +23,13 @@ TypeScript cannot handle type information for `.vue` imports by default, so we r
 
 See [Vite Configuration Reference](https://vite.dev/config/).
 
-## Auth (Supabase)
+## Auth & DB (Supabase)
 
-Login and signup use Supabase Auth. On signup, the user is also inserted into `public.users` with the same `id` as the auth user.
+**TimeWorth** uses Supabase Auth for login/signup. On signup, an row is inserted into `public.employee` (same `id` as auth user). Passwords are not stored in `employee`; auth is handled by Supabase.
 
-**Env:** Copy `.env.example` to `.env.local` and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
+**Env:** Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `.env.local`.
 
-**RLS for `public.users`:** If Row Level Security is enabled, add a policy so authenticated users can insert their own row, e.g.:
-
-```sql
-CREATE POLICY "Users can insert own row"
-ON public.users FOR INSERT
-TO authenticated
-WITH CHECK (auth.uid() = id);
-```
-
-(Adjust or add SELECT/UPDATE policies as needed.)
+**Schema:** See `supabase-schema.sql` for the `employee` table. If you already have a table with a `password` column, make it nullable or drop it—the app does not write passwords to the DB.
 
 ## Project Setup
 

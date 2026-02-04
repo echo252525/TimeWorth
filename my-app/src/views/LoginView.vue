@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
+import '../assets/auth.css'
 
 const router = useRouter()
 const { signIn, isLoading, error } = useAuth()
-
 const form = reactive({ email: '', password: '' })
 
 async function onSubmit() {
   const { error: err } = await signIn(form.email, form.password)
-  if (!err) router.push('/')
+  if (!err) router.push('/dashboard')
 }
 </script>
 
@@ -21,123 +21,18 @@ async function onSubmit() {
       <form @submit.prevent="onSubmit" class="auth-form">
         <div class="field">
           <label for="login-email">Email</label>
-          <input
-            id="login-email"
-            v-model="form.email"
-            type="email"
-            required
-            placeholder="you@example.com"
-            autocomplete="email"
-          />
+          <input id="login-email" v-model="form.email" type="email" required placeholder="you@company.com" autocomplete="email" />
         </div>
         <div class="field">
           <label for="login-password">Password</label>
-          <input
-            id="login-password"
-            v-model="form.password"
-            type="password"
-            required
-            placeholder="••••••••"
-            autocomplete="current-password"
-          />
+          <input id="login-password" v-model="form.password" type="password" required placeholder="••••••••" autocomplete="current-password" />
         </div>
         <p v-if="error" class="error">{{ error }}</p>
         <button type="submit" class="btn primary" :disabled="isLoading">
           {{ isLoading ? 'Signing in…' : 'Sign in' }}
         </button>
       </form>
-      <p class="footer">
-        Don't have an account? <router-link to="/signup">Sign up</router-link>
-      </p>
+      <p class="footer">No account? <router-link to="/signup">Sign up</router-link></p>
     </div>
   </div>
 </template>
-
-<style scoped>
-.auth-page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-}
-.auth-card {
-  width: 100%;
-  max-width: 360px;
-  padding: 2rem;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-h1 {
-  margin: 0 0 1.5rem;
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: #eee;
-}
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-.field label {
-  font-size: 0.875rem;
-  color: #b0b0b0;
-}
-.field input {
-  padding: 0.6rem 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.2);
-  color: #fff;
-  font-size: 1rem;
-}
-.field input::placeholder {
-  color: #666;
-}
-.field input:focus {
-  outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
-}
-.error {
-  margin: 0;
-  font-size: 0.875rem;
-  color: #f87171;
-}
-.btn {
-  padding: 0.65rem 1rem;
-  border: none;
-  border-radius: 8px;
-  font-size: 1rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-.btn.primary {
-  background: #6366f1;
-  color: #fff;
-}
-.btn:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
-.footer {
-  margin: 1.25rem 0 0;
-  font-size: 0.875rem;
-  color: #888;
-}
-.footer a {
-  color: #818cf8;
-  text-decoration: none;
-}
-.footer a:hover {
-  text-decoration: underline;
-}
-</style>
