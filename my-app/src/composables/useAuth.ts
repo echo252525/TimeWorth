@@ -4,14 +4,30 @@ import type { User } from '@supabase/supabase-js'
 
 const user = ref<User | null>(null)
 
-export type EmployeeSignUp = {
+interface EmployeeSignup {
   name: string
   position_in_company: string
   company_branch: string
   employee_no: number
-  picture?: string
+  picture?: File | null
   email: string
   password: string
+}
+
+const BUCKET = 'employee_profile'
+
+export async function getSignedProfileUrl(path: string | null, expiresIn = 3600): Promise<string | null> {
+  if (!path) return null
+  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, expiresIn)
+  if (error) return null
+  return data?.signedUrl ?? null
+}
+
+function errMsg(e: unknown, fallback: string): string {
+  const err = e as { status?: number; message?: string }
+  if (err?.status === 429 || (typeof err?.message === 'string' && err.message.includes('429')))
+    return 'Too many attempts. Please wait a few minutes and try again.'
+  return e instanceof Error ? e.message : fallback
 }
 
 export function useAuth() {
@@ -22,36 +38,33 @@ export function useAuth() {
   async function init() {
     const { data: { session } } = await supabase.auth.getSession()
     user.value = session?.user ?? null
-    supabase.auth.onAuthStateChange((_e, session) => {
-      user.value = session?.user ?? null
-    })
+    supabase.auth.onAuthStateChange((_e, session) => { user.value = session?.user ?? null })
   }
 
-  async function signUp(p: EmployeeSignUp) {
+  async function signUp(p: EmployeeSignup) {
     isLoading.value = true
     error.value = null
     try {
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: p.email,
-        password: p.password,
-        options: { emailRedirectTo: undefined }
-      })
+      const { data, error: signUpError } = await supabase.auth.signUp({ email: p.email, password: p.password, options: { emailRedirectTo: undefined } })
       if (signUpError) throw signUpError
       if (!data.user) throw new Error('Sign up failed')
-
+      let picturePath: string | null = null
+      if (p.picture && p.picture instanceof File) {
+        const ext = p.picture.name.split('.').pop() || 'jpg'
+        const path = `${data.user.id}/${Date.now()}.${ext}`
+        const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, p.picture, { upsert: false })
+        if (uploadError) throw uploadError
+        picturePath = path
+      }
       const { error: insertError } = await supabase.from('employee').insert({
-        id: data.user.id,
-        name: p.name,
-        position_in_company: p.position_in_company,
-        company_branch: p.company_branch,
-        employee_no: p.employee_no,
-        picture: p.picture || null,
-        email: p.email
+        id: data.user.id, name: p.name, position_in_company: p.position_in_company, company_branch: p.company_branch,
+        employee_no: Number(p.employee_no), picture: picturePath, email: p.email, password: p.password
       })
       if (insertError) throw insertError
       return { data, error: null }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Sign up failed'
+      const err = e as { message?: string; details?: string }
+      const msg = err?.message || err?.details || errMsg(e, 'Sign up failed')
       error.value = msg
       return { data: null, error: msg }
     } finally {
@@ -67,7 +80,7 @@ export function useAuth() {
       if (signInError) throw signInError
       return { data, error: null }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Sign in failed'
+      const msg = errMsg(e, 'Sign in failed')
       error.value = msg
       return { data: null, error: msg }
     } finally {
@@ -80,7 +93,7 @@ export function useAuth() {
     user.value = null
   }
 
-  return { user, isLoggedIn, isLoading, error, init, signUp, signIn, signOut }
+  return { user, isLoggedIn, isLoading, error, init, signUp, signIn, signOut, getSignedProfileUrl }
 }
 
-export { user as authUser }
+export { user }

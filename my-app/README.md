@@ -23,13 +23,7 @@ TypeScript cannot handle type information for `.vue` imports by default, so we r
 
 See [Vite Configuration Reference](https://vite.dev/config/).
 
-## Auth & DB (Supabase)
-
-**TimeWorth** uses Supabase Auth for login/signup. On signup, an row is inserted into `public.employee` (same `id` as auth user). Passwords are not stored in `employee`; auth is handled by Supabase.
-
-**Env:** Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `.env.local`.
-
-**Schema:** See `supabase-schema.sql` for the `employee` table. If you already have a table with a `password` column, make it nullable or drop it—the app does not write passwords to the DB.
+**Env:** `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `.env.local`.
 
 ## Project Setup
 
