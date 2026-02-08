@@ -1,15 +1,35 @@
 <script setup lang="ts">
-import { onMounted, ref, onUnmounted } from 'vue'
+import { onMounted, ref, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
+import supabase from '../lib/supabaseClient'
 
 const router = useRouter()
 const route = useRoute()
-const { user, isLoggedIn, signOut } = useAuth()
+const { user, isLoggedIn, signOut, getSignedProfileUrl } = useAuth()
 
 const collapsed = ref(false)
 const mobileOpen = ref(false)
 const isMobile = ref(false)
+const employeeName = ref<string | null>(null)
+const profileUrl = ref<string | null>(null)
+
+async function loadProfile() {
+  if (!user.value?.id) return
+  employeeName.value = null
+  profileUrl.value = null
+  const { data } = await supabase.from('employee').select('name, picture').eq('id', user.value.id).maybeSingle()
+  if (!data) return
+  employeeName.value = data.name
+  const pathOrUrl = data.picture
+  if (!pathOrUrl) return
+  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+    profileUrl.value = pathOrUrl
+  } else {
+    profileUrl.value = await getSignedProfileUrl(pathOrUrl)
+  }
+}
+watch(user, loadProfile, { immediate: true })
 
 const MOBILE_BP = 768
 function checkMobile() {
@@ -81,7 +101,16 @@ function isActive(path: string) {
         <button type="button" class="btn-logout" @click="logout">Logout</button>
       </div>
     </aside>
-    <main class="main"><router-view /></main>
+    <main class="main">
+      <header class="main-header">
+        <button type="button" class="profile-trigger" @click="go('/dashboard/settings')">
+          <img v-if="profileUrl" :src="profileUrl" class="profile-avatar" alt="" />
+          <span v-else class="profile-avatar placeholder">{{ (employeeName || user?.email || '?').slice(0, 1).toUpperCase() }}</span>
+          <span class="profile-name">{{ employeeName || user?.email }}</span>
+        </button>
+      </header>
+      <div class="main-content"><router-view /></div>
+    </main>
   </div>
 </template>
 <style scoped>
@@ -127,7 +156,15 @@ function isActive(path: string) {
 .user-email { font-size: 0.7rem; color: #64748b; display: block; margin-bottom: 0.5rem; overflow: hidden; text-overflow: ellipsis; }
 .btn-logout { padding: 0.4rem 0.75rem; font-size: 0.8125rem; background: transparent; color: #94a3b8; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; cursor: pointer; width: 100%; transition: color 0.2s, border-color 0.2s; }
 .btn-logout:hover { color: #f87171; border-color: rgba(248,113,113,0.4); }
-.main { flex: 1; padding: 1.5rem; overflow: auto; min-width: 0; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.main-header { flex-shrink: 0; display: flex; justify-content: flex-end; align-items: center; padding: 0.75rem 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.profile-trigger { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; border: none; border-radius: 8px; background: transparent; color: #e2e8f0; cursor: pointer; font-size: 0.9375rem; transition: background 0.2s; }
+.profile-trigger:hover { background: rgba(255,255,255,0.06); }
+.profile-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.profile-avatar.placeholder { display: flex; align-items: center; justify-content: center; background: rgba(56,189,248,0.3); color: #38bdf8; font-weight: 600; font-size: 0.875rem; }
+.profile-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.main-content { flex: 1; padding: 1.5rem; overflow: auto; }
+@media (max-width: 767px) { .profile-name { max-width: 100px; } }
 @media (max-width: 767px) {
   .burger { display: flex; }
   .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 260px; transform: translateX(-100%); box-shadow: 4px 0 24px rgba(0,0,0,0.3); }
@@ -135,6 +172,7 @@ function isActive(path: string) {
   .sidebar.collapsed { width: 260px; }
   .collapse-btn { display: none; }
   .main { margin-left: 0; padding-top: 3rem; }
+  .main-header { padding-top: 0.5rem; }
 }
 .overlay-enter-active, .overlay-leave-active { transition: opacity 0.25s ease; }
 .overlay-enter-from, .overlay-leave-to { opacity: 0; }

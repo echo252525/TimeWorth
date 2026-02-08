@@ -16,6 +16,7 @@ interface EmployeeSignup {
 
 const BUCKET = 'employee_profile'
 
+/** Get a signed URL for displaying a profile image. path = bucket object path (same as employee.picture column). */
 export async function getSignedProfileUrl(path: string | null, expiresIn = 3600): Promise<string | null> {
   if (!path) return null
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, expiresIn)
@@ -48,12 +49,15 @@ export function useAuth() {
       const { data, error: signUpError } = await supabase.auth.signUp({ email: p.email, password: p.password, options: { emailRedirectTo: undefined } })
       if (signUpError) throw signUpError
       if (!data.user) throw new Error('Sign up failed')
+      if (data.session) await supabase.auth.setSession({ access_token: data.session.access_token, refresh_token: data.session.refresh_token })
       let picturePath: string | null = null
       if (p.picture && p.picture instanceof File) {
-        const ext = p.picture.name.split('.').pop() || 'jpg'
+        const ext = p.picture.name.split('.').pop()?.toLowerCase() || 'jpg'
         const path = `${data.user.id}/${Date.now()}.${ext}`
-        const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, p.picture, { upsert: false })
-        if (uploadError) throw uploadError
+        const contentType = p.picture.type || (ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : 'image/jpeg')
+        const body = await p.picture.arrayBuffer()
+        const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, body, { upsert: false, contentType })
+        if (uploadError) throw new Error(uploadError.message || 'Profile picture upload failed')
         picturePath = path
       }
       const { error: insertError } = await supabase.from('employee').insert({
