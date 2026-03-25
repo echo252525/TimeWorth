@@ -1,12 +1,12 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { onMounted, ref, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
-import supabase from '../lib/supabaseClient'
+import { useAdminAuth, getSignedAdminProfileUrl } from '../composables/useAdminAuth'
 import {
   HomeIcon,
-  ClockIcon,
-  DocumentTextIcon,
+  UsersIcon,
+  PencilSquareIcon,
   Cog6ToothIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -16,104 +16,108 @@ import ThemeToggle from './ThemeToggle.vue'
 
 const router = useRouter()
 const route = useRoute()
-const { user, isLoggedIn, authReady, signOut, getSignedProfileUrl } = useAuth()
+const { user } = useAuth()
+const { adminProfile, isAdmin, signOut, fetchAdminProfile } = useAdminAuth()
+
+/** Signed URL for header avatar (private bucket). */
+const headerAvatarUrl = ref<string | null>(null)
+
+async function refreshHeaderAvatar() {
+  const pic = adminProfile.value?.picture
+  if (!pic) {
+    headerAvatarUrl.value = null
+    return
+  }
+  if (pic.startsWith('http')) {
+    headerAvatarUrl.value = pic
+    return
+  }
+  headerAvatarUrl.value = await getSignedAdminProfileUrl(pic)
+}
+
+watch(() => adminProfile.value?.picture, () => { void refreshHeaderAvatar() }, { immediate: true })
+
+function onProfileUpdated() {
+  void fetchAdminProfile().then(() => refreshHeaderAvatar())
+}
 
 const collapsed = ref(false)
 const mobileOpen = ref(false)
 const isMobile = ref(false)
-const employeeName = ref<string | null>(null)
-const profileUrl = ref<string | null>(null)
-
-async function loadProfile() {
-  if (!user.value?.id) return
-  employeeName.value = null
-  profileUrl.value = null
-  const { data } = await supabase.from('employee').select('name, picture').eq('id', user.value.id).maybeSingle()
-  if (!data) return
-  employeeName.value = data.name
-  const pathOrUrl = data.picture
-  if (!pathOrUrl) return
-  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
-    profileUrl.value = pathOrUrl
-  } else {
-    profileUrl.value = await getSignedProfileUrl(pathOrUrl)
-  }
-}
-watch(user, loadProfile, { immediate: true })
-
 const MOBILE_BP = 768
 function checkMobile() {
   isMobile.value = window.innerWidth < MOBILE_BP
   if (!isMobile.value) mobileOpen.value = false
 }
-onMounted(() => {
+onMounted(async () => {
+  if (!user.value) {
+    router.replace('/admin/login')
+    return
+  }
+  const profile = await fetchAdminProfile()
+  if (!profile) {
+    router.replace('/admin/login')
+    return
+  }
+  if (profile.role === 'pending') {
+    await signOut()
+    router.replace({ path: '/admin/login', query: { pending: '1' } })
+    return
+  }
+  if (profile.role !== 'admin' && profile.role !== 'superadmin') {
+    await signOut()
+    router.replace('/admin/login')
+    return
+  }
   checkMobile()
   window.addEventListener('resize', checkMobile)
-  window.addEventListener('profile-updated', loadProfile)
+  window.addEventListener('profile-updated', onProfileUpdated)
 })
 onUnmounted(() => {
   window.removeEventListener('resize', checkMobile)
-  window.removeEventListener('profile-updated', loadProfile)
+  window.removeEventListener('profile-updated', onProfileUpdated)
 })
 
 async function logout() {
   await signOut()
   router.push('/')
 }
-
 function go(to: string) {
   router.push(to)
   mobileOpen.value = false
 }
 
 const nav = [
-  { path: '/dashboard', label: 'Dashboard', icon: HomeIcon },
-  { path: '/dashboard/timeclock', label: 'Timeclock', icon: ClockIcon },
-  { path: '/dashboard/timesheet', label: 'Timesheet', icon: DocumentTextIcon },
-  { path: '/dashboard/settings', label: 'Settings', icon: Cog6ToothIcon }
+  { path: '/admin', label: 'Home', icon: HomeIcon },
+  { path: '/admin/employees', label: 'Employees', icon: UsersIcon },
+  { path: '/admin/edit-requests', label: 'Edit request', icon: PencilSquareIcon },
+  { path: '/admin/settings', label: 'Settings', icon: Cog6ToothIcon }
 ]
-
 function isActive(path: string) {
-  return path === '/dashboard' ? route.path === '/dashboard' : route.path === path
+  return path === '/admin' ? route.path === '/admin' : route.path.startsWith(path)
 }
 </script>
 <template>
-  <div v-if="!authReady" class="auth-loading">Loading…</div>
-  <div v-else-if="isLoggedIn" class="layout" :class="{ 'sidebar-collapsed': collapsed && !isMobile }">
+  <div v-if="isAdmin" class="layout" :class="{ 'sidebar-collapsed': collapsed && !isMobile }">
     <button type="button" class="burger" :class="{ open: mobileOpen }" :aria-label="mobileOpen ? 'Close menu' : 'Open menu'" @click="mobileOpen = !mobileOpen">
       <span v-if="!mobileOpen" class="hamburger"><span></span><span></span><span></span></span>
       <span v-else class="close-icon"><span></span><span></span></span>
     </button>
-    <Transition name="overlay">
-      <div v-if="mobileOpen" class="sidebar-backdrop" @click="mobileOpen = false" aria-hidden="true" />
-    </Transition>
+    <Transition name="overlay"><div v-if="mobileOpen" class="sidebar-backdrop" @click="mobileOpen = false" aria-hidden="true" /></Transition>
     <aside class="sidebar" :class="{ collapsed: collapsed && !isMobile, mobile: isMobile, 'mobile-open': mobileOpen }">
-      <div class="logo-placeholder" title="Logo">
-        <span v-if="!collapsed || isMobile">Logo</span>
-      </div>
+      <div class="logo-placeholder" title="Admin"><span v-if="!collapsed || isMobile">Admin</span></div>
       <button type="button" class="collapse-btn" :aria-label="collapsed ? 'Expand' : 'Collapse'" @click="collapsed = !collapsed">
         <ChevronLeftIcon v-if="!collapsed" class="collapse-icon" />
         <ChevronRightIcon v-else class="collapse-icon" />
       </button>
       <nav class="nav">
-        <button
-          v-for="item in nav"
-          :key="item.path"
-          type="button"
-          class="nav-link"
-          :class="{ active: isActive(item.path) }"
-          @click="go(item.path)"
-        >
+        <button v-for="item in nav" :key="item.path" type="button" class="nav-link" :class="{ active: isActive(item.path) }" @click="go(item.path)">
           <component :is="item.icon" class="nav-icon" />
-          <Transition name="nav-label">
-            <span v-if="!collapsed || isMobile" class="nav-text">{{ item.label }}</span>
-          </Transition>
+          <Transition name="nav-label"><span v-if="!collapsed || isMobile" class="nav-text">{{ item.label }}</span></Transition>
         </button>
       </nav>
       <div class="sidebar-footer">
-        <Transition name="nav-label">
-          <span v-if="!collapsed || isMobile" class="user-email">{{ user?.email }}</span>
-        </Transition>
+        <Transition name="nav-label"><span v-if="!collapsed || isMobile" class="user-email">{{ adminProfile?.email }}</span></Transition>
         <button type="button" class="btn-logout" :class="{ 'btn-logout-collapsed': collapsed && !isMobile }" @click="logout" :title="collapsed && !isMobile ? 'Logout' : ''">
           <ArrowRightOnRectangleIcon class="logout-icon" />
           <Transition name="nav-label">
@@ -130,10 +134,16 @@ function isActive(path: string) {
         </div>
         <div class="header-right">
           <ThemeToggle />
-          <button type="button" class="profile-trigger" @click="go('/dashboard/settings')">
-            <img v-if="profileUrl" :src="profileUrl" class="profile-avatar" alt="" />
-            <span v-else class="profile-avatar placeholder">{{ (employeeName || user?.email || '?').slice(0, 1).toUpperCase() }}</span>
-            <span class="profile-name">{{ employeeName || user?.email }}</span>
+          <button type="button" class="profile-trigger" @click="go('/admin/settings')">
+            <img
+              v-if="headerAvatarUrl"
+              :src="headerAvatarUrl"
+              alt=""
+              class="profile-avatar"
+              @error="headerAvatarUrl = null"
+            />
+            <span v-else class="profile-avatar placeholder">{{ (adminProfile?.name || adminProfile?.email || '?').slice(0, 1).toUpperCase() }}</span>
+            <span class="profile-name">{{ adminProfile?.name || adminProfile?.email }}</span>
           </button>
         </div>
       </header>
@@ -142,7 +152,6 @@ function isActive(path: string) {
   </div>
 </template>
 <style scoped>
-.auth-loading { display: flex; align-items: center; justify-content: center; min-height: 100vh; width: 100%; background: var(--bg-primary); color: var(--text-tertiary); font-size: 0.9375rem; }
 .layout { display: flex; min-height: 100vh; width: 100%; background: var(--bg-primary); color: var(--text-primary); position: relative; }
 .burger { display: none; position: fixed; top: 1rem; left: 1rem; z-index: 100; width: 44px; height: 44px; align-items: center; justify-content: center; cursor: pointer; padding: 0; border: none; background: transparent; color: inherit; }
 .burger .hamburger, .burger .close-icon { display: flex; flex-direction: column; justify-content: space-between; width: 28px; height: 22px; }
@@ -171,9 +180,7 @@ function isActive(path: string) {
 .logo-placeholder {
   height: 48px; margin: 0 0.75rem 1rem; border-radius: 10px; background: var(--bg-hover);
   display: flex; align-items: center; justify-content: center; font-size: 0.875rem; color: var(--text-tertiary);
-  flex-shrink: 0; position: relative;
-  box-sizing: border-box;
-  max-width: calc(100% - 1.5rem);
+  flex-shrink: 0; position: relative; box-sizing: border-box; max-width: calc(100% - 1.5rem);
 }
 .collapse-btn {
   position: absolute; top: 1.5rem; right: -12px; width: 24px; height: 24px; border-radius: 50%;
@@ -224,7 +231,6 @@ function isActive(path: string) {
   .main-content { padding: 2rem 2.5rem; max-width: 1600px; margin: 0 auto; width: 100%; }
   .main-header { padding: 1rem 2.5rem; }
 }
-@media (max-width: 767px) { .profile-name { max-width: 100px; } }
 @media (max-width: 767px) {
   .burger { display: flex; }
   .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 260px; transform: translateX(-100%); box-shadow: 4px 0 24px rgba(0,0,0,0.3); }

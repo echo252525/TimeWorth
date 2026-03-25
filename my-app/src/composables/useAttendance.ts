@@ -17,6 +17,7 @@ export interface AttendanceRow {
   location_out: string | null
   branch_location: string | null
   work_modality: WorkModality | null
+  liveness_verifications_id: string | null
   created_at: string
   updated_at: string
 }
@@ -45,7 +46,8 @@ export function getBranch(idOrName: string | null): Branch | null {
 
 export function parseLocation(s: string | null): { lat: number; lng: number } | null {
   if (!s) return null
-  const [lat, lng] = s.split(',').map(Number)
+  const t = s.trim()
+  const [lat, lng] = t.split(',').map((x) => Number(String(x).trim()))
   if (Number.isNaN(lat) || Number.isNaN(lng)) return null
   return { lat, lng }
 }
@@ -98,9 +100,69 @@ function msToInterval(ms: number): string {
   return parts.join(' ')
 }
 
+/** Same rules as clock-out: lunch window subtracted from clock_in→clock_out span. */
+export function computeTotalTimeForEdit(
+  clockIn: string | null,
+  clockOut: string | null,
+  lunchStart: string | null,
+  lunchEnd: string | null
+): string | null {
+  if (!clockIn || !clockOut) return null
+  const ci = storedToRealInstant(clockIn)
+  const co = storedToRealInstant(clockOut)
+  let lunchMs = 0
+  if (lunchStart && lunchEnd)
+    lunchMs = storedToRealInstant(lunchEnd) - storedToRealInstant(lunchStart)
+  else if (lunchStart)
+    lunchMs = co - storedToRealInstant(lunchStart)
+  return msToInterval(co - ci - lunchMs)
+}
+
+/** Local date string YYYY-MM-DD (user's timezone). */
+export function getLocalDateString(d: Date): string {
+  const y = d.getFullYear()
+  const m = (d.getMonth() + 1).toString().padStart(2, '0')
+  const day = d.getDate().toString().padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Start and end of the given local date (YYYY-MM-DD) as ISO strings for DB query. */
+function getLocalDayRange(localDateStr: string): { start: string; end: string } {
+  const startLocal = new Date(localDateStr + 'T00:00:00')
+  const endLocal = new Date(localDateStr + 'T23:59:59.999')
+  return { start: startLocal.toISOString(), end: endLocal.toISOString() }
+}
+
+/**
+ * Current moment stored as local date + local time with "Z" suffix so the DB stores the correct
+ * local calendar date (avoids off-by-one-day when viewing in UTC). Example: 07:30 March 16 local
+ * → "2025-03-16T07:30:00.000Z" so the stored date is March 16.
+ */
+function getNowAsLocalDateTimeZ(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = (d.getMonth() + 1).toString().padStart(2, '0')
+  const day = d.getDate().toString().padStart(2, '0')
+  const h = d.getHours().toString().padStart(2, '0')
+  const min = d.getMinutes().toString().padStart(2, '0')
+  const s = d.getSeconds().toString().padStart(2, '0')
+  const ms = d.getMilliseconds().toString().padStart(3, '0')
+  return `${y}-${m}-${day}T${h}:${min}:${s}.${ms}Z`
+}
+
+/**
+ * Convert a stored attendance timestamp (local date/time stored as "Z") back to the real instant
+ * for elapsed/total time calculations and display. Stored value is "local time as UTC"; real = stored + TZ offset.
+ */
+export function storedToRealInstant(isoString: string | null): number {
+  if (!isoString) return 0
+  const storedMs = new Date(isoString).getTime()
+  return storedMs + new Date().getTimezoneOffset() * 60 * 1000
+}
+
 export function useAttendance() {
   const userId = computed(() => user.value?.id ?? null)
-  const today = computed(() => new Date().toISOString().slice(0, 10))
+  const today = computed(() => getLocalDateString(new Date()))
   const isClockedIn = computed(() => !!todayRecord.value?.clock_in && !todayRecord.value?.clock_out)
   const isOnLunch = computed(() => !!todayRecord.value?.lunch_break_start && !todayRecord.value?.lunch_break_end)
   const usedLunchBreak = computed(() => !!(todayRecord.value?.lunch_break_start && todayRecord.value?.lunch_break_end))
@@ -131,11 +193,11 @@ export function useAttendance() {
     const r = todayRecord.value
     if (!r?.clock_in || r.clock_out) return '0h 0m 0s'
     const now = tick.value || Date.now()
-    const start = new Date(r.clock_in).getTime()
+    const start = storedToRealInstant(r.clock_in)
     let lunchMs = 0
     if (r.lunch_break_start) {
-      const end = r.lunch_break_end ? new Date(r.lunch_break_end).getTime() : now
-      lunchMs = end - new Date(r.lunch_break_start).getTime()
+      const end = r.lunch_break_end ? storedToRealInstant(r.lunch_break_end) : now
+      lunchMs = end - storedToRealInstant(r.lunch_break_start)
     }
     return formatMs(Math.max(0, now - start - lunchMs))
   })
@@ -144,7 +206,7 @@ export function useAttendance() {
     const r = todayRecord.value
     if (!r?.lunch_break_start || r.lunch_break_end) return '0h 0m 0s'
     const now = tick.value || Date.now()
-    const start = new Date(r.lunch_break_start).getTime()
+    const start = storedToRealInstant(r.lunch_break_start)
     return formatMs(Math.max(0, now - start))
   })
 
@@ -152,8 +214,7 @@ export function useAttendance() {
     if (!userId.value) return
     isLoading.value = true
     error.value = null
-    const startOfDay = `${today.value}T00:00:00.000Z`
-    const endOfDay = `${today.value}T23:59:59.999Z`
+    const { start: startOfDay, end: endOfDay } = getLocalDayRange(today.value)
     const { data, error: err } = await supabase
       .from('attendance')
       .select('*')
@@ -166,11 +227,11 @@ export function useAttendance() {
     todayRecords.value = (data ?? []) as AttendanceRow[]
   }
 
-  async function clockIn(workModality: WorkModality, opts?: { branchLocation?: string; locationIn?: string; facialStatus?: string }) {
+  async function clockIn(workModality: WorkModality, opts?: { branchLocation?: string; locationIn?: string; facialStatus?: string; livenessVerificationId?: string }) {
     if (!userId.value) return
     isLoading.value = true
     error.value = null
-    const now = new Date().toISOString()
+    const now = getNowAsLocalDateTimeZ()
     const { data, error: err } = await supabase
       .from('attendance')
       .insert({
@@ -180,6 +241,7 @@ export function useAttendance() {
         branch_location: opts?.branchLocation ?? null,
         location_in: opts?.locationIn ?? null,
         work_modality: workModality,
+        liveness_verifications_id: opts?.livenessVerificationId ?? null,
         updated_at: now
       })
       .select()
@@ -193,7 +255,7 @@ export function useAttendance() {
     if (!todayRecord.value?.attendance_id || usedLunchBreak.value) return
     isLoading.value = true
     error.value = null
-    const now = new Date().toISOString()
+    const now = getNowAsLocalDateTimeZ()
     const { data, error: err } = await supabase
       .from('attendance')
       .update({ lunch_break_start: now, updated_at: now })
@@ -210,7 +272,7 @@ export function useAttendance() {
     if (!todayRecord.value?.attendance_id) return
     isLoading.value = true
     error.value = null
-    const now = new Date().toISOString()
+    const now = getNowAsLocalDateTimeZ()
     const { data, error: err } = await supabase
       .from('attendance')
       .update({ lunch_break_end: now, updated_at: now })
@@ -227,14 +289,14 @@ export function useAttendance() {
     if (!todayRecord.value?.attendance_id) return
     isLoading.value = true
     error.value = null
-    const now = new Date().toISOString()
-    const ci = new Date(todayRecord.value.clock_in!).getTime()
-    const co = new Date(now).getTime()
+    const now = getNowAsLocalDateTimeZ()
+    const ci = storedToRealInstant(todayRecord.value.clock_in!)
+    const co = Date.now()
     let lunchMs = 0
     if (todayRecord.value.lunch_break_start && todayRecord.value.lunch_break_end)
-      lunchMs = new Date(todayRecord.value.lunch_break_end).getTime() - new Date(todayRecord.value.lunch_break_start).getTime()
+      lunchMs = storedToRealInstant(todayRecord.value.lunch_break_end) - storedToRealInstant(todayRecord.value.lunch_break_start)
     else if (todayRecord.value.lunch_break_start)
-      lunchMs = new Date(now).getTime() - new Date(todayRecord.value.lunch_break_start).getTime()
+      lunchMs = co - storedToRealInstant(todayRecord.value.lunch_break_start)
     const totalTimeInterval = msToInterval(co - ci - lunchMs)
     const { data, error: err } = await supabase
       .from('attendance')
@@ -243,6 +305,7 @@ export function useAttendance() {
         lunch_break_end: todayRecord.value.lunch_break_start && !todayRecord.value.lunch_break_end ? now : todayRecord.value.lunch_break_end,
         total_time: totalTimeInterval,
         location_out: locationOut ?? null,
+        branch_location: todayRecord.value.branch_location ?? null,
         updated_at: now
       })
       .eq('attendance_id', todayRecord.value.attendance_id)

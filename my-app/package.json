@@ -16,7 +16,10 @@
     "format": "prettier --write --experimental-cli src/"
   },
   "dependencies": {
+    "@heroicons/vue": "^2.2.0",
     "@supabase/supabase-js": "^2.94.0",
+    "jspdf": "^4.1.0",
+    "jspdf-autotable": "^5.0.7",
     "leaflet": "^1.9.4",
     "pinia": "^3.0.4",
     "vue": "beta",

@@ -9,7 +9,6 @@ interface EmployeeSignup {
   position_in_company: string
   company_branch: string
   employee_no: number
-  picture?: File | null
   email: string
   password: string
 }
@@ -31,6 +30,8 @@ function errMsg(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback
 }
 
+const authReady = ref(false)
+
 export function useAuth() {
   const isLoading = ref(false)
   const error = ref<string | null>(null)
@@ -40,6 +41,7 @@ export function useAuth() {
     const { data: { session } } = await supabase.auth.getSession()
     user.value = session?.user ?? null
     supabase.auth.onAuthStateChange((_e, session) => { user.value = session?.user ?? null })
+    authReady.value = true
   }
 
   async function signUp(p: EmployeeSignup) {
@@ -50,19 +52,13 @@ export function useAuth() {
       if (signUpError) throw signUpError
       if (!data.user) throw new Error('Sign up failed')
       if (data.session) await supabase.auth.setSession({ access_token: data.session.access_token, refresh_token: data.session.refresh_token })
-      let picturePath: string | null = null
-      if (p.picture && p.picture instanceof File) {
-        const ext = p.picture.name.split('.').pop()?.toLowerCase() || 'jpg'
-        const path = `${data.user.id}/${Date.now()}.${ext}`
-        const contentType = p.picture.type || (ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : 'image/jpeg')
-        const body = await p.picture.arrayBuffer()
-        const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, body, { upsert: false, contentType })
-        if (uploadError) throw new Error(uploadError.message || 'Profile picture upload failed')
-        picturePath = path
-      }
       const { error: insertError } = await supabase.from('employee').insert({
-        id: data.user.id, name: p.name, position_in_company: p.position_in_company, company_branch: p.company_branch,
-        employee_no: Number(p.employee_no), picture: picturePath, email: p.email, password: p.password
+        id: data.user.id,
+        name: p.name,
+        position_in_company: p.position_in_company,
+        company_branch: p.company_branch,
+        employee_no: Number(p.employee_no),
+        email: p.email
       })
       if (insertError) throw insertError
       return { data, error: null }
@@ -80,8 +76,39 @@ export function useAuth() {
     isLoading.value = true
     error.value = null
     try {
+      // First, try to authenticate with Supabase auth.
       const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
       if (signInError) throw signInError
+
+      const authUser = data?.user
+      if (!authUser?.id) {
+        throw new Error('Sign in failed')
+      }
+
+      // Ensure this authenticated user has an employee profile (and is not just an admin).
+      const { data: employeeRow, error: employeeErr } = await supabase
+        .from('employee')
+        .select('id')
+        .eq('id', authUser.id)
+        .maybeSingle()
+
+      if (employeeErr) throw employeeErr
+      if (!employeeRow) {
+        const { data: adminRow } = await supabase
+          .from('admin')
+          .select('id')
+          .eq('id', authUser.id)
+          .maybeSingle()
+
+        // If this is an admin account, block login on employee form.
+        if (adminRow) {
+          await supabase.auth.signOut()
+          throw new Error('No employee account found for this email.')
+        }
+
+        throw new Error('No account found.')
+      }
+
       return { data, error: null }
     } catch (e) {
       const msg = errMsg(e, 'Sign in failed')
@@ -97,7 +124,7 @@ export function useAuth() {
     user.value = null
   }
 
-  return { user, isLoggedIn, isLoading, error, init, signUp, signIn, signOut, getSignedProfileUrl }
+  return { user, isLoggedIn, authReady, isLoading, error, init, signUp, signIn, signOut, getSignedProfileUrl }
 }
 
 export { user }

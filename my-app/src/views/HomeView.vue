@@ -1,13 +1,24 @@
 <script setup lang="ts">
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useAuth } from '../composables/useAuth'
 const { user, isLoggedIn, signOut } = useAuth()
+const adminGate = ref(false)
+function onKey(e: KeyboardEvent) {
+  if (e.ctrlKey && e.key === 'a') { e.preventDefault(); adminGate.value = true }
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onUnmounted(() => window.removeEventListener('keydown', onKey))
 </script>
 <template>
   <div class="landing">
     <header class="header">
       <span class="brand">⏱ TimeWorth</span>
       <nav class="nav">
-        <template v-if="isLoggedIn">
+        <template v-if="adminGate">
+          <router-link to="/admin/login" class="link">Admin login</router-link>
+          <router-link to="/admin/signup" class="btn outline">Admin sign up</router-link>
+        </template>
+        <template v-else-if="isLoggedIn">
           <span class="user-email">{{ user?.email }}</span>
           <button type="button" class="btn outline" @click="signOut">Sign out</button>
         </template>
@@ -44,8 +55,8 @@ const { user, isLoggedIn, signOut } = useAuth()
   </div>
 </template>
 <style scoped>
-.landing { min-height: 100vh; background: linear-gradient(180deg, #0f172a 0%, #1e293b 35%, #0f172a 100%); color: #f1f5f9; }
-.header { display: flex; align-items: center; justify-content: space-between; padding: 1rem clamp(1rem, 4vw, 2rem); border-bottom: 1px solid rgba(255,255,255,0.06); }
+.landing { min-height: 100vh; width: 100%; background: linear-gradient(180deg, #0b0f1a 0%, #0f172a 30%, #1e293b 60%, #0f172a 100%); color: #f1f5f9; }
+.header { display: flex; align-items: center; justify-content: space-between; padding: 1rem clamp(1.5rem, 5vw, 3rem); border-bottom: 1px solid rgba(255,255,255,0.06); max-width: 1600px; margin: 0 auto; }
 .brand { font-weight: 700; font-size: clamp(1.1rem, 3vw, 1.35rem); }
 .nav { display: flex; align-items: center; gap: 0.75rem; }
 .user-email { font-size: 0.8125rem; color: #94a3b8; }
@@ -57,8 +68,9 @@ const { user, isLoggedIn, signOut } = useAuth()
 .btn.ghost { background: transparent; color: #94a3b8; }
 .btn.large { padding: 0.65rem 1.25rem; font-size: 1rem; }
 .btn:hover { opacity: 0.9; }
-.hero { display: grid; grid-template-columns: 1fr; gap: 2rem; align-items: center; padding: clamp(2rem, 8vw, 4rem) clamp(1rem, 4vw, 2rem); max-width: 1100px; margin: 0 auto; }
-@media (min-width: 720px) { .hero { grid-template-columns: 1fr 1fr; } }
+.hero { display: grid; grid-template-columns: 1fr; gap: 2rem; align-items: center; padding: clamp(2rem, 8vw, 5rem) clamp(1.5rem, 5vw, 3rem); max-width: 1280px; margin: 0 auto; }
+@media (min-width: 720px) { .hero { grid-template-columns: 1fr 1fr; gap: 3rem; } }
+@media (min-width: 1280px) { .hero { padding: 4rem 3rem 5rem; } }
 .hero-content h1 { margin: 0 0 1rem; font-size: clamp(1.75rem, 4vw, 2.5rem); font-weight: 700; line-height: 1.2; }
 .tagline { margin: 0 0 1.5rem; color: #94a3b8; font-size: clamp(0.9375rem, 2vw, 1.0625rem); line-height: 1.5; max-width: 420px; }
 .cta, .welcome { display: flex; flex-wrap: wrap; gap: 0.75rem; }
@@ -69,10 +81,13 @@ const { user, isLoggedIn, signOut } = useAuth()
 .mock-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9375rem; padding: 0.35rem 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
 .mock-row.total { margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.1); font-weight: 600; color: #38bdf8; }
-.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1.5rem; padding: 3rem clamp(1rem, 4vw, 2rem); max-width: 1100px; margin: 0 auto; }
-.feature { text-align: center; padding: 1rem; }
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1.5rem; padding: 4rem clamp(1.5rem, 5vw, 3rem); max-width: 1280px; margin: 0 auto; }
+@media (min-width: 900px) { .features { grid-template-columns: repeat(3, 1fr); gap: 2rem; } }
+.feature { text-align: center; padding: 1.5rem 1rem; border-radius: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); transition: background 0.2s, border-color 0.2s; }
+.feature:hover { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
 .feat-icon { font-size: 1.75rem; display: block; margin-bottom: 0.5rem; }
 .feature h3 { margin: 0 0 0.25rem; font-size: 1rem; font-weight: 600; }
 .feature p { margin: 0; font-size: 0.8125rem; color: #94a3b8; }
-.footer { text-align: center; padding: 1.5rem; font-size: 0.8125rem; color: #64748b; border-top: 1px solid rgba(255,255,255,0.06); }
+.footer { text-align: center; padding: 2rem; font-size: 0.8125rem; color: #64748b; border-top: 1px solid rgba(255,255,255,0.06); }
+@media (min-width: 1024px) { .footer { padding: 2rem 3rem; } }
 </style>
