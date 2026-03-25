@@ -30,6 +30,29 @@ function errMsg(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback
 }
 
+/** Friendly copy for signup; Supabase often returns "User already registered" for duplicate emails. */
+function formatSignUpError(e: unknown): string {
+  const err = e as { message?: string; details?: string; code?: string; hint?: string }
+  const combined = `${err.message || ''} ${err.details || ''} ${err.hint || ''} ${err.code || ''}`.toLowerCase()
+  if (
+    err.code === 'user_already_exists'
+    || combined.includes('user already registered')
+    || combined.includes('already been registered')
+    || combined.includes('email address is already registered')
+    || combined.includes('user already exists')
+  ) {
+    return 'This email is already registered. Sign in or use a different email.'
+  }
+  if (err.code === '23505' || combined.includes('duplicate key') || combined.includes('unique constraint')) {
+    if (combined.includes('email') || combined.includes('employee_email'))
+      return 'This email is already registered. Sign in or use a different email.'
+    if (combined.includes('employee_no'))
+      return 'This employee number is already in use.'
+    return 'An account with these details may already exist. Try signing in or change your details.'
+  }
+  return err.message || err.details || errMsg(e, 'Sign up failed')
+}
+
 const authReady = ref(false)
 
 export function useAuth() {
@@ -61,12 +84,13 @@ export function useAuth() {
         email: p.email
       })
       if (insertError) throw insertError
-      return { data, error: null }
+      /** No session usually means Supabase is waiting for email confirmation before sign-in. */
+      const needsEmailConfirmation = !data.session
+      return { data, error: null, needsEmailConfirmation }
     } catch (e) {
-      const err = e as { message?: string; details?: string }
-      const msg = err?.message || err?.details || errMsg(e, 'Sign up failed')
+      const msg = formatSignUpError(e)
       error.value = msg
-      return { data: null, error: msg }
+      return { data: null, error: msg, needsEmailConfirmation: false }
     } finally {
       isLoading.value = false
     }

@@ -8,8 +8,6 @@ import {
   UsersIcon,
   PencilSquareIcon,
   Cog6ToothIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   ArrowRightOnRectangleIcon
 } from '@heroicons/vue/24/outline'
 import ThemeToggle from './ThemeToggle.vue'
@@ -107,8 +105,8 @@ function isActive(path: string) {
     <aside class="sidebar" :class="{ collapsed: collapsed && !isMobile, mobile: isMobile, 'mobile-open': mobileOpen }">
       <div class="logo-placeholder" title="Admin"><span v-if="!collapsed || isMobile">Admin</span></div>
       <button type="button" class="collapse-btn" :aria-label="collapsed ? 'Expand' : 'Collapse'" @click="collapsed = !collapsed">
-        <ChevronLeftIcon v-if="!collapsed" class="collapse-icon" />
-        <ChevronRightIcon v-else class="collapse-icon" />
+        <span v-if="!collapsed" class="material-symbols-outlined collapse-icon">right_panel_close</span>
+        <span v-else class="material-symbols-outlined collapse-icon">right_panel_open</span>
       </button>
       <nav class="nav">
         <button v-for="item in nav" :key="item.path" type="button" class="nav-link" :class="{ active: isActive(item.path) }" @click="go(item.path)">
@@ -118,12 +116,15 @@ function isActive(path: string) {
       </nav>
       <div class="sidebar-footer">
         <Transition name="nav-label"><span v-if="!collapsed || isMobile" class="user-email">{{ adminProfile?.email }}</span></Transition>
-        <button type="button" class="btn-logout" :class="{ 'btn-logout-collapsed': collapsed && !isMobile }" @click="logout" :title="collapsed && !isMobile ? 'Logout' : ''">
-          <ArrowRightOnRectangleIcon class="logout-icon" />
-          <Transition name="nav-label">
-            <span v-if="!collapsed || isMobile" class="logout-text">Logout</span>
-          </Transition>
-        </button>
+        <div class="sidebar-footer-actions">
+          <ThemeToggle :compact="collapsed && !isMobile" />
+          <button type="button" class="btn-logout" :class="{ 'btn-logout-collapsed': collapsed && !isMobile }" @click="logout" :title="collapsed && !isMobile ? 'Logout' : ''">
+            <ArrowRightOnRectangleIcon class="logout-icon" />
+            <Transition name="nav-label">
+              <span v-if="!collapsed || isMobile" class="logout-text">Logout</span>
+            </Transition>
+          </button>
+        </div>
       </div>
     </aside>
     <main class="main">
@@ -133,7 +134,6 @@ function isActive(path: string) {
           <p class="app-tagline">An attendance app for PC Worth employees</p>
         </div>
         <div class="header-right">
-          <ThemeToggle />
           <button type="button" class="profile-trigger" @click="go('/admin/settings')">
             <img
               v-if="headerAvatarUrl"
@@ -162,6 +162,7 @@ function isActive(path: string) {
 .burger .close-icon span:last-child { transform: rotate(-45deg); }
 .sidebar-backdrop { position: fixed; inset: 0; background: var(--overlay); z-index: 40; }
 .sidebar {
+  --sidebar-brand-mark-size: 28px;
   position: fixed;
   top: 0;
   left: 0;
@@ -183,14 +184,20 @@ function isActive(path: string) {
   flex-shrink: 0; position: relative; box-sizing: border-box; max-width: calc(100% - 1.5rem);
 }
 .collapse-btn {
-  position: absolute; top: 1.5rem; right: -12px; width: 24px; height: 24px; border-radius: 50%;
-  background: var(--bg-tertiary); border: 1px solid var(--border-light); color: var(--text-secondary); cursor: pointer;
+  position: absolute; top: 1.5rem; right: -12px; width: var(--sidebar-brand-mark-size); height: var(--sidebar-brand-mark-size); border-radius: 50%;
+  background: transparent; border: none; color: var(--text-secondary); cursor: pointer;
   display: flex; align-items: center; justify-content: center; z-index: 100; padding: 0;
-  transition: background 0.2s, color 0.2s;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: color 0.2s;
+  box-shadow: none;
+  outline: none;
 }
-.collapse-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.collapse-icon { width: 14px; height: 14px; flex-shrink: 0; }
+.collapse-btn:hover { color: var(--text-primary); }
+.collapse-icon {
+  font-size: var(--sidebar-brand-mark-size);
+  line-height: 1;
+  flex-shrink: 0;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
 .nav { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 0 0.5rem; overflow-y: auto; overflow-x: hidden; box-sizing: border-box; }
 .nav-link {
   display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.75rem; border: none; border-radius: 8px;
@@ -202,13 +209,20 @@ function isActive(path: string) {
 .nav-icon { width: 1.25rem; height: 1.25rem; flex-shrink: 0; }
 .nav-text { white-space: nowrap; overflow: hidden; }
 .sidebar-footer { padding: 0.75rem; border-top: 1px solid var(--border-color); flex-shrink: 0; box-sizing: border-box; max-width: 100%; }
+.sidebar.collapsed .sidebar-footer { padding-left: 0.35rem; padding-right: 0.35rem; }
 .user-email { font-size: 0.7rem; color: var(--text-tertiary); display: block; margin-bottom: 0.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.sidebar-footer-actions {
+  display: flex; flex-direction: row; align-items: center; gap: 0.5rem; width: 100%;
+}
+.sidebar.collapsed .sidebar-footer-actions { flex-direction: column; align-items: center; gap: 0.35rem; }
+.sidebar.collapsed .sidebar-footer-actions :deep(.theme-slide) { max-width: 100%; flex-shrink: 1; min-width: 0; }
 .btn-logout {
   display: flex; align-items: center; justify-content: center; gap: 0.5rem;
   padding: 0.4rem 0.75rem; font-size: 0.8125rem; background: transparent; color: var(--text-secondary);
-  border: 1px solid var(--border-light); border-radius: 6px; cursor: pointer; width: 100%;
-  transition: color 0.2s, border-color 0.2s; box-sizing: border-box; min-width: 0;
+  border: 1px solid var(--border-light); border-radius: 6px; cursor: pointer; flex: 1; min-width: 0;
+  transition: color 0.2s, border-color 0.2s; box-sizing: border-box;
 }
+.sidebar.collapsed .btn-logout { width: 100%; flex: none; }
 .btn-logout:hover { color: var(--error); border-color: rgba(248, 113, 113, 0.4); }
 .btn-logout-collapsed { padding: 0.4rem; justify-content: center; }
 .logout-icon { width: 1rem; height: 1rem; flex-shrink: 0; }
