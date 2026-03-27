@@ -95,7 +95,7 @@ async function load() {
   }
   const list = (data ?? []) as EditRequestRow[]
   const ids = [...new Set(list.map((r) => r.requested_by).filter(Boolean))]
-  let empMap: Record<string, { name: string; email: string }> = {}
+  const empMap: Record<string, { name: string; email: string }> = {}
   if (ids.length) {
     const { data: emps, error: empErr } = await supabase.from('employee').select('id, name, email').in('id', ids)
     if (!empErr && emps) {
