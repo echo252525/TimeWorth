@@ -78,21 +78,26 @@ function isActive(path: string) {
 <template>
   <div v-if="!authReady" class="auth-loading">Loading…</div>
   <div v-else-if="isLoggedIn" class="layout" :class="{ 'sidebar-collapsed': collapsed && !isMobile }">
-    <button type="button" class="burger" :class="{ open: mobileOpen }" :aria-label="mobileOpen ? 'Close menu' : 'Open menu'" @click="mobileOpen = !mobileOpen">
-      <span v-if="!mobileOpen" class="hamburger"><span></span><span></span><span></span></span>
-      <span v-else class="close-icon"><span></span><span></span></span>
+    <button type="button" class="burger" :class="{ open: isMobile && mobileOpen }" :aria-label="isMobile && mobileOpen ? 'Close menu' : 'Open menu'" @click="mobileOpen = !mobileOpen">
+      <span class="material-symbols-outlined toggle-icon">{{ isMobile && mobileOpen ? 'close' : 'menu' }}</span>
     </button>
     <Transition name="overlay">
       <div v-if="mobileOpen" class="sidebar-backdrop" @click="mobileOpen = false" aria-hidden="true" />
     </Transition>
     <aside class="sidebar" :class="{ collapsed: collapsed && !isMobile, mobile: isMobile, 'mobile-open': mobileOpen }">
-      <div v-if="!collapsed || isMobile" class="logo-placeholder" title="TimeWorth">
-        <img src="/TimeWorthLogo.png" alt="TimeWorth" class="sidebar-logo" />
+      <div class="sidebar-top" :class="{ 'collapsed-top': collapsed && !isMobile }">
+        <div v-if="!collapsed || isMobile" class="account-head">
+          <img v-if="profileUrl" :src="profileUrl" class="account-avatar" alt="" />
+          <span v-else class="account-avatar placeholder">{{ (employeeName || user?.email || '?').slice(0, 1).toUpperCase() }}</span>
+          <div class="account-meta">
+            <span class="account-name">{{ employeeName || 'Employee' }}</span>
+            <span class="account-email">{{ user?.email }}</span>
+          </div>
+        </div>
+        <button type="button" class="collapse-btn" :aria-label="collapsed ? 'Expand' : 'Collapse'" @click="collapsed = !collapsed">
+          <span class="material-symbols-outlined collapse-icon">{{ collapsed ? 'menu' : 'close' }}</span>
+        </button>
       </div>
-      <button type="button" class="collapse-btn" :aria-label="collapsed ? 'Expand' : 'Collapse'" @click="collapsed = !collapsed">
-        <span v-if="!collapsed" class="material-symbols-outlined collapse-icon">right_panel_close</span>
-        <span v-else class="material-symbols-outlined collapse-icon">right_panel_open</span>
-      </button>
       <nav class="nav">
         <button
           v-for="item in nav"
@@ -109,9 +114,6 @@ function isActive(path: string) {
         </button>
       </nav>
       <div class="sidebar-footer">
-        <Transition name="nav-label">
-          <span v-if="!collapsed || isMobile" class="user-email">{{ user?.email }}</span>
-        </Transition>
         <div class="sidebar-footer-actions">
           <ThemeToggle :compact="collapsed && !isMobile" />
           <button type="button" class="btn-logout" :class="{ 'btn-logout-collapsed': collapsed && !isMobile }" @click="logout" :title="collapsed && !isMobile ? 'Logout' : ''">
@@ -126,31 +128,32 @@ function isActive(path: string) {
     <main class="main">
       <header class="main-header">
         <div class="header-title-section">
-          <h1 class="app-title">TimeWorth</h1>
-          <p class="app-tagline">An attendance app for PC Worth employees</p>
-        </div>
-        <div class="header-right">
-          <button type="button" class="profile-trigger" @click="go('/dashboard/settings')">
-            <img v-if="profileUrl" :src="profileUrl" class="profile-avatar" alt="" />
-            <span v-else class="profile-avatar placeholder">{{ (employeeName || user?.email || '?').slice(0, 1).toUpperCase() }}</span>
-            <span class="profile-name">{{ employeeName || user?.email }}</span>
-          </button>
+          <img src="/TimeWorthLogo.png" alt="TimeWorth" class="header-logo" />
+          <div class="header-title-copy">
+            <h1 class="app-title">TimeWorth</h1>
+            <p class="app-tagline">An attendance app for PC Worth employees</p>
+          </div>
         </div>
       </header>
       <div class="main-content"><router-view /></div>
     </main>
   </div>
 </template>
+
+
+
+
 <style scoped>
 .auth-loading { display: flex; align-items: center; justify-content: center; min-height: 100vh; width: 100%; background: var(--bg-primary); color: var(--text-tertiary); font-size: 0.9375rem; }
 .layout { display: flex; min-height: 100vh; width: 100%; background: var(--bg-primary); color: var(--text-primary); position: relative; }
-.burger { display: none; position: fixed; top: 1rem; left: 1rem; z-index: 100; width: 44px; height: 44px; align-items: center; justify-content: center; cursor: pointer; padding: 0; border: none; background: transparent; color: inherit; }
-.burger .hamburger, .burger .close-icon { display: flex; flex-direction: column; justify-content: space-between; width: 28px; height: 22px; }
-.burger .close-icon { justify-content: center; position: relative; height: 28px; width: 28px; }
-.burger .hamburger span { display: block; height: 3px; background: var(--text-secondary); border-radius: 2px; }
-.burger .close-icon span { position: absolute; left: 50%; top: 50%; width: 28px; height: 3px; margin: -1.5px 0 0 -14px; background: var(--text-secondary); border-radius: 2px; }
-.burger .close-icon span:first-child { transform: rotate(45deg); }
-.burger .close-icon span:last-child { transform: rotate(-45deg); }
+.burger { display: none; position: fixed; top: 1rem; left: 1rem; z-index: 100; width: 44px; height: 44px; align-items: center; justify-content: center; cursor: pointer; padding: 0; border: none; background: transparent; color: inherit; transition: left 0.3s ease; }
+
+.toggle-icon {
+  font-size: 28px;
+  line-height: 1;
+  color: var(--text-secondary);
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
 .sidebar-backdrop { position: fixed; inset: 0; background: var(--overlay); z-index: 40; }
 .sidebar {
   --sidebar-brand-mark-size: 28px;
@@ -168,30 +171,69 @@ function isActive(path: string) {
 @media (min-width: 1024px) { .sidebar { width: 260px; } }
 .sidebar.collapsed { width: 64px; }
 /* Collapsed rail: no logo row — only the expand/collapse control at top; nav clears it */
-.sidebar.collapsed .nav { padding-top: 2.75rem; }
-.logo-placeholder {
-  margin: 0 0.75rem 0.5rem;
-  margin-left: 1.25rem; /* align with nav icons: .nav 0.5rem + .nav-link 0.75rem */
-  padding: 0;
+.sidebar.collapsed .nav { padding-top: 0; }
+
+.sidebar-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem 1.5rem;
+}
+.sidebar-top.collapsed-top {
+  justify-content: center;
+  padding-left: 0.35rem;
+  padding-right: 0.35rem;
+}
+.account-head {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  flex-shrink: 0;
-  position: relative;
-  box-sizing: border-box;
-  max-width: calc(100% - 1.25rem - 0.75rem);
+  gap: 0.6rem;
+  min-width: 0;
+  flex: 1;
 }
-.sidebar-logo {
-  display: block;
-  height: var(--sidebar-brand-mark-size);
-  width: auto;
-  max-width: 100%;
-  object-fit: contain;
+.account-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.account-avatar.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(56, 189, 248, 0.3);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+.account-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.account-name {
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.account-email {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .collapse-btn {
-  position: absolute; top: 1.125rem; right: 0.5rem; left: auto; width: var(--sidebar-brand-mark-size); height: var(--sidebar-brand-mark-size); border-radius: 50%;
+  position: static; width: var(--sidebar-brand-mark-size); height: var(--sidebar-brand-mark-size); border-radius: 50%;
   background: transparent; border: none; color: var(--text-secondary); cursor: pointer;
-  display: flex; align-items: center; justify-content: center; z-index: 100; padding: 0;
+  display: flex; align-items: center; justify-content: center; z-index: 100; padding: 0; margin-top: 0.2rem;
   transition: color 0.2s;
   box-shadow: none;
   outline: none;
@@ -236,23 +278,18 @@ function isActive(path: string) {
 @media (min-width: 1024px) { .main { margin-left: 260px; } }
 .layout.sidebar-collapsed .main { margin-left: 64px; }
 .main-header { flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1.5rem; border-bottom: 1px solid var(--border-color); background: var(--bg-secondary); }
-.header-title-section { display: flex; flex-direction: column; gap: 0.25rem; }
+.header-title-section { display: flex; align-items: center; gap: 0.75rem; }
+.header-logo { width: auto; height: 36px; object-fit: contain; flex-shrink: 0; }
+.header-title-copy { display: flex; flex-direction: column; gap: 0.25rem; }
 .app-title { margin: 0; font-size: 1.25rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; }
 .app-tagline { margin: 0; font-size: 0.8125rem; color: var(--text-secondary); }
-.header-right { display: flex; align-items: center; gap: 0.75rem; }
-.profile-trigger { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; border: none; border-radius: 8px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 0.9375rem; transition: background 0.2s; }
-.profile-trigger:hover { background: var(--bg-hover); }
-.profile-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
-.profile-avatar.placeholder { display: flex; align-items: center; justify-content: center; background: rgba(56, 189, 248, 0.3); color: var(--accent); font-weight: 600; font-size: 0.875rem; }
-.profile-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .main-content { flex: 1; padding: 1.5rem; overflow: auto; min-height: 0; }
 @media (min-width: 1024px) {
   .main-content { padding: 2rem 2.5rem; max-width: 1600px; margin: 0 auto; width: 100%; }
-  .main-header { padding: 1rem 2.5rem; }
 }
-@media (max-width: 767px) { .profile-name { max-width: 100px; } }
 @media (max-width: 767px) {
-  .burger { display: flex; }
+  .burger { display: flex; left: 1rem; }
+  .burger.open { left: 216px; }
   .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 260px; transform: translateX(-100%); box-shadow: 4px 0 24px rgba(0,0,0,0.3); }
   .sidebar.mobile-open { transform: translateX(0); }
   .sidebar.collapsed { width: 260px; }
@@ -260,6 +297,7 @@ function isActive(path: string) {
   .main { margin-left: 0; padding-top: 3rem; }
   .main-header { padding-top: 0.5rem; flex-direction: column; align-items: flex-start; gap: 0.75rem; }
   .header-title-section { width: 100%; }
+  .header-logo { height: 30px; }
   .app-title { font-size: 1.125rem; }
   .app-tagline { font-size: 0.75rem; }
 }
