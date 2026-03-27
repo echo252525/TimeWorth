@@ -4,8 +4,6 @@ import { useAuth } from '../composables/useAuth'
 import ThemeToggle from '../components/ThemeToggle.vue'
 const { user, isLoggedIn, signOut } = useAuth()
 const adminGate = ref(false)
-const schoolLogoError = ref(false)
-const citDeptLogoError = ref(false)
 function onKey(e: KeyboardEvent) {
   if (e.ctrlKey && e.key === 'a') { e.preventDefault(); adminGate.value = true }
 }
@@ -20,7 +18,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <span class="brand-text">TimeWorth</span>
       </div>
       <nav class="nav">
-        <ThemeToggle />
         <template v-if="adminGate">
           <router-link to="/admin/login" class="link">Admin login</router-link>
           <router-link to="/admin/signup" class="btn outline">Admin sign up</router-link>
@@ -40,17 +37,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <h1>Smart Attendance with<br />GPS & Facial Recognition</h1>
         <p class="tagline">A secure attendance system for PCWorth that verifies both your location and identity in real time.</p>
         <div v-if="!isLoggedIn" class="cta">
-          <router-link to="/signup" class="btn primary large">Start tracking</router-link>
+          <router-link to="/signup" class="btn primary large">Create your account now</router-link>
           <router-link to="/login" class="btn ghost large">Log in</router-link>
         </div>
         <div v-else class="welcome"><p>Welcome back. Signed in as <strong>{{ user?.email }}</strong>.</p></div>
       </div>
       <div class="hero-visual">
-        <div class="card-mock">
-          <div class="mock-row"><span class="dot"></span> Time in — 9:00 AM</div>
-          <div class="mock-row"><span class="dot"></span> Time out — 6:00 PM</div>
-          <div class="mock-row total">8h 0m today</div>
-        </div>
+        <img src="/mascot1.png" alt="PC Worth mascot" class="hero-mascot" />
       </div>
     </main>
 
@@ -78,7 +71,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
     <section id="how-it-works" class="page-section how-it-works" aria-labelledby="how-it-works-heading">
       <div class="page-inner">
-        <h2 id="how-it-works-heading" class="section-title how-title">How does it work</h2>
+        <h2 id="how-it-works-heading" class="section-title how-title">How does TimeWorth work?</h2>
         <p class="how-lead">
           TimeWorth checks your location and your identity before you can clock in. Follow these three steps when you arrive at the office.
         </p>
@@ -114,70 +107,94 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       </div>
     </section>
 
-    <section id="thesis-credits" class="page-section thesis-credits" aria-labelledby="thesis-credits-heading">
-      <div class="page-inner credits-inner">
-        <h2 id="thesis-credits-heading" class="section-title text-center mb-5">Our Team</h2>
-        <div class="credits-layout">
-          <div class="brands-column">
-            <div class="school-brand">
-              <div class="brand-logo-frame">
-                <img
-                  v-if="!schoolLogoError"
-                  src="/school-logo.png"
-                  alt="School logo"
-                  class="school-logo"
-                  @error="schoolLogoError = true"
-                />
-                <div v-else class="school-logo-fallback" aria-hidden="true">S</div>
-              </div>
-              <p class="school-name">TECHNOLOGICAL UNIVERSITY OF THE PHILIPPINES - MANILA</p>
-            </div>
-            <div class="dept-brand">
-              <div class="brand-logo-frame">
-                <img
-                  v-if="!citDeptLogoError"
-                  src="/citDept.png"
-                  alt="CIT Department logo"
-                  class="dept-logo"
-                  @error="citDeptLogoError = true"
-                />
-                <div v-else class="dept-logo-fallback" aria-hidden="true">CIT</div>
-              </div>
-              <p class="dept-name">COLLEGE OF INDUSTRIAL TECHNOLOGY DEPARTMENT</p>
-            </div>
-          </div>
-          <dl class="credits-meta">
-            <div class="meta-row">
-              <dt>Thesis title</dt>
-              <dd>Development of Employee Deployment Monitoring System with Verifier</dd>
-            </div>
-            <div class="meta-row">
-              <dt>Program</dt>
-              <dd>Bachelor of Engineering Technology Major in Computer Engineering Technology</dd>
-            </div>
-            <div class="meta-row">
-              <dt>Batch</dt>
-              <dd>2025–2026</dd>
-            </div>
-            <div class="meta-row">
-              <dt>Students</dt>
-              <dd>
-                <ul class="name-list">
-                  <li>Jericho D. Montuya</li>
-                  <li>Mhylze Micaela B. Miranda</li>
-                  <li>Cy Bernadine S. Verbo</li>
-                  <li>Rb Ionic C. Silverio</li>
-                  <li>Allana A. Maclang</li>
-                  <li>Geralyn D. Laput</li>
-                </ul>
-              </dd>
-            </div>
-          </dl>
+    <section id="about-pc-worth" class="page-section thesis-credits" aria-labelledby="about-pc-worth-heading">
+      <div class="page-inner about-inner">
+        <h2 id="about-pc-worth-heading" class="section-title text-center">About PC Worth</h2>
+        <div class="about-grid">
+          <article class="about-card">
+            <h3>About the Company</h3>
+            <p>
+              PC Worth is a Philippine-based technology retail company specializing in computer hardware, custom PC
+              builds, and IT solutions. The company provides affordable and high-performance computer products for
+              gamers, students, professionals, and businesses.
+            </p>
+            <p>
+              Starting from a small computer shop, PC Worth has grown into a trusted provider of quality PC components,
+              peripherals, and system builds, with a strong focus on customer satisfaction and technical support.
+            </p>
+          </article>
         </div>
+
+        <article class="about-card branch-card">
+          <h3>Branches</h3>
+          <div class="branch-grid">
+            <section class="branch-item">
+              <div class="branch-head">
+                <span class="material-symbols-outlined branch-icon" aria-hidden="true">storefront</span>
+                <h4>Earnshaw Branch</h4>
+              </div>
+              <p>
+                <span class="material-symbols-outlined branch-detail-icon" aria-hidden="true">location_on</span>
+                <span>618 M. Earnshaw St. Sampaloc Manila</span>
+              </p>
+              <p>
+                <span class="material-symbols-outlined branch-detail-icon" aria-hidden="true">call</span>
+                <span>(02)8 656 0586</span>
+              </p>
+              <p>
+                <span class="material-symbols-outlined branch-detail-icon" aria-hidden="true">mobile</span>
+                <span>(+63) 967-701-8178 / (+63) 998 594 3037</span>
+              </p>
+            </section>
+            <section class="branch-item">
+              <div class="branch-head">
+                <span class="material-symbols-outlined branch-icon" aria-hidden="true">apartment</span>
+                <h4>Alabang Branch</h4>
+              </div>
+              <p>
+                <span class="material-symbols-outlined branch-detail-icon" aria-hidden="true">location_on</span>
+                <span>2nd Flr. Mega Accent Bldg. 479 Alabang-Zapote Road, Brgy. Almanza Uno, Las Pinas City</span>
+              </p>
+              <p>
+                <span class="material-symbols-outlined branch-detail-icon" aria-hidden="true">call</span>
+                <span>(02)8 292 9044</span>
+              </p>
+              <p>
+                <span class="material-symbols-outlined branch-detail-icon" aria-hidden="true">mobile</span>
+                <span>(+63) 931-062-1294</span>
+              </p>
+            </section>
+            <section class="branch-item">
+              <div class="branch-head">
+                <span class="material-symbols-outlined branch-icon" aria-hidden="true">desktop_windows</span>
+                <h4>PC Worth Experience (Quezon City)</h4>
+              </div>
+              <p>
+                <span class="material-symbols-outlined branch-detail-icon" aria-hidden="true">location_on</span>
+                <span>2nd Floor, LE-EL Building 5, 7 JP Rizal corner Malong St., Marilag, Quezon City</span>
+              </p>
+              <p>
+                <span class="material-symbols-outlined branch-detail-icon" aria-hidden="true">call</span>
+                <span>(02)7 002 0176</span>
+              </p>
+              <p>
+                <span class="material-symbols-outlined branch-detail-icon" aria-hidden="true">mobile</span>
+                <span>(+63) 947-357-1727</span>
+              </p>
+            </section>
+          </div>
+        </article>
       </div>
     </section>
 
-    <footer class="footer">TimeWorth — Location-based Attendance with Facial Recognition</footer>
+    <footer class="footer">
+      <p>© 2026 PC Worth. All Rights Reserved.</p>
+      <p>Developed by TUP Students.</p>
+    </footer>
+
+    <div class="floating-theme-toggle">
+      <ThemeToggle />
+    </div>
   </div>
 </template>
 
@@ -358,36 +375,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   justify-content: center;
 }
 
-.card-mock {
-  background: var(--landing-surface);
-  border: 1px solid var(--landing-border);
-  box-shadow: var(--landing-shadow);
-  border-radius: 12px;
-  padding: 1.25rem 1.5rem;
-  min-width: 260px;
-}
-
-.mock-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9375rem;
-  padding: 0.35rem 0;
-}
-
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #22c55e;
-}
-
-.mock-row.total {
-  margin-top: 0.5rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--landing-border);
-  font-weight: 600;
-  color: #38bdf8;
+.hero-mascot {
+  display: block;
+  width: min(100%, 620px);
+  height: auto;
+  object-fit: contain;
 }
 
 .page-section {
@@ -497,9 +489,21 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   text-align: center;
   max-width: 22rem;
   width: 100%;
+  min-height: 230px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 0.9rem 0.85rem;
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.how-step:hover {
+  transform: translateY(-3px);
+  background: var(--landing-surface);
+  border-color: var(--landing-accent-border);
 }
 
 .how-step-icon {
@@ -555,7 +559,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     flex-direction: row;
     flex-wrap: nowrap;
     justify-content: center;
-    align-items: flex-start;
+    align-items: stretch;
     gap: 0.75rem 1rem;
   }
 
@@ -563,6 +567,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     flex: 1 1 0;
     min-width: 0;
     max-width: none;
+    min-height: 250px;
   }
 
   .how-arrow {
@@ -575,150 +580,101 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   background: var(--landing-surface-soft);
 }
 
-.credits-inner {
-  max-width: 720px;
+.about-inner {
+  max-width: 980px;
 }
 
-.credits-layout {
-  display: grid;
-  gap: 2rem;
-  align-items: start;
+.about-inner .section-title {
+  margin-bottom: 1.5rem;
 }
 
-@media (min-width: 640px) {
-  .credits-layout {
-    grid-template-columns: minmax(160px, 220px) 1fr;
-    gap: 2.5rem;
-  }
-}
-
-.brands-column {
-  display: flex;
-  flex-direction: column;
-  gap: 1.75rem;
-  align-items: center;
-}
-
-@media (min-width: 640px) {
-  .brands-column {
-    align-items: flex-start;
-  }
-}
-
-.school-brand,
-.dept-brand {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.75rem;
-  text-align: center;
-  width: 100%;
-}
-
-.brand-logo-frame {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  min-height: 120px;
-  flex-shrink: 0;
-}
-
-.school-logo,
-.dept-logo {
-  display: block;
-  width: 120px;
-  max-width: 100%;
-  height: auto;
-  max-height: 120px;
-  object-fit: contain;
-  margin: 0;
-  border-radius: 8px;
-}
-
-.school-logo-fallback,
-.dept-logo-fallback {
-  width: 120px;
-  height: 120px;
-  margin: 0;
-  border-radius: 12px;
-  background: var(--landing-fallback-bg);
-  border: 1px solid var(--landing-fallback-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: #38bdf8;
-  text-align: center;
-  padding: 0.35rem;
-  line-height: 1.15;
-  flex-shrink: 0;
-}
-
-.school-logo-fallback {
-  font-size: 2.5rem;
-  padding: 0;
-}
-
-.dept-logo-fallback {
-  font-size: 1.65rem;
-  letter-spacing: 0.03em;
-}
-
-.school-name,
-.dept-name {
-  margin: 0;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  color: var(--landing-subheading);
-  line-height: 1.4;
-}
-
-.dept-name {
-  color: var(--landing-muted);
-  font-weight: 500;
-  font-size: 0.875rem;
-}
-
-.credits-meta {
-  margin: 0;
-}
-
-.meta-row {
+.about-grid {
   margin-bottom: 1.25rem;
 }
 
-.meta-row:last-child {
+.about-card {
+  background: var(--landing-surface);
+  border: 1px solid var(--landing-border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  box-shadow: var(--landing-card-shadow);
+}
+
+.about-card h3 {
+  margin: 0 0 0.75rem;
+  color: var(--landing-heading);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.about-card p {
+  margin: 0 0 0.75rem;
+  color: var(--landing-muted);
+  line-height: 1.6;
+}
+
+.about-card p:last-child {
   margin-bottom: 0;
 }
 
-.meta-row dt {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.branch-card {
+  margin-top: 0.25rem;
+}
+
+.branch-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+@media (min-width: 900px) {
+  .branch-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.branch-item {
+  padding: 0.85rem 0.95rem;
+}
+
+.branch-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
+}
+
+.branch-icon {
+  font-size: 1.1rem;
+  color: var(--accent-light);
+  font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+}
+
+.branch-item h4 {
+  margin: 0;
+  color: var(--landing-subheading);
+  font-size: 0.95rem;
+}
+
+.branch-item p {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin: 0 0 0.35rem;
   color: var(--landing-muted);
-  margin-bottom: 0.35rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
-.meta-row dd {
-  margin: 0;
-  font-size: 0.9375rem;
-  color: var(--landing-value);
-  line-height: 1.5;
+.branch-detail-icon {
+  font-size: 1rem;
+  line-height: 1.2;
+  color: var(--accent-light);
+  flex-shrink: 0;
+  margin-top: 0.05rem;
+  font-variation-settings: 'FILL' 0, 'wght' 450, 'GRAD' 0, 'opsz' 20;
 }
 
-.name-list {
-  margin: 0;
-  padding-left: 1.25rem;
-}
-
-.name-list li {
-  margin-bottom: 0.25rem;
-}
-
-.name-list li:last-child {
+.branch-item p:last-child {
   margin-bottom: 0;
 }
 
@@ -728,6 +684,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   font-size: 0.8125rem;
   color: var(--landing-muted);
   border-top: 1px solid var(--landing-border);
+}
+
+.floating-theme-toggle {
+  position: fixed;
+  right: clamp(0.9rem, 2vw, 1.25rem);
+  bottom: clamp(0.9rem, 2vw, 1.25rem);
+  z-index: 1200;
 }
 
 @media (min-width: 1024px) {
