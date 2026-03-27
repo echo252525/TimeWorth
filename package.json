@@ -1,0 +1,5 @@
+{
+  "name": "timeworth",
+  "private": true,
+  "description": "Root package so Vercel (repo root) can run npm install; app lives in my-app/"
+}
