@@ -214,17 +214,35 @@ export function useAttendance() {
     if (!userId.value) return
     isLoading.value = true
     error.value = null
-    const { start: startOfDay, end: endOfDay } = getLocalDayRange(today.value)
+    const dayStr = today.value
+    const { start: startOfDay, end: endOfDay } = getLocalDayRange(dayStr)
+    // Widen bounds so rows stored with odd "Z" local timestamps are not excluded at DB filter time.
+    const padMs = 36 * 60 * 60 * 1000
+    const startWide = new Date(new Date(startOfDay).getTime() - padMs).toISOString()
+    const endWide = new Date(new Date(endOfDay).getTime() + padMs).toISOString()
     const { data, error: err } = await supabase
       .from('attendance')
       .select('*')
       .eq('user_id', userId.value)
-      .gte('clock_in', startOfDay)
-      .lte('clock_in', endOfDay)
+      .gte('clock_in', startWide)
+      .lte('clock_in', endWide)
       .order('clock_in', { ascending: false })
     isLoading.value = false
     if (err) { error.value = err.message; return }
-    todayRecords.value = (data ?? []) as AttendanceRow[]
+    let incoming = (data ?? []) as AttendanceRow[]
+    incoming = incoming.filter((r) => {
+      if (!r.clock_in) return false
+      const localD = getLocalDateString(new Date(storedToRealInstant(r.clock_in)))
+      return localD === dayStr
+    })
+    const prevOpen = todayRecords.value.find((r) => !r.clock_out)
+    // If the range query misses the row (timezone / server lag) or returns before insert is visible,
+    // keep the in-memory open session so the timeclock still shows the ticking timer.
+    if (prevOpen && !incoming.some((r) => r.attendance_id === prevOpen.attendance_id)) {
+      todayRecords.value = [prevOpen, ...incoming.filter((r) => r.attendance_id !== prevOpen.attendance_id)]
+      return
+    }
+    todayRecords.value = incoming
   }
 
   async function clockIn(workModality: WorkModality, opts?: { branchLocation?: string; locationIn?: string; facialStatus?: string; livenessVerificationId?: string }) {

@@ -441,6 +441,29 @@ watch(step, (s) => {
   console.log('[Timeclock] step changed', { to: s, locationFetchedOnMount: locationFetchedOnMount.value })
 })
 
+watch(
+  () => todayRecord.value?.work_modality,
+  (m) => {
+    if (m === 'office' || m === 'wfh') workModality.value = m
+  },
+  { immediate: true }
+)
+
+watch(
+  isClockedIn,
+  (in_) => {
+    if (in_ && step.value === 'idle') step.value = 'clocked_in'
+  },
+  { immediate: true }
+)
+
+watch(
+  () => ({ in: isClockedIn.value, el: elapsedDisplay.value, id: todayRecord.value?.attendance_id }),
+  (v) => {
+    if (v.in && v.id) console.debug('[Timeclock] timer', { elapsedDisplay: v.el, attendanceId: v.id })
+  }
+)
+
 watch(step, async (s, prev) => {
   const verificationId = livenessVerificationId.value ?? todayRecord.value?.liveness_verifications_id ?? null
   if (s === 'facial_out' && verificationId) {
@@ -683,10 +706,11 @@ async function onFacialClockInVerified() {
   }
   const branchId = workModality.value === 'office' ? selectedBranch.value?.id : undefined
   await clockIn(workModality.value, { locationIn: locStr, facialStatus: 'verified', branchLocation: branchId, livenessVerificationId: livenessVerificationId.value ?? undefined })
+  // Match WFH: enter clocked-in state immediately so the live timer is visible (not hidden under step==='facial').
+  step.value = 'clocked_in'
+  closeLivenessRealtime()
   setTimeout(() => {
-    closeLivenessRealtime()
     facialScanSuccess.value = false
-    step.value = 'clocked_in'
     locationIn.value = null
     fetchToday()
     // keep livenessVerificationId for clock-out facial scan
@@ -926,7 +950,7 @@ async function handleCancelFacial() {
         <div v-if="isLoading && !todayRecord && step === 'idle'" class="muted">Loading…</div>
         <template v-else>
           <!-- Active session -->
-          <div v-if="todayRecord && !todayRecord.clock_out" class="hero-card">
+          <div v-if="todayRecord && !todayRecord.clock_out" class="hero-card hero-idle">
             <div v-if="step === 'facial_out'" class="confirm-wrap facial-out-wrap">
               <p class="muted">Face verification in progress…</p>
             </div>
@@ -948,14 +972,42 @@ async function handleCancelFacial() {
               </div>
             </div>
             <template v-else>
-              <div v-if="isOnLunch" class="timer-wrap">
-                <p class="timer-label">Lunch break</p>
-                <div class="timer lunch-timer">{{ lunchElapsedDisplay }}</div>
-                <p class="muted sub">Work: {{ elapsedDisplay }}</p>
-              </div>
-              <div v-else class="timer-wrap">
-                <div class="timer">{{ elapsedDisplay }}</div>
-                <p class="muted">In at {{ fmtStored(todayRecord.clock_in) }} · {{ todayRecord.work_modality ?? '—' }}</p>
+              <!-- Same layout as idle card: left = ticking timer, right = 8h ring — so office/WFH match -->
+              <div class="hero-sub-row clocked-hero-row">
+                <div class="clocked-hero-left">
+                  <template v-if="isOnLunch">
+                    <p class="timer-label">Lunch break</p>
+                    <div class="timer lunch-timer timer-hero-main">{{ lunchElapsedDisplay }}</div>
+                    <p class="muted sub">Work: {{ elapsedDisplay }}</p>
+                  </template>
+                  <template v-else>
+                    <p class="muted hero-sub clocked-hero-label">Working · {{ todayRecord.work_modality ?? '—' }}</p>
+                    <div class="timer timer-hero-main" aria-live="polite">{{ elapsedDisplay }}</div>
+                    <p class="muted clocked-hero-meta">In at {{ fmtStored(todayRecord.clock_in) }}</p>
+                  </template>
+                </div>
+                <div
+                  v-if="remainingHoursLabel"
+                  class="time-left-badge"
+                  :aria-label="isOnLunch ? 'Time left in work day' : 'Time left before 8h target'"
+                >
+                  <svg class="time-left-icon" viewBox="0 0 40 40" aria-hidden="true">
+                    <circle class="time-left-track" cx="20" cy="20" r="14" fill="none" />
+                    <circle
+                      class="time-left-progress"
+                      cx="20"
+                      cy="20"
+                      r="14"
+                      fill="none"
+                      :stroke-dasharray="timeLeftCircumference"
+                      :stroke-dashoffset="timeLeftDashOffset"
+                      :stroke="timeLeftProgressColor"
+                    />
+                    <text x="20" y="23" class="time-left-number time-left-number-pulse" text-anchor="middle">
+                      {{ remainingHoursLabel }}
+                    </text>
+                  </svg>
+                </div>
               </div>
               <div v-if="todayRecord.lunch_break_start" class="lunch-info">
                 <span class="muted">Lunch {{ isOnLunch ? 'started' : 'ended' }} at {{ isOnLunch ? fmtStored(todayRecord.lunch_break_start) : fmtStored(todayRecord.lunch_break_end) }}</span>
@@ -1089,8 +1141,15 @@ async function handleCancelFacial() {
       </aside>
     </div>
 
-    <!-- Face scanning modal (clock in / clock out) – realtime: when facial_clock_in is set true, show success then proceed to timer -->
-    <div v-if="step === 'facial' || step === 'facial_out'" class="liveness-modal-overlay" aria-modal="true" role="dialog" aria-labelledby="facial-modal-title">
+    <!-- Face scanning modal (clock in / clock out). Include facialScanSuccess so success overlay can show after step is clocked_in (timer visible behind lighter overlay). -->
+    <div
+      v-if="step === 'facial' || step === 'facial_out' || facialScanSuccess"
+      class="liveness-modal-overlay"
+      :class="{ 'liveness-modal-overlay--post-clock-in': facialScanSuccess && step === 'clocked_in' }"
+      aria-modal="true"
+      role="dialog"
+      aria-labelledby="facial-modal-title"
+    >
       <div class="liveness-modal facial-scan-modal">
         <video
           v-if="!facialScanSuccess"
@@ -1166,6 +1225,7 @@ async function handleCancelFacial() {
 .facial-placeholder p { margin: 0 0 1rem; color: #94a3b8; }
 .facial-btns { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
 .liveness-modal-overlay { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 1.5rem; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.liveness-modal-overlay--post-clock-in { background: rgba(15, 23, 42, 0.28); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
 .liveness-modal { text-align: center; padding: 2rem; max-width: 420px; width: 100%; background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(255,255,255,0.12); border-radius: 20px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
 .liveness-modal .liveness-icon { display: block; margin: 0 auto 0.75rem; }
 .liveness-modal .liveness-face-id-video { width: 140px; height: 140px; object-fit: contain; }
@@ -1269,6 +1329,18 @@ async function handleCancelFacial() {
   gap: 0.75rem;
   margin-bottom: 0.75rem;
 }
+.clocked-hero-row { align-items: flex-start; }
+.clocked-hero-left { min-width: 0; flex: 1; }
+.clocked-hero-label { margin: 0 0 0.25rem !important; }
+.timer-hero-main {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #38bdf8;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  margin: 0.15rem 0 0.35rem;
+}
+.clocked-hero-meta { margin: 0 !important; font-size: 0.8125rem; }
 
 .time-left-badge {
   display: inline-flex;
