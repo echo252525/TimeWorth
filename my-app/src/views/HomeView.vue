@@ -382,6 +382,32 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   object-fit: contain;
 }
 
+@media (max-width: 719px) {
+  .hero-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .cta,
+  .welcome {
+    justify-content: center;
+  }
+
+  .hero-visual {
+    order: -1;
+  }
+
+  .hero-mascot {
+    width: min(100%, 420px);
+  }
+
+  .hero {
+    gap: 4rem;
+  }
+}
+
 .page-section {
   padding: clamp(3rem, 10vw, 5rem) clamp(1.5rem, 5vw, 3rem);
   border-top: 1px solid var(--landing-border);
