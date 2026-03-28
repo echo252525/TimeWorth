@@ -769,28 +769,6 @@ const exportRows = computed(() => {
   return flat
 })
 
-function downloadExcel() {
-  const headers = [
-    'Date Covered',
-    'Clock in',
-    'Clock out',
-    'Lunch In',
-    'Lunch Out',
-    'Total Hours',
-    'Modality',
-    'Branch',
-    'Activity'
-  ]
-  const escape = (v: string) => /[,"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
-  const csv = [headers.join(','), ...exportRows.value.map(r => r.map(escape).join(','))].join('\n')
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `timesheet-${new Date().toISOString().slice(0, 10)}.csv`
-  a.click()
-  URL.revokeObjectURL(a.href)
-}
-
 async function downloadPDF() {
   /** Space from the top of the page to the logos (mm). Increase for more top margin. */
   const pdfTopGapMm = 7
@@ -1248,7 +1226,6 @@ async function confirmEditRequest() {
     </div>
 
     <div class="actions">
-      <button type="button" class="btn btn-secondary" :disabled="!dayGroups.length" @click="downloadExcel">Download Excel</button>
       <button type="button" class="btn btn-primary" :disabled="!dayGroups.length" @click="downloadPDF">Download PDF</button>
     </div>
 
