@@ -74,10 +74,10 @@ async function onSubmit() {
         </div>
       </template>
       <template v-else>
-        <h2 class="auth-title">Admin Log in</h2>
+        <h2 class="auth-title"><strong>ADMIN LOGIN</strong></h2>
         <form class="auth-form" @submit.prevent="onSubmit">
           <div class="field">
-            <label for="admin-login-email">Email</label>
+            <label for="admin-login-email">EMAIL</label>
             <input
               id="admin-login-email"
               v-model="form.email"
@@ -88,7 +88,7 @@ async function onSubmit() {
             />
           </div>
           <div class="field">
-            <label for="admin-login-password">Password</label>
+            <label for="admin-login-password">PASSWORD</label>
             <div class="input-with-icon">
               <input
                 id="admin-login-password"

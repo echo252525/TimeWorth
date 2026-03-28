@@ -67,13 +67,13 @@ async function onSubmit() {
       <router-link class="btn primary auth-success-banner__cta" to="/login">Go to log in</router-link>
     </div>
     <template v-else>
-    <h2 class="auth-title">Create account</h2>
+    <h2 class="auth-title"><strong>CREATE ACCOUNT</strong></h2>
     <form class="auth-form" @submit.prevent="onSubmit">
-      <div class="field"><label for="name">Full name</label><input id="name" v-model="form.name" type="text" required placeholder="Juan Dela Cruz" autocomplete="name" /></div>
-      <div class="field"><label for="position">Position</label><input id="position" v-model="form.position_in_company" type="text" required placeholder="e.g. Developer" /></div>
-      <div class="field"><label for="branch">Branch</label><input id="branch" v-model="form.company_branch" type="text" required placeholder="aalisin na to diba?" /></div>
-      <div class="field"><label for="empno">Employee no.</label><input id="empno" v-model="form.employee_no" type="number" required min="1" placeholder="10001" /></div>
-      <div class="field"><label for="email">Email</label><input id="email" v-model="form.email" type="email" required placeholder="Enter your personal/company email" autocomplete="email" /></div>
+      <div class="field"><label for="name">FULL NAME</label><input id="name" v-model="form.name" type="text" required placeholder="Enter your full name" autocomplete="name" /></div>
+      <div class="field"><label for="position">POSITION IN COMPANY</label><input id="position" v-model="form.position_in_company" type="text" required placeholder="e.g. Developer" /></div>
+      <div class="field"><label for="branch">COMPANYBRANCH</label><input id="branch" v-model="form.company_branch" type="text" required placeholder="Enter your company branch" /></div>
+      <div class="field"><label for="empno">EMPLOYEE NO.</label><input id="empno" v-model="form.employee_no" type="number" required min="1" placeholder="Enter employee no." /></div>
+      <div class="field"><label for="email">COMPANY EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="company.email@pcworth.com" autocomplete="email" /></div>
       <div class="field">
         <label for="password">Password</label>
         <div class="input-with-icon">

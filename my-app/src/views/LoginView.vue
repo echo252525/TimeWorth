@@ -47,11 +47,11 @@ async function onSubmit() {
           You have successfully confirmed your email. You can now log in.
         </p>
       </div>
-      <h2 class="auth-title">Log in</h2>
+      <h2 class="auth-title"><strong>LOGIN</strong></h2>
       <form class="auth-form" @submit.prevent="onSubmit">
-        <div class="field"><label for="email">Email</label><input id="email" v-model="form.email" type="email" required placeholder="Enter your personal/company email" autocomplete="email" /></div>
+        <div class="field"><label for="email">COMPANY EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="company.email@pcworth.com" autocomplete="email" /></div>
         <div class="field">
-          <label for="password">Password</label>
+          <label for="password">PASSWORD</label>
           <div class="input-with-icon">
             <input
               id="password"
