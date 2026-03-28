@@ -35,7 +35,7 @@ html, body { margin: 0; min-height: 100vh; }
   --border-light: rgba(255, 255, 255, 0.12);
   --accent: #38bdf8;
   --accent-light: #0ea5e9;
-  --error: #f87171;
+  --error: #FF0000;
   --overlay: rgba(0, 0, 0, 0.5);
 }
 

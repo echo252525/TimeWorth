@@ -80,7 +80,14 @@ async function onSubmit() {
             </button>
           </div>
         </div>
-        <p v-if="error" class="error">{{ error }}</p>
+        <p
+          v-if="error"
+          class="error"
+          role="alert"
+          aria-live="polite"
+        >
+          {{ error }}
+        </p>
         <div class="auth-actions-row">
           <button type="button" class="btn btn-outline-secondary" @click="goBack">Back</button>
           <button type="submit" class="btn primary" :disabled="isLoading">{{ isLoading ? 'Signing in…' : 'Sign in' }}</button>

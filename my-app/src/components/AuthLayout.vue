@@ -21,7 +21,17 @@
 .auth-card .auth-form input::placeholder { color: var(--text-tertiary); }
 .auth-card .auth-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15); }
 
-.auth-card .auth-form .error { margin: 0; font-size: 0.8125rem; color: var(--error); }
+.auth-card .auth-form .error {
+  margin: 0;
+  padding: 0.3rem 1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--error);
+  text-align: left;
+}
 .auth-card .auth-form .btn.primary { padding: 0.6rem 1rem; border: none; border-radius: 8px; font-size: 0.9375rem; font-weight: 500; cursor: pointer; transition: opacity 0.2s; background: var(--accent-light); color: #fff; }
 .auth-card .auth-form .btn.primary:disabled { opacity: 0.7; cursor: not-allowed; }
 
