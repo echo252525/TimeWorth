@@ -24,6 +24,9 @@ const showPasswordForm = ref(false)
 const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
+const showCurrentPassword = ref(false)
+const showNewPassword = ref(false)
+const showConfirmPassword = ref(false)
 const changingPassword = ref(false)
 const passwordError = ref<string | null>(null)
 const passwordSuccess = ref(false)
@@ -87,6 +90,14 @@ const personalInfoDirty = computed(() => {
     companyBranch.value.trim() !== b.companyBranch ||
     String(employeeNo.value ?? '').trim() !== b.employeeNo ||
     email.value.trim() !== b.email
+  )
+})
+
+const canSubmitPasswordChange = computed(() => {
+  return (
+    currentPassword.value.length > 0 &&
+    newPassword.value.length >= 6 &&
+    confirmPassword.value.length > 0
   )
 })
 
@@ -188,16 +199,20 @@ async function changePassword() {
     })
     
     if (updateError) throw updateError
-    
-    passwordSuccess.value = true
+
     currentPassword.value = ''
     newPassword.value = ''
     confirmPassword.value = ''
-    
-    // Clear success message after 3 seconds
+    passwordError.value = null
+    showCurrentPassword.value = false
+    showNewPassword.value = false
+    showConfirmPassword.value = false
+    showPasswordForm.value = false
+    passwordSuccess.value = true
+
     setTimeout(() => {
       passwordSuccess.value = false
-    }, 3000)
+    }, 4000)
   } catch (e) {
     passwordError.value = e instanceof Error ? e.message : 'Failed to change password'
   } finally {
@@ -206,13 +221,32 @@ async function changePassword() {
 }
 
 function togglePasswordForm() {
-  showPasswordForm.value = !showPasswordForm.value
-  if (!showPasswordForm.value) {
+  const opening = !showPasswordForm.value
+  showPasswordForm.value = opening
+  if (opening) {
+    passwordSuccess.value = false
+    passwordError.value = null
+  } else {
     currentPassword.value = ''
     newPassword.value = ''
     confirmPassword.value = ''
     passwordError.value = null
+    showCurrentPassword.value = false
+    showNewPassword.value = false
+    showConfirmPassword.value = false
   }
+}
+
+function toggleCurrentPasswordVisibility() {
+  showCurrentPassword.value = !showCurrentPassword.value
+}
+
+function toggleNewPasswordVisibility() {
+  showNewPassword.value = !showNewPassword.value
+}
+
+function toggleConfirmPasswordVisibility() {
+  showConfirmPassword.value = !showConfirmPassword.value
 }
 
 function toggleDeleteConfirm() {
@@ -724,20 +758,101 @@ async function save() {
           <form class="password-form" @submit.prevent="changePassword">
             <div class="field">
               <label for="currentPassword">Current password</label>
-              <input id="currentPassword" v-model="currentPassword" type="password" placeholder="Current password" autocomplete="current-password" />
+              <div class="input-with-icon">
+                <input
+                  id="currentPassword"
+                  v-model="currentPassword"
+                  :type="showCurrentPassword ? 'text' : 'password'"
+                  placeholder="Current password"
+                  autocomplete="current-password"
+                />
+                <button
+                  type="button"
+                  class="icon-btn"
+                  :aria-label="showCurrentPassword ? 'Hide password' : 'Show password'"
+                  @click="toggleCurrentPasswordVisibility"
+                >
+                  <svg v-if="!showCurrentPassword" class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2" />
+                  </svg>
+                  <svg v-else class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M10.6 10.6a2.5 2.5 0 0 0 3.8 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M6.4 6.4C3.8 8.2 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.2-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    <path d="M9.5 4.2C10.3 4.1 11.1 4 12 4c6.5 0 10 8 10 8s-1.2 2.8-3.6 5.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div class="field">
               <label for="newPassword">New password</label>
-              <input id="newPassword" v-model="newPassword" type="password" placeholder="At least 6 characters" autocomplete="new-password" minlength="6" />
+              <div class="input-with-icon">
+                <input
+                  id="newPassword"
+                  v-model="newPassword"
+                  :type="showNewPassword ? 'text' : 'password'"
+                  placeholder="Minimum of 6 characters"
+                  autocomplete="new-password"
+                  minlength="6"
+                />
+                <button
+                  type="button"
+                  class="icon-btn"
+                  :aria-label="showNewPassword ? 'Hide password' : 'Show password'"
+                  @click="toggleNewPasswordVisibility"
+                >
+                  <svg v-if="!showNewPassword" class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2" />
+                  </svg>
+                  <svg v-else class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M10.6 10.6a2.5 2.5 0 0 0 3.8 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M6.4 6.4C3.8 8.2 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.2-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    <path d="M9.5 4.2C10.3 4.1 11.1 4 12 4c6.5 0 10 8 10 8s-1.2 2.8-3.6 5.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div class="field">
               <label for="confirmPassword">Confirm new password</label>
-              <input id="confirmPassword" v-model="confirmPassword" type="password" placeholder="Confirm" autocomplete="new-password" minlength="6" />
+              <div class="input-with-icon">
+                <input
+                  id="confirmPassword"
+                  v-model="confirmPassword"
+                  :type="showConfirmPassword ? 'text' : 'password'"
+                  placeholder="Confirm your password"
+                  autocomplete="new-password"
+                  minlength="6"
+                />
+                <button
+                  type="button"
+                  class="icon-btn"
+                  :aria-label="showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'"
+                  @click="toggleConfirmPasswordVisibility"
+                >
+                  <svg v-if="!showConfirmPassword" class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2" />
+                  </svg>
+                  <svg v-else class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M10.6 10.6a2.5 2.5 0 0 0 3.8 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M6.4 6.4C3.8 8.2 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.2-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    <path d="M9.5 4.2C10.3 4.1 11.1 4 12 4c6.5 0 10 8 10 8s-1.2 2.8-3.6 5.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
             </div>
             <p v-if="passwordError" class="msg error">{{ passwordError }}</p>
             <div class="form-actions">
               <button type="button" class="btn btn-ghost" @click="togglePasswordForm">Cancel</button>
-              <button type="submit" class="btn btn-primary" :disabled="changingPassword">
+              <button
+                type="submit"
+                class="btn btn-primary"
+                :disabled="changingPassword || !canSubmitPasswordChange"
+              >
                 {{ changingPassword ? 'Updating…' : 'Update password' }}
               </button>
             </div>
@@ -1019,12 +1134,43 @@ async function save() {
 .password-form { display: flex; flex-direction: column; gap: 0.875rem; }
 .password-form .field { display: flex; flex-direction: column; gap: 0.35rem; }
 .password-form label { font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); }
+.password-form .input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 280px;
+}
 .password-form input {
   width: 100%; max-width: 280px; padding: 0.5rem 0.75rem; border-radius: 8px;
   border: 1px solid var(--border-color); background: var(--bg-primary);
   color: var(--text-primary); font-size: 0.9375rem;
 }
+.password-form .input-with-icon input {
+  max-width: none;
+  padding-right: 2.5rem;
+}
 .password-form input:focus { outline: none; border-color: var(--accent); }
+.password-form .icon-btn {
+  position: absolute;
+  right: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.password-form .icon-btn:hover { color: var(--text-secondary); }
+.password-form .icon-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+}
+.password-form .icon { display: block; }
 .form-actions { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.25rem; }
 
 .danger-card { border-color: rgba(239, 68, 68, 0.3); }
