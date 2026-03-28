@@ -516,9 +516,8 @@ function isActive(path: string) {
 @media (min-width: 1024px) {
   .main-content {
     padding: 2rem 2.5rem;
-    max-width: 1600px;
-    margin: 0 auto;
     width: 100%;
+    box-sizing: border-box;
   }
 }
 

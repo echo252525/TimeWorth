@@ -285,7 +285,7 @@ function isActive(path: string) {
 .app-tagline { margin: 0; font-size: 0.8125rem; color: var(--text-secondary); }
 .main-content { flex: 1; padding: 1.5rem; overflow: auto; min-height: 0; }
 @media (min-width: 1024px) {
-  .main-content { padding: 2rem 2.5rem; max-width: 1600px; margin: 0 auto; width: 100%; }
+  .main-content { padding: 2rem 2.5rem; width: 100%; box-sizing: border-box; }
 }
 @media (max-width: 767px) {
   .burger { display: flex; left: 1rem; }

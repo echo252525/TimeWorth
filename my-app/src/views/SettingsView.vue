@@ -644,14 +644,15 @@ async function save() {
   <div class="page">
     <header class="page-header">
       <h1>Settings</h1>
-      <p class="page-desc">Profile and account</p>
+      <p class="page-desc">Manage your account details here.</p>
     </header>
 
     <div v-if="loading" class="loading-state">Loading…</div>
 
     <template v-else>
+      <div class="settings-grid">
       <!-- Personal Information -->
-      <section class="card personal-card profile-card">
+      <section class="card personal-card profile-card settings-grid__personal">
         <h2 class="card-title">Personal Information</h2>
         <div class="profile-row">
           <div class="avatar-wrap">
@@ -666,230 +667,259 @@ async function save() {
           <div class="profile-meta">
             <template v-if="!showPersonalInfoForm">
               <div class="personal-summary">
-                <div class="summary-row">
-                  <span class="summary-label">Full name</span>
-                  <span class="summary-value">{{ name || '—' }}</span>
+                <div class="personal-summary__row">
+                  <div class="summary-item">
+                    <span class="summary-label">Full name</span>
+                    <span class="summary-value">{{ name || '—' }}</span>
+                  </div>
+                  <div class="summary-item">
+                    <span class="summary-label">Position</span>
+                    <span class="summary-value">{{ positionInCompany || '—' }}</span>
+                  </div>
+                  <div class="summary-item">
+                    <span class="summary-label">Employee no.</span>
+                    <span class="summary-value">{{ employeeNo || '—' }}</span>
+                  </div>
                 </div>
-                <div class="summary-row">
-                  <span class="summary-label">Position</span>
-                  <span class="summary-value">{{ positionInCompany || '—' }}</span>
-                </div>
-                <div class="summary-row">
-                  <span class="summary-label">Branch</span>
-                  <span class="summary-value">{{ companyBranch || '—' }}</span>
-                </div>
-                <div class="summary-row">
-                  <span class="summary-label">Employee no.</span>
-                  <span class="summary-value">{{ employeeNo || '—' }}</span>
-                </div>
-                <div class="summary-row">
-                  <span class="summary-label">Email</span>
-                  <span class="summary-value summary-value--email">{{ email || '—' }}</span>
+                <div class="personal-summary__row">
+                  <div class="summary-item">
+                    <span class="summary-label">Email</span>
+                    <span class="summary-value summary-value--email">{{ email || '—' }}</span>
+                  </div>
+                  <div class="summary-item">
+                    <span class="summary-label">Branch</span>
+                    <span class="summary-value">{{ companyBranch || '—' }}</span>
+                  </div>
+                  <div class="summary-item summary-item--empty" aria-hidden="true"></div>
                 </div>
               </div>
-              <button type="button" class="btn btn-ghost edit-personal-btn" @click="startEditPersonalInfo">
-                <span class="material-symbols-outlined" aria-hidden="true">person_edit</span>
-                Edit personal information
-              </button>
             </template>
             <template v-else>
-              <form class="personal-form" @submit.prevent="save">
-                <div class="field">
-                  <label for="settings-full-name">Full name</label>
-                  <input
-                    id="settings-full-name"
-                    v-model="name"
-                    type="text"
-                    autocomplete="name"
-                    placeholder="Juan Dela Cruz"
-                  />
-                </div>
-                <div class="field">
-                  <label for="settings-position">Position</label>
-                  <input
-                    id="settings-position"
-                    v-model="positionInCompany"
-                    type="text"
-                    placeholder="e.g. Developer"
-                  />
-                </div>
-                <div class="field">
-                  <label for="settings-branch">Branch</label>
-                  <input
-                    id="settings-branch"
-                    v-model="companyBranch"
-                    type="text"
-                    placeholder="Branch"
-                  />
-                </div>
-                <div class="field">
-                  <label for="settings-emp-no">Employee no.</label>
-                  <input
-                    id="settings-emp-no"
-                    v-model="employeeNo"
-                    type="number"
-                    min="1"
-                    step="1"
-                    placeholder="10001"
-                  />
-                </div>
-                <div class="field">
-                  <label for="settings-email">Email</label>
-                  <input
-                    id="settings-email"
-                    v-model="email"
-                    type="email"
-                    autocomplete="email"
-                    placeholder="Enter your personal/company email"
-                  />
-                </div>
-                <p v-if="error" class="msg error">{{ error }}</p>
-                <p v-if="success" class="msg success">Profile saved.</p>
-                <div class="form-actions">
-                  <button type="button" class="btn btn-ghost" @click="cancelEditPersonalInfo">Cancel</button>
-                  <button type="submit" class="btn btn-primary" :disabled="saving || !personalInfoDirty">
-                    {{ saving ? 'Saving…' : 'Save' }}
-                  </button>
+              <form id="personal-info-form" class="personal-form" @submit.prevent="save">
+                <div class="personal-summary personal-form__summary">
+                  <div class="personal-summary__row">
+                    <div class="summary-item personal-form__cell">
+                      <label class="summary-label" for="settings-full-name">Full name</label>
+                      <input
+                        id="settings-full-name"
+                        v-model="name"
+                        type="text"
+                        autocomplete="name"
+                        placeholder="Juan Dela Cruz"
+                      />
+                    </div>
+                    <div class="summary-item personal-form__cell">
+                      <label class="summary-label" for="settings-position">Position</label>
+                      <input
+                        id="settings-position"
+                        v-model="positionInCompany"
+                        type="text"
+                        placeholder="e.g. Developer"
+                      />
+                    </div>
+                    <div class="summary-item personal-form__cell">
+                      <label class="summary-label" for="settings-emp-no">Employee no.</label>
+                      <input
+                        id="settings-emp-no"
+                        v-model="employeeNo"
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="10001"
+                      />
+                    </div>
+                  </div>
+                  <div class="personal-summary__row">
+                    <div class="summary-item personal-form__cell">
+                      <label class="summary-label" for="settings-email">Email</label>
+                      <input
+                        id="settings-email"
+                        v-model="email"
+                        type="email"
+                        autocomplete="email"
+                        placeholder="Enter your personal/company email"
+                      />
+                    </div>
+                    <div class="summary-item personal-form__cell">
+                      <label class="summary-label" for="settings-branch">Branch</label>
+                      <input
+                        id="settings-branch"
+                        v-model="companyBranch"
+                        type="text"
+                        placeholder="Branch"
+                      />
+                    </div>
+                    <div class="summary-item summary-item--empty" aria-hidden="true"></div>
+                  </div>
                 </div>
               </form>
             </template>
           </div>
         </div>
-        <p v-if="error && !showPersonalInfoForm" class="msg error">{{ error }}</p>
-        <p v-if="success && !showPersonalInfoForm" class="msg success">Profile saved.</p>
+        <p v-if="error" class="msg error">{{ error }}</p>
+        <p v-if="success" class="msg success">Profile saved.</p>
+        <div v-if="!showPersonalInfoForm" class="personal-card__footer">
+          <button type="button" class="btn settings-accent-action-btn" @click="startEditPersonalInfo">
+            <span class="material-symbols-outlined" aria-hidden="true">person_edit</span>
+            Edit personal information
+          </button>
+        </div>
+        <div v-else class="personal-card__footer">
+          <div class="form-actions personal-form__actions">
+            <button type="button" class="btn btn-ghost" @click="cancelEditPersonalInfo">Cancel</button>
+            <button
+              type="submit"
+              form="personal-info-form"
+              class="btn btn-primary"
+              :disabled="saving || !personalInfoDirty"
+            >
+              {{ saving ? 'Saving…' : 'Save' }}
+            </button>
+          </div>
+        </div>
       </section>
 
       <!-- Security: change password (button → form) -->
-      <section class="card security-card">
+      <section class="card security-card settings-grid__security">
         <h2 class="card-title">Security</h2>
         <template v-if="!showPasswordForm">
-          <button type="button" class="btn btn-ghost" @click="togglePasswordForm">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
-            Change password
-          </button>
+          <p class="danger-text">We recommend changing your password every 90 days to ensure the highest security.</p>
           <p v-if="passwordSuccess" class="msg success">Password changed successfully.</p>
+          <div class="security-card__footer">
+            <button type="button" class="btn settings-accent-action-btn" @click="togglePasswordForm">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              Change password
+            </button>
+          </div>
         </template>
         <template v-else>
-          <form class="password-form" @submit.prevent="changePassword">
-            <div class="field">
-              <label for="currentPassword">Current password</label>
-              <div class="input-with-icon">
-                <input
-                  id="currentPassword"
-                  v-model="currentPassword"
-                  :type="showCurrentPassword ? 'text' : 'password'"
-                  placeholder="Current password"
-                  autocomplete="current-password"
-                />
-                <button
-                  type="button"
-                  class="icon-btn"
-                  :aria-label="showCurrentPassword ? 'Hide password' : 'Show password'"
-                  @click="toggleCurrentPasswordVisibility"
-                >
-                  <svg v-if="!showCurrentPassword" class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                    <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2" />
-                  </svg>
-                  <svg v-else class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-                    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path d="M10.6 10.6a2.5 2.5 0 0 0 3.8 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path d="M6.4 6.4C3.8 8.2 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.2-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                    <path d="M9.5 4.2C10.3 4.1 11.1 4 12 4c6.5 0 10 8 10 8s-1.2 2.8-3.6 5.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                  </svg>
-                </button>
+          <form id="password-change-form" class="password-form" @submit.prevent="changePassword">
+            <div class="password-form__grid">
+              <div class="field password-form__field password-form__field--full">
+                <label for="currentPassword">Current password</label>
+                <div class="input-with-icon">
+                  <input
+                    id="currentPassword"
+                    v-model="currentPassword"
+                    :type="showCurrentPassword ? 'text' : 'password'"
+                    placeholder="Current password"
+                    autocomplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    class="icon-btn"
+                    :aria-label="showCurrentPassword ? 'Hide password' : 'Show password'"
+                    @click="toggleCurrentPasswordVisibility"
+                  >
+                    <svg v-if="!showCurrentPassword" class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2" />
+                    </svg>
+                    <svg v-else class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                      <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      <path d="M10.6 10.6a2.5 2.5 0 0 0 3.8 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      <path d="M6.4 6.4C3.8 8.2 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.2-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      <path d="M9.5 4.2C10.3 4.1 11.1 4 12 4c6.5 0 10 8 10 8s-1.2 2.8-3.6 5.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="field password-form__field">
+                <label for="newPassword">New password</label>
+                <div class="input-with-icon">
+                  <input
+                    id="newPassword"
+                    v-model="newPassword"
+                    :type="showNewPassword ? 'text' : 'password'"
+                    placeholder="Minimum of 6 characters"
+                    autocomplete="new-password"
+                    minlength="6"
+                  />
+                  <button
+                    type="button"
+                    class="icon-btn"
+                    :aria-label="showNewPassword ? 'Hide password' : 'Show password'"
+                    @click="toggleNewPasswordVisibility"
+                  >
+                    <svg v-if="!showNewPassword" class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2" />
+                    </svg>
+                    <svg v-else class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                      <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      <path d="M10.6 10.6a2.5 2.5 0 0 0 3.8 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      <path d="M6.4 6.4C3.8 8.2 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.2-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      <path d="M9.5 4.2C10.3 4.1 11.1 4 12 4c6.5 0 10 8 10 8s-1.2 2.8-3.6 5.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="field password-form__field">
+                <label for="confirmPassword">Confirm new password</label>
+                <div class="input-with-icon">
+                  <input
+                    id="confirmPassword"
+                    v-model="confirmPassword"
+                    :type="showConfirmPassword ? 'text' : 'password'"
+                    placeholder="Confirm your password"
+                    autocomplete="new-password"
+                    minlength="6"
+                  />
+                  <button
+                    type="button"
+                    class="icon-btn"
+                    :aria-label="showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'"
+                    @click="toggleConfirmPasswordVisibility"
+                  >
+                    <svg v-if="!showConfirmPassword" class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2" />
+                    </svg>
+                    <svg v-else class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                      <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      <path d="M10.6 10.6a2.5 2.5 0 0 0 3.8 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      <path d="M6.4 6.4C3.8 8.2 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.2-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      <path d="M9.5 4.2C10.3 4.1 11.1 4 12 4c6.5 0 10 8 10 8s-1.2 2.8-3.6 5.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
-            <div class="field">
-              <label for="newPassword">New password</label>
-              <div class="input-with-icon">
-                <input
-                  id="newPassword"
-                  v-model="newPassword"
-                  :type="showNewPassword ? 'text' : 'password'"
-                  placeholder="Minimum of 6 characters"
-                  autocomplete="new-password"
-                  minlength="6"
-                />
-                <button
-                  type="button"
-                  class="icon-btn"
-                  :aria-label="showNewPassword ? 'Hide password' : 'Show password'"
-                  @click="toggleNewPasswordVisibility"
-                >
-                  <svg v-if="!showNewPassword" class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                    <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2" />
-                  </svg>
-                  <svg v-else class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-                    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path d="M10.6 10.6a2.5 2.5 0 0 0 3.8 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path d="M6.4 6.4C3.8 8.2 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.2-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                    <path d="M9.5 4.2C10.3 4.1 11.1 4 12 4c6.5 0 10 8 10 8s-1.2 2.8-3.6 5.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div class="field">
-              <label for="confirmPassword">Confirm new password</label>
-              <div class="input-with-icon">
-                <input
-                  id="confirmPassword"
-                  v-model="confirmPassword"
-                  :type="showConfirmPassword ? 'text' : 'password'"
-                  placeholder="Confirm your password"
-                  autocomplete="new-password"
-                  minlength="6"
-                />
-                <button
-                  type="button"
-                  class="icon-btn"
-                  :aria-label="showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'"
-                  @click="toggleConfirmPasswordVisibility"
-                >
-                  <svg v-if="!showConfirmPassword" class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                    <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2" />
-                  </svg>
-                  <svg v-else class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-                    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path d="M10.6 10.6a2.5 2.5 0 0 0 3.8 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path d="M6.4 6.4C3.8 8.2 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.2-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                    <path d="M9.5 4.2C10.3 4.1 11.1 4 12 4c6.5 0 10 8 10 8s-1.2 2.8-3.6 5.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <p v-if="passwordError" class="msg error">{{ passwordError }}</p>
-            <div class="form-actions">
+          </form>
+          <p v-if="passwordError" class="msg error">{{ passwordError }}</p>
+          <div class="security-card__footer">
+            <div class="form-actions password-form__actions">
               <button type="button" class="btn btn-ghost" @click="togglePasswordForm">Cancel</button>
               <button
                 type="submit"
+                form="password-change-form"
                 class="btn btn-primary"
                 :disabled="changingPassword || !canSubmitPasswordChange"
               >
                 {{ changingPassword ? 'Updating…' : 'Update password' }}
               </button>
             </div>
-          </form>
+          </div>
         </template>
       </section>
 
       <!-- Delete Account -->
-      <section class="card danger-card">
+      <section class="card danger-card settings-grid__danger">
         <h2 class="card-title">Danger Zone</h2>
         <template v-if="!showDeleteConfirm">
           <p class="danger-text">Once you delete your account, there is no going back. Please be certain.</p>
-          <button type="button" class="btn btn-danger" @click="toggleDeleteConfirm">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-            </svg>
-            Delete account
-          </button>
+          <div class="danger-card__footer">
+            <button type="button" class="btn btn-danger" @click="toggleDeleteConfirm">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+              Delete account
+            </button>
+          </div>
         </template>
         <template v-else>
           <div class="delete-form">
@@ -925,12 +955,14 @@ async function save() {
                 </button>
               </div>
             </div>
-            <p v-if="deleteError" class="msg error">{{ deleteError }}</p>
-            <div class="form-actions">
+          </div>
+          <p v-if="deleteError" class="msg error">{{ deleteError }}</p>
+          <div class="danger-card__footer">
+            <div class="form-actions delete-form__actions">
               <button type="button" class="btn btn-ghost" @click="toggleDeleteConfirm">Cancel</button>
-              <button 
-                type="button" 
-                class="btn btn-danger" 
+              <button
+                type="button"
+                class="btn btn-danger"
                 :disabled="deletingAccount || deleteConfirmPassword.length === 0"
                 @click="deleteAccount"
               >
@@ -940,6 +972,7 @@ async function save() {
           </div>
         </template>
       </section>
+      </div>
     </template>
 
     <!-- File Selection Modal -->
@@ -1039,8 +1072,48 @@ async function save() {
   </div>
 </template>
 <style scoped>
-.page { width: 100%; max-width: 480px; }
+.page {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
 .page-header { margin-bottom: 1.75rem; }
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 1rem;
+  row-gap: 1rem;
+  /* Keep Security / Danger cards their own height when the other expands */
+  align-items: start;
+}
+.settings-grid > .card {
+  margin-bottom: 0;
+  min-width: 0;
+}
+.settings-grid__personal {
+  grid-area: 1 / 1 / 2 / 3;
+}
+.settings-grid__security {
+  grid-area: 2 / 1 / 3 / 2;
+}
+.settings-grid__danger {
+  grid-area: 2 / 2 / 3 / 3;
+}
+@media (max-width: 640px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    row-gap: 1rem;
+  }
+  .settings-grid__personal,
+  .settings-grid__security,
+  .settings-grid__danger {
+    grid-area: auto;
+  }
+}
 .page-header h1 { margin: 0; font-size: 1.5rem; font-weight: 600; color: var(--text-primary); letter-spacing: -0.02em; }
 .page-desc { margin: 0.25rem 0 0; font-size: 0.9375rem; color: var(--text-tertiary); }
 .loading-state { color: var(--text-tertiary); font-size: 0.9375rem; padding: 2rem 0; }
@@ -1052,9 +1125,16 @@ async function save() {
   padding: 1.5rem;
   margin-bottom: 1rem;
 }
-.card-title { margin: 0 0 1rem; font-size: 0.8125rem; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; }
+.card-title { 
+  font-size: 0.9375rem; 
+  font-weight: 600; 
+  color: var(--text-tertiary); 
+  text-transform: uppercase; 
+  letter-spacing: 0.06em; 
+  margin-bottom: 1.25rem;
+}
 
-.profile-card .profile-row { display: flex; gap: 1.25rem; align-items: flex-start; margin-bottom: 1.25rem; }
+.profile-card .profile-row { display: flex; gap: 1.25rem; align-items: flex-start; margin: 0; }
 .avatar-wrap { position: relative; flex-shrink: 0; }
 .avatar { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; display: block; }
 .avatar.placeholder {
@@ -1075,12 +1155,47 @@ async function save() {
 .personal-summary {
   display: flex;
   flex-direction: column;
-  gap: 0.625rem;
+  gap: 1rem;
+  width: 100%;
 }
-.summary-row {
+.personal-summary__row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem 1.5rem;
+  align-items: start;
+}
+.summary-item {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+  min-width: 0;
+}
+.summary-item--empty {
+  display: block;
+  pointer-events: none;
+}
+@media (max-width: 720px) {
+  .profile-card .profile-row {
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+  }
+  .profile-card .profile-meta {
+    width: 100%;
+    align-self: stretch;
+    text-align: left;
+  }
+  .personal-summary__row {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+  .summary-item--empty {
+    display: none;
+  }
+  .password-form__grid {
+    grid-template-columns: 1fr;
+    gap: 0.875rem;
+  }
 }
 .summary-label {
   font-size: 0.6875rem;
@@ -1099,65 +1214,155 @@ async function save() {
   color: var(--text-secondary);
 }
 
-.personal-card .edit-personal-btn {
+.personal-card__footer,
+.security-card__footer,
+.danger-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1.25rem;
+}
+/* Shared: employee login–style primary + hover motion (personal + security) */
+.settings-accent-action-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
-  margin-top: 1rem;
-  padding: 0.5rem 0;
-  font-size: 0.9375rem;
-  color: var(--text-secondary);
-  background: none;
+  margin-top: 0;
+  padding: 0.6rem 1rem;
   border: none;
+  border-radius: 8px;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: #fff;
+  background: var(--accent-light);
   cursor: pointer;
-  border-radius: 6px;
-  transition: color 0.2s, background 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition:
+    transform 0.22s cubic-bezier(0.34, 1.2, 0.64, 1),
+    box-shadow 0.22s ease,
+    background 0.22s ease,
+    opacity 0.22s ease;
 }
-.personal-card .edit-personal-btn:hover {
-  color: var(--accent);
-  background: rgba(56, 189, 248, 0.08);
+.settings-accent-action-btn:hover {
+  color: #fff;
+  background: var(--accent-light-for-hover);
+  opacity: 1;
+  transform: translateY(-2px);
+  box-shadow:
+    0 6px 16px rgba(14, 165, 233, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.06);
 }
-.personal-card .edit-personal-btn .material-symbols-outlined {
+.settings-accent-action-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(14, 165, 233, 0.3);
+  transition-duration: 0.1s;
+}
+.settings-accent-action-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px rgba(56, 189, 248, 0.45);
+}
+.settings-accent-action-btn:focus-visible:hover {
+  box-shadow:
+    0 0 0 2px var(--bg-secondary),
+    0 0 0 4px rgba(56, 189, 248, 0.45),
+    0 6px 16px rgba(14, 165, 233, 0.35);
+}
+.settings-accent-action-btn .material-symbols-outlined {
   font-size: 1.25rem;
   line-height: 1;
+  transition: transform 0.22s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+.settings-accent-action-btn svg {
+  flex-shrink: 0;
+  display: block;
+  transition: transform 0.22s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+.settings-accent-action-btn:hover .material-symbols-outlined,
+.settings-accent-action-btn:hover svg {
+  transform: scale(1.08);
+}
+.settings-accent-action-btn:active .material-symbols-outlined,
+.settings-accent-action-btn:active svg {
+  transform: scale(1.02);
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-accent-action-btn,
+  .settings-accent-action-btn .material-symbols-outlined,
+  .settings-accent-action-btn svg {
+    transition: none;
+  }
+  .settings-accent-action-btn:hover,
+  .settings-accent-action-btn:active {
+    transform: none;
+  }
+  .settings-accent-action-btn:hover .material-symbols-outlined,
+  .settings-accent-action-btn:active .material-symbols-outlined,
+  .settings-accent-action-btn:hover svg,
+  .settings-accent-action-btn:active svg {
+    transform: none;
+  }
 }
 
 .personal-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.875rem;
   width: 100%;
+  min-width: 0;
 }
-.personal-form .field {
+.personal-form__cell {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  min-width: 0;
 }
-.personal-form label {
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--text-secondary);
+.personal-form__cell .summary-label {
+  margin: 0;
 }
-.personal-form input {
+.personal-form__cell input {
   width: 100%;
-  max-width: 320px;
+  max-width: none;
+  min-width: 0;
   padding: 0.5rem 0.75rem;
   border-radius: 8px;
   border: 1px solid var(--border-color);
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: 0.9375rem;
+  box-sizing: border-box;
 }
-.personal-form input:focus {
+.personal-form__cell input:focus {
   outline: none;
   border-color: var(--accent);
 }
+.personal-card__footer .personal-form__actions,
+.security-card__footer .password-form__actions,
+.danger-card__footer .delete-form__actions {
+  margin-top: 0;
+}
 
-.msg { margin: 0 0 0.75rem; font-size: 0.875rem; }
-.msg.error { color: #f87171; }
+.msg { margin: 0; font-size: 0.875rem; }
+.msg.error {
+  margin: 0;
+  padding: 0.3rem 1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--error);
+  text-align: left;
+}
+.msg.error + .personal-card__footer,
+.msg.error + .security-card__footer,
+.msg.error + .danger-card__footer {
+  margin-top: 0.75rem;
+}
 .msg.success { color: #34d399; }
 
-.personal-card > .msg { margin-top: 0.75rem; margin-bottom: 0; }
+.personal-card > .msg,
+.security-card > .msg,
+.danger-card > .msg {
+  margin-top: 0.75rem;
+  margin-bottom: 0;
+}
 
 .security-card .btn-ghost {
   display: inline-flex; align-items: center; gap: 0.5rem;
@@ -1169,6 +1374,18 @@ async function save() {
 .security-card .btn-ghost svg { flex-shrink: 0; opacity: 0.8; }
 
 .password-form { display: flex; flex-direction: column; gap: 0.875rem; }
+.password-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.875rem 1.5rem;
+  align-items: start;
+}
+.password-form__field--full {
+  grid-column: 1 / -1;
+}
+.password-form__grid .password-form__field {
+  min-width: 0;
+}
 .password-form .field { display: flex; flex-direction: column; gap: 0.35rem; }
 .password-form label { font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); }
 .password-form .input-with-icon {
@@ -1178,6 +1395,9 @@ async function save() {
   width: 100%;
   max-width: 280px;
 }
+.password-form__grid .input-with-icon {
+  max-width: none;
+}
 .password-form input {
   width: 100%; max-width: 280px; padding: 0.5rem 0.75rem; border-radius: 8px;
   border: 1px solid var(--border-color); background: var(--bg-primary);
@@ -1186,6 +1406,9 @@ async function save() {
 .password-form .input-with-icon input {
   max-width: none;
   padding-right: 2.5rem;
+}
+.password-form .password-form__grid input {
+  max-width: none;
 }
 .password-form input:focus { outline: none; border-color: var(--accent); }
 .password-form .icon-btn {
@@ -1211,23 +1434,36 @@ async function save() {
 .form-actions { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.25rem; }
 
 .danger-card { border-color: rgba(239, 68, 68, 0.3); }
-.danger-text { margin: 0 0 1rem; font-size: 0.875rem; color: var(--text-secondary); }
-.danger-warning { margin: 0 0 1rem; font-size: 0.875rem; color: #f87171; line-height: 1.5; }
+.danger-text { margin: 0; font-size: 0.875rem; color: var(--text-secondary); }
+.danger-warning { margin: 0; font-size: 0.875rem; color: #f87171; line-height: 1.5; }
 .danger-warning strong { color: #ef4444; }
 .delete-form { display: flex; flex-direction: column; gap: 0.875rem; }
-.delete-form .field { display: flex; flex-direction: column; gap: 0.35rem; }
+.delete-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
+}
 .delete-form label { font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); }
 .delete-form input {
-  width: 100%; max-width: 280px; padding: 0.5rem 0.75rem; border-radius: 8px;
-  border: 1px solid rgba(239, 68, 68, 0.3); background: var(--bg-primary);
-  color: var(--text-primary); font-size: 0.9375rem;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.9375rem;
 }
 .delete-form .input-with-icon {
   position: relative;
   display: flex;
   align-items: center;
   width: 100%;
-  max-width: 280px;
+  max-width: none;
+  min-width: 0;
 }
 .delete-form .input-with-icon input {
   max-width: none;
@@ -1254,14 +1490,15 @@ async function save() {
 }
 .delete-form .icon { display: block; }
 .delete-form input:focus { outline: none; border-color: #ef4444; }
-.btn-danger {
-  background: #ef4444; color: #fff;
-  display: inline-flex; align-items: center; gap: 0.5rem;
-}
-.btn-danger:hover:not(:disabled) { background: #dc2626; opacity: 1; }
-.btn-danger:disabled { opacity: 0.6; cursor: not-allowed; }
-
 .btn { padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; transition: opacity 0.2s, background 0.2s; }
+/* Win over .btn so transform/box-shadow animate (same issue .btn-danger fixes below) */
+.btn.settings-accent-action-btn {
+  transition:
+    transform 0.22s cubic-bezier(0.34, 1.2, 0.64, 1),
+    box-shadow 0.22s ease,
+    background 0.22s ease,
+    opacity 0.22s ease;
+}
 .btn-primary { background: var(--accent); color: #fff; }
 .btn-primary:hover:not(:disabled) { opacity: 0.92; }
 .btn.primary { background: var(--accent); color: #fff; }
@@ -1270,6 +1507,75 @@ async function save() {
 .btn.secondary { background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); }
 .btn.secondary:hover { background: var(--bg-hover); }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.btn-danger {
+  background: #ef4444;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition:
+    transform 0.22s cubic-bezier(0.34, 1.2, 0.64, 1),
+    box-shadow 0.22s ease,
+    background 0.22s ease,
+    opacity 0.22s ease;
+}
+.btn-danger:hover:not(:disabled) {
+  background: #dc2626;
+  opacity: 1;
+  transform: translateY(-2px);
+  box-shadow:
+    0 6px 16px rgba(239, 68, 68, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.06);
+}
+.btn-danger:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(239, 68, 68, 0.3);
+  transition-duration: 0.1s;
+}
+.btn-danger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px rgba(239, 68, 68, 0.45);
+}
+.btn-danger:focus-visible:hover:not(:disabled) {
+  box-shadow:
+    0 0 0 2px var(--bg-secondary),
+    0 0 0 4px rgba(239, 68, 68, 0.45),
+    0 6px 16px rgba(239, 68, 68, 0.35);
+}
+.btn-danger svg {
+  flex-shrink: 0;
+  display: block;
+  transition: transform 0.22s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+.btn-danger:hover:not(:disabled) svg {
+  transform: scale(1.08);
+}
+.btn-danger:active:not(:disabled) svg {
+  transform: scale(1.02);
+}
+.btn-danger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-danger,
+  .btn-danger svg {
+    transition: none;
+  }
+  .btn-danger:hover:not(:disabled),
+  .btn-danger:active:not(:disabled) {
+    transform: none;
+  }
+  .btn-danger:hover:not(:disabled) svg,
+  .btn-danger:active:not(:disabled) svg {
+    transform: none;
+  }
+}
 
 /* Modal Styles */
 .modal-overlay {
