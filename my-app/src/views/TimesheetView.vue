@@ -28,6 +28,7 @@ const appliedShift = ref<'dayshift' | 'nightshift' | ''>('')
 
 const employeeName = ref<string | null>(null)
 const employeePosition = ref<string | null>(null)
+const employeeEmail = ref<string | null>(null)
 
 // Time filter (Undertime, Enough Time, Overtime)
 type TimeFilter = 'all' | 'undertime' | 'enough' | 'overtime'
@@ -177,12 +178,18 @@ async function loadEmployeeData() {
   if (!user.value?.id) return
   const { data } = await supabase
     .from('employee')
-    .select('name, position_in_company')
+    .select('name, position_in_company, email')
     .eq('id', user.value.id)
     .maybeSingle()
   if (data) {
-    employeeName.value = (data as { name: string | null }).name
-    employeePosition.value = (data as { position_in_company: string | null }).position_in_company
+    const row = data as {
+      name: string | null
+      position_in_company: string | null
+      email: string | null
+    }
+    employeeName.value = row.name
+    employeePosition.value = row.position_in_company
+    employeeEmail.value = row.email
   }
 }
 
@@ -250,6 +257,82 @@ function formatTimeAMPM(iso: string | null): string {
   const am = h < 12
   const h12 = h % 12 || 12
   return `${h12}:${m.toString().padStart(2, '0')}${am ? 'AM' : 'PM'}`
+}
+
+/** 12-hour times for PDF/CSV export: `H:MM A.M.` / `P.M.` */
+function formatTime12hApm(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  const h = d.getHours()
+  const m = d.getMinutes()
+  const isAm = h < 12
+  const h12 = h % 12 || 12
+  return `${h12}:${m.toString().padStart(2, '0')} ${isAm ? 'A.M.' : 'P.M.'}`
+}
+
+function formatTime12hApmFromStored(stored: string | null): string {
+  if (!stored) return '—'
+  return formatTime12hApm(new Date(storedToRealInstant(stored)).toISOString())
+}
+
+/** Min–max of YYYY-MM-DD dates actually present in the PDF/CSV export rows */
+function formatExportTableDateCoveredRange(): string {
+  const unique = new Set<string>()
+  for (const row of exportRows.value) {
+    const d = row[0]
+    if (d && d !== '—') unique.add(d)
+  }
+  if (!unique.size) return '—'
+  const sorted = Array.from(unique).sort()
+  const a = sorted[0]!
+  const b = sorted[sorted.length - 1]!
+  return a === b ? a : `${a} - ${b}`
+}
+
+function publicAssetUrl(file: string): string {
+  const base = import.meta.env.BASE_URL || '/'
+  return `${base}${file}`.replace(/\/{2,}/g, '/')
+}
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error(`Failed to load: ${src}`))
+    img.src = src
+  })
+}
+
+/** Circular clip with object-fit cover, then PNG for jsPDF. */
+function imageToCircularPngDataUrl(img: HTMLImageElement, pixelSize = 512): string {
+  const canvas = document.createElement('canvas')
+  canvas.width = pixelSize
+  canvas.height = pixelSize
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Could not read logo image')
+  const r = pixelSize / 2
+  ctx.clearRect(0, 0, pixelSize, pixelSize)
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(r, r, r, 0, Math.PI * 2)
+  ctx.closePath()
+  ctx.clip()
+  const iw = img.naturalWidth
+  const ih = img.naturalHeight
+  const scale = Math.max(pixelSize / iw, pixelSize / ih)
+  const dw = iw * scale
+  const dh = ih * scale
+  const dx = (pixelSize - dw) / 2
+  const dy = (pixelSize - dh) / 2
+  ctx.drawImage(img, dx, dy, dw, dh)
+  ctx.restore()
+  return canvas.toDataURL('image/png')
+}
+
+async function loadCircularLogoDataUrl(src: string): Promise<string> {
+  const img = await loadImageElement(src)
+  return imageToCircularPngDataUrl(img)
 }
 
 function formatDateLong(dateKey: string): string {
@@ -612,7 +695,18 @@ const tableRows = computed(() => {
 })
 
 // Legacy dayGroups for PDF/Excel (grouped by day with multiple rows per day)
-interface DisplayRow { date: string; clockIn: string; clockOut: string; total: string; modality: string; travel: string; branch: string; raw: AttendanceRow }
+interface DisplayRow {
+  date: string
+  clockIn: string
+  clockOut: string
+  lunchIn: string
+  lunchOut: string
+  total: string
+  modality: string
+  travel: string
+  branch: string
+  raw: AttendanceRow
+}
 const dayGroups = computed(() => {
   const map: Record<string, DisplayRow[]> = {}
   for (const r of filteredRows.value) {
@@ -621,10 +715,12 @@ const dayGroups = computed(() => {
     const branch = r.branch_location ? getBranch(r.branch_location) : null
     map[dateKey].push({
       date: dateKey,
-      clockIn: formatTimeAMPM(new Date(storedToRealInstant(r.clock_in)).toISOString()),
-      clockOut: formatTimeAMPM(new Date(storedToRealInstant(r.clock_out)).toISOString()),
+      clockIn: formatTime12hApmFromStored(r.clock_in),
+      clockOut: formatTime12hApmFromStored(r.clock_out),
+      lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
+      lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
       total: formatTotalTime(r.total_time),
-      modality: r.work_modality ?? '—',
+      modality: r.work_modality ? r.work_modality.toLowerCase() : '—',
       travel: isTravelFlagged(r) === 'travel' ? 'Suspicious location activity' : isTravelFlagged(r) === 'possible_travel' ? 'Possible suspicious location activity' : '—',
       branch: branch?.name ?? '—',
       raw: r
@@ -654,17 +750,37 @@ const dayGroups = computed(() => {
 })
 
 const exportRows = computed(() => {
-  const flat: Array<[string, string, string, string, string, string, string]> = []
+  const flat: Array<[string, string, string, string, string, string, string, string, string]> = []
   for (const group of dayGroups.value) {
     for (const row of group.rows) {
-      flat.push([group.dateLabel, row.clockIn, row.clockOut, row.total, row.modality, row.branch, row.travel])
+      flat.push([
+        group.date,
+        row.clockIn,
+        row.clockOut,
+        row.lunchIn,
+        row.lunchOut,
+        row.total,
+        row.modality,
+        row.branch,
+        row.travel
+      ])
     }
   }
   return flat
 })
 
 function downloadExcel() {
-  const headers = ['Date', 'Clock in', 'Clock out', 'Total', 'Modality', 'Branch', 'Activity']
+  const headers = [
+    'Date Covered',
+    'Clock in',
+    'Clock out',
+    'Lunch In',
+    'Lunch Out',
+    'Total Hours',
+    'Modality',
+    'Branch',
+    'Activity'
+  ]
   const escape = (v: string) => /[,"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
   const csv = [headers.join(','), ...exportRows.value.map(r => r.map(escape).join(','))].join('\n')
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
@@ -675,41 +791,90 @@ function downloadExcel() {
   URL.revokeObjectURL(a.href)
 }
 
-function downloadPDF() {
-  const doc = new jsPDF({ orientation: 'landscape' })
-  let y = 12
+async function downloadPDF() {
+  /** Space from the top of the page to the logos (mm). Increase for more top margin. */
+  const pdfTopGapMm = 7
+  /** Logo width and height on the PDF (mm). */
+  const logoSizeMm = 18
+  const logoTopMm = pdfTopGapMm
+  const logoCy = logoTopMm + logoSizeMm / 2
+  /** Space from bottom of logos to TIMESHEET title baseline (mm). */
+  const pdfLogoToTitleGapMm = 10
 
-  doc.setFontSize(14)
-  doc.text('Timesheet', 14, y)
+  let pcDataUrl: string
+  let twDataUrl: string
+  try {
+    ;[pcDataUrl, twDataUrl] = await Promise.all([
+      loadCircularLogoDataUrl(publicAssetUrl('PCWorthLogo.jpg')),
+      loadCircularLogoDataUrl(publicAssetUrl('TimeWorthLogo.png'))
+    ])
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Could not load PDF logos'
+    error.value = msg
+    console.error('PDF logo load:', e)
+    return
+  }
 
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+
+  doc.addImage(pcDataUrl, 'PNG', 14, logoTopMm, logoSizeMm, logoSizeMm)
+  doc.addImage(twDataUrl, 'PNG', pageW - 14 - logoSizeMm, logoTopMm, logoSizeMm, logoSizeMm)
+
+  let y = logoCy + logoSizeMm / 2 + pdfLogoToTitleGapMm
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(16)
+  doc.setTextColor(0, 0, 0)
+  doc.text('TIMESHEET', 14, y)
+
+  doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
+  y += 7
+  const fullName = employeeName.value?.trim() || '—'
+  doc.text(`Full Name: ${fullName}`, 14, y)
+  y += 5
+  doc.text('Company Name: PCWorth', 14, y)
+  y += 5
+  const emailLine = employeeEmail.value?.trim() || user.value?.email || '—'
+  doc.text(`Employee Email: ${emailLine}`, 14, y)
+  y += 5
+  doc.text(`Position: ${employeePosition.value?.trim() || '—'}`, 14, y)
+  y += 5
+  doc.text(`Date Covered: ${formatExportTableDateCoveredRange()}`, 14, y)
   y += 6
-  const nameLine = employeeName.value || user.value?.email || null
-  const positionLine = employeePosition.value || null
-  if (nameLine) {
-    doc.text(`Name: ${nameLine}`, 14, y)
-    y += 5
-  }
-  if (positionLine) {
-    doc.text(`Position: ${positionLine}`, 14, y)
-    y += 5
-  }
 
-  const tableBody = exportRows.value.map(([date, clockIn, clockOut, total, modality, , activity]) => [
+  const tableBody = exportRows.value.map(([date, clockIn, clockOut, lunchIn, lunchOut, total, modality]) => [
     date,
     clockIn,
     clockOut,
+    lunchIn,
+    lunchOut,
     total,
     modality,
-    activity
+    '—'
   ])
 
   autoTable(doc, {
-    head: [['Date', 'Clock in', 'Clock out', 'Total', 'Modality', 'Activity']],
+    head: [
+      [
+        'Date Covered',
+        'Clock in',
+        'Clock out',
+        'Lunch In',
+        'Lunch Out',
+        'Total Hours',
+        'Modality',
+        'Activity'
+      ]
+    ],
     body: tableBody,
-    startY: y + 2,
-    styles: { fontSize: 9 },
-    headStyles: { fillColor: [30, 41, 59] }
+    startY: y,
+    styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    margin: { left: 14, right: 14 },
+    tableWidth: pageW - 28
   })
   doc.save(`timesheet-${new Date().toISOString().slice(0, 10)}.pdf`)
 }
