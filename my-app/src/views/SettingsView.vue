@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import supabase from '../lib/supabaseClient'
 import { useAuth } from '../composables/useAuth'
 
@@ -35,6 +35,60 @@ const deletingAccount = ref(false)
 const deleteError = ref<string | null>(null)
 
 const previewUrl = ref<string | null>(null)
+
+/** Personal info: collapsed by default; expand to edit like Security → change password. */
+const showPersonalInfoForm = ref(false)
+interface PersonalBaseline {
+  name: string
+  positionInCompany: string
+  companyBranch: string
+  employeeNo: string
+  email: string
+}
+const personalBaseline = ref<PersonalBaseline | null>(null)
+
+function capturePersonalBaseline() {
+  personalBaseline.value = {
+    name: name.value.trim(),
+    positionInCompany: positionInCompany.value.trim(),
+    companyBranch: companyBranch.value.trim(),
+    employeeNo: String(employeeNo.value ?? '').trim(),
+    email: email.value.trim(),
+  }
+}
+
+function startEditPersonalInfo() {
+  capturePersonalBaseline()
+  showPersonalInfoForm.value = true
+  success.value = false
+}
+
+function cancelEditPersonalInfo() {
+  if (personalBaseline.value) {
+    const b = personalBaseline.value
+    name.value = b.name
+    positionInCompany.value = b.positionInCompany
+    companyBranch.value = b.companyBranch
+    employeeNo.value = b.employeeNo
+    email.value = b.email
+  }
+  showPersonalInfoForm.value = false
+  personalBaseline.value = null
+  error.value = null
+  success.value = false
+}
+
+const personalInfoDirty = computed(() => {
+  if (!showPersonalInfoForm.value || !personalBaseline.value) return false
+  const b = personalBaseline.value
+  return (
+    name.value.trim() !== b.name ||
+    positionInCompany.value.trim() !== b.positionInCompany ||
+    companyBranch.value.trim() !== b.companyBranch ||
+    String(employeeNo.value ?? '').trim() !== b.employeeNo ||
+    email.value.trim() !== b.email
+  )
+})
 
 // Edit modal state
 const showFileSelectModal = ref(false)
@@ -77,7 +131,7 @@ onMounted(async () => {
     email.value = data.email ?? ''
     positionInCompany.value = data.position_in_company ?? ''
     companyBranch.value = data.company_branch ?? ''
-    employeeNo.value = data.employee_no ?? ''
+    employeeNo.value = data.employee_no != null ? String(data.employee_no) : ''
     const path = data.picture
     oldPicturePath.value = path && !path.startsWith('http') ? path : null
     if (path && !path.startsWith('http')) {
@@ -114,9 +168,13 @@ async function changePassword() {
   changingPassword.value = true
   
   try {
-    // First verify current password by attempting to sign in
+    const signInEmail = user.value?.email
+    if (!signInEmail) {
+      throw new Error('No email on session')
+    }
+    // Use auth email so verification is correct even if the personal-info form has unsaved email edits
     const { error: verifyError } = await supabase.auth.signInWithPassword({
-      email: email.value,
+      email: signInEmail,
       password: currentPassword.value
     })
     
@@ -431,19 +489,100 @@ async function cropAndSave() {
   }, 'image/png')
 }
 
+/** PostgREST 409 / Postgres 23505: duplicate key on employee_no, email, etc. */
+function formatProfileSaveError(e: unknown): string {
+  const err = e as { code?: string; message?: string; details?: string; hint?: string; status?: number }
+  const combined = `${err.message || ''} ${err.details || ''} ${err.hint || ''}`.toLowerCase()
+  if (
+    err.code === '23505'
+    || err.status === 409
+    || combined.includes('duplicate key')
+    || combined.includes('unique constraint')
+  ) {
+    if (combined.includes('employee_no')) {
+      return 'This employee number is already in use. Choose a different number or contact an admin.'
+    }
+    if (combined.includes('email')) {
+      return 'This email is already registered to another employee. Use a different email or contact an admin.'
+    }
+    return 'That change conflicts with existing data (for example a duplicate employee number or email).'
+  }
+  if (typeof err.message === 'string' && err.message.length > 0) {
+    return err.message
+  }
+  return 'Failed to save'
+}
+
 async function save() {
-  if (!user.value?.id) return
+  if (!user.value?.id || !showPersonalInfoForm.value) return
   error.value = null
   success.value = false
+
+  const b = personalBaseline.value
+  if (!b) {
+    error.value = 'Please cancel and open edit again.'
+    return
+  }
+
+  const trimmedName = name.value.trim()
+  const trimmedPosition = positionInCompany.value.trim()
+  const trimmedBranch = companyBranch.value.trim()
+  const trimmedEmail = email.value.trim()
+  const empNum = Number(String(employeeNo.value).trim())
+
+  if (!trimmedName) {
+    error.value = 'Full name is required'
+    return
+  }
+  if (!trimmedPosition) {
+    error.value = 'Position is required'
+    return
+  }
+  if (!trimmedBranch) {
+    error.value = 'Branch is required'
+    return
+  }
+  if (!Number.isInteger(empNum) || empNum < 1) {
+    error.value = 'Employee number must be a positive number'
+    return
+  }
+  if (!trimmedEmail) {
+    error.value = 'Email is required'
+    return
+  }
+
   saving.value = true
   try {
-    const updates: { name: string } = { name: name.value.trim() }
-    const { error: updateError } = await supabase.from('employee').update(updates).eq('id', user.value.id)
-    if (updateError) throw updateError
+    const authEmail = user.value.email ?? ''
+    if (trimmedEmail !== authEmail) {
+      const { error: authEmailError } = await supabase.auth.updateUser({ email: trimmedEmail })
+      if (authEmailError) throw authEmailError
+    }
+
+    const updates: {
+      name?: string
+      position_in_company?: string
+      company_branch?: string
+      employee_no?: number
+      email?: string
+    } = {}
+    if (trimmedName !== b.name) updates.name = trimmedName
+    if (trimmedPosition !== b.positionInCompany) updates.position_in_company = trimmedPosition
+    if (trimmedBranch !== b.companyBranch) updates.company_branch = trimmedBranch
+    if (String(empNum) !== b.employeeNo) updates.employee_no = empNum
+    if (trimmedEmail !== b.email) updates.email = trimmedEmail
+
+    if (Object.keys(updates).length > 0) {
+      const { error: updateError } = await supabase.from('employee').update(updates).eq('id', user.value.id)
+      if (updateError) throw updateError
+    }
+
     success.value = true
+    showPersonalInfoForm.value = false
+    personalBaseline.value = null
     window.dispatchEvent(new CustomEvent('profile-updated'))
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to save'
+    error.value = formatProfileSaveError(e)
   } finally {
     saving.value = false
   }
@@ -459,8 +598,9 @@ async function save() {
     <div v-if="loading" class="loading-state">Loading…</div>
 
     <template v-else>
-      <!-- Profile card -->
-      <section class="card profile-card">
+      <!-- Personal Information -->
+      <section class="card personal-card profile-card">
+        <h2 class="card-title">Personal Information</h2>
         <div class="profile-row">
           <div class="avatar-wrap">
             <img v-if="previewUrl" :src="previewUrl" alt="" class="avatar" />
@@ -472,17 +612,99 @@ async function save() {
             </button>
           </div>
           <div class="profile-meta">
-            <input id="name" v-model="name" type="text" class="name-input" placeholder="Your name" autocomplete="name" />
-            <p class="email">{{ email }}</p>
-            <p v-if="positionInCompany" class="meta-line">{{ positionInCompany }}<template v-if="companyBranch"> · {{ companyBranch }}</template></p>
-            <p v-if="employeeNo" class="meta-line muted">#{{ employeeNo }}</p>
+            <template v-if="!showPersonalInfoForm">
+              <div class="personal-summary">
+                <div class="summary-row">
+                  <span class="summary-label">Full name</span>
+                  <span class="summary-value">{{ name || '—' }}</span>
+                </div>
+                <div class="summary-row">
+                  <span class="summary-label">Position</span>
+                  <span class="summary-value">{{ positionInCompany || '—' }}</span>
+                </div>
+                <div class="summary-row">
+                  <span class="summary-label">Branch</span>
+                  <span class="summary-value">{{ companyBranch || '—' }}</span>
+                </div>
+                <div class="summary-row">
+                  <span class="summary-label">Employee no.</span>
+                  <span class="summary-value">{{ employeeNo || '—' }}</span>
+                </div>
+                <div class="summary-row">
+                  <span class="summary-label">Email</span>
+                  <span class="summary-value summary-value--email">{{ email || '—' }}</span>
+                </div>
+              </div>
+              <button type="button" class="btn btn-ghost edit-personal-btn" @click="startEditPersonalInfo">
+                <span class="material-symbols-outlined" aria-hidden="true">person_edit</span>
+                Edit personal information
+              </button>
+            </template>
+            <template v-else>
+              <form class="personal-form" @submit.prevent="save">
+                <div class="field">
+                  <label for="settings-full-name">Full name</label>
+                  <input
+                    id="settings-full-name"
+                    v-model="name"
+                    type="text"
+                    autocomplete="name"
+                    placeholder="Juan Dela Cruz"
+                  />
+                </div>
+                <div class="field">
+                  <label for="settings-position">Position</label>
+                  <input
+                    id="settings-position"
+                    v-model="positionInCompany"
+                    type="text"
+                    placeholder="e.g. Developer"
+                  />
+                </div>
+                <div class="field">
+                  <label for="settings-branch">Branch</label>
+                  <input
+                    id="settings-branch"
+                    v-model="companyBranch"
+                    type="text"
+                    placeholder="Branch"
+                  />
+                </div>
+                <div class="field">
+                  <label for="settings-emp-no">Employee no.</label>
+                  <input
+                    id="settings-emp-no"
+                    v-model="employeeNo"
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="10001"
+                  />
+                </div>
+                <div class="field">
+                  <label for="settings-email">Email</label>
+                  <input
+                    id="settings-email"
+                    v-model="email"
+                    type="email"
+                    autocomplete="email"
+                    placeholder="Enter your personal/company email"
+                  />
+                </div>
+                <p v-if="error" class="msg error">{{ error }}</p>
+                <p v-if="success" class="msg success">Profile saved.</p>
+                <div class="form-actions">
+                  <button type="button" class="btn btn-ghost" @click="cancelEditPersonalInfo">Cancel</button>
+                  <button type="submit" class="btn btn-primary" :disabled="saving || !personalInfoDirty">
+                    {{ saving ? 'Saving…' : 'Save' }}
+                  </button>
+                </div>
+              </form>
+            </template>
           </div>
         </div>
-        <p v-if="error" class="msg error">{{ error }}</p>
-        <p v-if="success" class="msg success">Profile saved.</p>
-        <button type="button" class="btn btn-primary" :disabled="saving" @click="save">
-          {{ saving ? 'Saving…' : 'Save profile' }}
-        </button>
+        <p v-if="error && !showPersonalInfoForm" class="msg error">{{ error }}</p>
+        <p v-if="success && !showPersonalInfoForm" class="msg success">Profile saved.</p>
       </section>
 
       <!-- Security: change password (button → form) -->
@@ -697,22 +919,93 @@ async function save() {
 .avatar-edit:hover { background: var(--accent-light); transform: scale(1.05); }
 
 .profile-meta { flex: 1; min-width: 0; }
-.name-input {
-  width: 100%; margin: 0 0 0.25rem; padding: 0.35rem 0;
-  font-size: 1.125rem; font-weight: 600; color: var(--text-primary);
-  background: transparent; border: none; border-radius: 0; border-bottom: 1px solid transparent;
-  transition: border-color 0.2s, background 0.2s;
+
+.personal-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
 }
-.name-input:hover { border-bottom-color: var(--border-color); }
-.name-input:focus { outline: none; border-bottom-color: var(--accent); }
-.email { margin: 0; font-size: 0.875rem; color: var(--text-secondary); }
-.meta-line { margin: 0.25rem 0 0; font-size: 0.8125rem; color: var(--text-secondary); }
-.meta-line.muted { color: var(--text-tertiary); }
+.summary-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.summary-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+.summary-value {
+  font-size: 0.9375rem;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.summary-value--email {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.personal-card .edit-personal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.5rem 0;
+  font-size: 0.9375rem;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color 0.2s, background 0.2s;
+}
+.personal-card .edit-personal-btn:hover {
+  color: var(--accent);
+  background: rgba(56, 189, 248, 0.08);
+}
+.personal-card .edit-personal-btn .material-symbols-outlined {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.personal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  width: 100%;
+}
+.personal-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.personal-form label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.personal-form input {
+  width: 100%;
+  max-width: 320px;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+}
+.personal-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .msg { margin: 0 0 0.75rem; font-size: 0.875rem; }
 .msg.error { color: #f87171; }
 .msg.success { color: #34d399; }
 
-.profile-card .btn-primary { margin-top: 0.25rem; }
+.personal-card > .msg { margin-top: 0.75rem; margin-bottom: 0; }
 
 .security-card .btn-ghost {
   display: inline-flex; align-items: center; gap: 0.5rem;
