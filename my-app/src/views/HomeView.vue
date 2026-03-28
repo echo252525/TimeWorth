@@ -15,7 +15,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     <header class="header">
       <div class="brand">
         <img src="/TimeWorthLogo.png" alt="" class="brand-logo" />
-        <span class="brand-text">TimeWorth</span>
+        <span class="brand-text">TimeWorth - wag alisin tong text wait</span>
       </div>
       <nav class="nav">
         <template v-if="adminGate">
