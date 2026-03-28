@@ -33,7 +33,8 @@ const passwordSuccess = ref(false)
 
 // Delete account
 const showDeleteConfirm = ref(false)
-const deleteConfirmText = ref('')
+const deleteConfirmPassword = ref('')
+const showDeletePassword = ref(false)
 const deletingAccount = ref(false)
 const deleteError = ref<string | null>(null)
 
@@ -252,9 +253,14 @@ function toggleConfirmPasswordVisibility() {
 function toggleDeleteConfirm() {
   showDeleteConfirm.value = !showDeleteConfirm.value
   if (!showDeleteConfirm.value) {
-    deleteConfirmText.value = ''
+    deleteConfirmPassword.value = ''
+    showDeletePassword.value = false
     deleteError.value = null
   }
+}
+
+function toggleDeletePasswordVisibility() {
+  showDeletePassword.value = !showDeletePassword.value
 }
 
 async function deleteAccount() {
@@ -262,14 +268,26 @@ async function deleteAccount() {
 
   deleteError.value = null
 
-  if (deleteConfirmText.value !== 'DELETE') {
-    deleteError.value = 'Please type DELETE to confirm'
+  if (!deleteConfirmPassword.value) {
+    deleteError.value = 'Enter your password to confirm'
     return
   }
 
   deletingAccount.value = true
 
   try {
+    const signInEmail = user.value.email
+    if (!signInEmail) {
+      throw new Error('No email on session')
+    }
+    const { error: verifyError } = await supabase.auth.signInWithPassword({
+      email: signInEmail,
+      password: deleteConfirmPassword.value,
+    })
+    if (verifyError) {
+      throw new Error('Password is incorrect')
+    }
+
     const session = await supabase.auth.getSession()
 
     const { data, error } = await supabase.functions.invoke('delete-account', {
@@ -879,14 +897,33 @@ async function save() {
               <strong>Warning:</strong> This action cannot be undone. This will permanently delete your account and all associated data.
             </p>
             <div class="field">
-              <label for="deleteConfirm">Type <strong>DELETE</strong> to confirm:</label>
-              <input 
-                id="deleteConfirm" 
-                v-model="deleteConfirmText" 
-                type="text" 
-                placeholder="DELETE" 
-                autocomplete="off"
-              />
+              <label for="deleteConfirmPassword">Enter your password to confirm</label>
+              <div class="input-with-icon">
+                <input
+                  id="deleteConfirmPassword"
+                  v-model="deleteConfirmPassword"
+                  :type="showDeletePassword ? 'text' : 'password'"
+                  placeholder="Your account password"
+                  autocomplete="current-password"
+                />
+                <button
+                  type="button"
+                  class="icon-btn"
+                  :aria-label="showDeletePassword ? 'Hide password' : 'Show password'"
+                  @click="toggleDeletePasswordVisibility"
+                >
+                  <svg v-if="!showDeletePassword" class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" fill="none" stroke="currentColor" stroke-width="2" />
+                  </svg>
+                  <svg v-else class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M10.6 10.6a2.5 2.5 0 0 0 3.8 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M6.4 6.4C3.8 8.2 2 12 2 12s3.5 7 10 7c2 0 3.7-.5 5.2-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    <path d="M9.5 4.2C10.3 4.1 11.1 4 12 4c6.5 0 10 8 10 8s-1.2 2.8-3.6 5.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
             </div>
             <p v-if="deleteError" class="msg error">{{ deleteError }}</p>
             <div class="form-actions">
@@ -894,7 +931,7 @@ async function save() {
               <button 
                 type="button" 
                 class="btn btn-danger" 
-                :disabled="deletingAccount || deleteConfirmText !== 'DELETE'"
+                :disabled="deletingAccount || deleteConfirmPassword.length === 0"
                 @click="deleteAccount"
               >
                 {{ deletingAccount ? 'Deleting…' : 'Delete my account' }}
@@ -1185,6 +1222,37 @@ async function save() {
   border: 1px solid rgba(239, 68, 68, 0.3); background: var(--bg-primary);
   color: var(--text-primary); font-size: 0.9375rem;
 }
+.delete-form .input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 280px;
+}
+.delete-form .input-with-icon input {
+  max-width: none;
+  padding-right: 2.5rem;
+}
+.delete-form .icon-btn {
+  position: absolute;
+  right: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.delete-form .icon-btn:hover { color: #f87171; }
+.delete-form .icon-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+}
+.delete-form .icon { display: block; }
 .delete-form input:focus { outline: none; border-color: #ef4444; }
 .btn-danger {
   background: #ef4444; color: #fff;
