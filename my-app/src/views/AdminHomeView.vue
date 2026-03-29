@@ -510,8 +510,7 @@ onUnmounted(() => {
 <template>
   <div class="page">
     <h1 class="fw-bold">Welcome, Admin {{ adminProfile?.name ?? adminProfile?.email }}.</h1>
-    <p class="muted intro">View employee locations below.</p>
-
+    
     <section class="admin-kpis">
       <div v-if="kpiLoading" class="admin-kpis-loading">Loading…</div>
       <template v-else>
@@ -546,36 +545,38 @@ onUnmounted(() => {
       </template>
     </section>
 
+    <h2 class="hero-map-title fw-bold">Employee Locations</h2>
+    <p class="muted intro">View employee locations below.</p>
     <section class="hero-map-section">
       <div class="hero-map-header">
-        <h2 class="hero-map-title">Employee locations</h2>
-        <div class="hero-map-controls">
-          <input v-model="mapDate" type="date" class="hero-map-date" @change="fetchMapData"/>
-          <div class="hero-map-filters">
-            <label class="filter-group">
-              <span class="filter-label">Status</span>
-              <select v-model="filterLocationType" class="filter-select">
-                <option value="both">All Records</option>
-                <option value="clock_in">Clocked In</option>
-                <option value="clock_out">Clocked Out</option>
-              </select>
-            </label>
-            <label class="filter-group">
-              <span class="filter-label">Modality</span>
-              <select v-model="filterModality" class="filter-select">
-                <option value="all">All</option>
-                <option value="office">Office</option>
-                <option value="wfh">WFH</option>
-              </select>
-            </label>
-            <label class="filter-group">
-              <span class="filter-label">Branch</span>
-              <select v-model="filterBranch" class="filter-select">
-                <option value="all">All branches</option>
-                <option v-for="b in BRANCHES" :key="b.id" :value="b.id">{{ b.name }}</option>
-              </select>
-            </label>
-          </div>
+        <div class="hero-map-filters" role="group" aria-label="Map filters">
+          <label class="filter-group">
+            <span class="filter-label">Date</span>
+            <input v-model="mapDate" type="date" class="hero-map-date" @change="fetchMapData" />
+          </label>
+          <label class="filter-group">
+            <span class="filter-label">Status</span>
+            <select v-model="filterLocationType" class="filter-select">
+              <option value="both">All Records</option>
+              <option value="clock_in">Clocked In</option>
+              <option value="clock_out">Clocked Out</option>
+            </select>
+          </label>
+          <label class="filter-group">
+            <span class="filter-label">Modality</span>
+            <select v-model="filterModality" class="filter-select">
+              <option value="all">All</option>
+              <option value="office">Office</option>
+              <option value="wfh">WFH</option>
+            </select>
+          </label>
+          <label class="filter-group">
+            <span class="filter-label">Branch</span>
+            <select v-model="filterBranch" class="filter-select">
+              <option value="all">All branches</option>
+              <option v-for="b in BRANCHES" :key="b.id" :value="b.id">{{ b.name }}</option>
+            </select>
+          </label>
         </div>
       </div>
       <div class="hero-map-wrap">
@@ -592,13 +593,13 @@ onUnmounted(() => {
 
 <style scoped>
 .page { width: 100%; max-width: 100%; }
-.page h1 { margin: 0 0 0.5rem; font-size: 1.5rem; font-weight: 600; }
+.page h1 { margin: 0 0 2rem; font-size: 1.5rem; font-weight: 600; }
 .muted { color: var(--text-secondary); font-size: 0.9375rem; margin: 0 0 1rem; }
-.intro { margin-bottom: 1.5rem; }
+.intro { margin-bottom: 0.5rem; }
 
 .admin-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
 @media (max-width: 900px) { .admin-kpis { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 480px) { .admin-kpis { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .admin-kpis { grid-template-columns: repeat(2, 1fr); } }
 .admin-kpis-loading { grid-column: 1 / -1; text-align: center; color: var(--text-secondary); padding: 1.5rem; }
 .admin-kpi-card { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 14px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; }
 .admin-kpi-icon { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #fff; }
@@ -613,13 +614,59 @@ onUnmounted(() => {
 .hero-map-section { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 16px; padding: 1.25rem; margin-bottom: 1.5rem; }
 .hero-map-header { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-bottom: 1rem; }
 .hero-map-title { margin: 0; font-size: 1.125rem; font-weight: 600; color: var(--text-primary); }
-.hero-map-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; flex: 1; }
-.hero-map-date { padding: 0.4rem 0.6rem; border-radius: 8px; border: 1px solid var(--border-light); background: var(--bg-tertiary); color: var(--text-primary); font-size: 0.875rem; }
-.hero-map-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
-.filter-group { display: flex; align-items: center; gap: 0.35rem; }
+.hero-map-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  flex: 1;
+  min-width: 0;
+  justify-content: space-between;
+}
+.hero-map-date {
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  min-width: 0;
+}
+.filter-group { display: flex; flex-direction: row; align-items: center; gap: 0.35rem; min-width: 0; }
 .filter-group.filter-check { gap: 0.5rem; }
-.filter-label { font-size: 0.8125rem; color: var(--text-secondary); white-space: nowrap; }
-.filter-select { padding: 0.4rem 0.6rem; border-radius: 8px; border: 1px solid var(--border-light); background: var(--bg-tertiary); color: var(--text-primary); font-size: 0.8125rem; min-width: 120px; }
+.filter-label { font-size: 0.8125rem; color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
+.filter-select {
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  min-width: 7.5rem;
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .hero-map-header { align-items: stretch; }
+  .hero-map-filters {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 0.3rem;
+  }
+  .filter-group {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 0rem;
+  }
+  .filter-select,
+  .hero-map-date {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+}
 .filter-checkbox { width: 1rem; height: 1rem; accent-color: #38bdf8; }
 
 .hero-map-wrap { position: relative; min-height: 380px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border-light); background: #f1f5f9; }
