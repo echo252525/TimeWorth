@@ -9,6 +9,7 @@ const router = useRouter()
 const { signIn, isLoading, error } = useAuth()
 const form = reactive({ email: '', password: '' })
 const showPassword = ref(false)
+const accountModal = ref<null | 'pending' | 'welcome' | 'rejected'>(null)
 /** Shown after user lands from Supabase email confirmation link (see useAuth signUp emailRedirectTo). */
 const showEmailConfirmedBanner = ref(false)
 const showPasswordResetBanner = ref(false)
@@ -40,13 +41,66 @@ function togglePassword() {
 }
 
 async function onSubmit() {
-  const err = await signIn(form.email, form.password).then(r => r.error)
-  if (!err) router.push('/dashboard')
+  const result = await signIn(form.email, form.password)
+  if ('error' in result) return
+  if ('pendingReview' in result && result.pendingReview) {
+    accountModal.value = 'pending'
+    return
+  }
+  if ('rejected' in result && result.rejected) {
+    accountModal.value = 'rejected'
+    return
+  }
+  if ('ok' in result && result.ok) {
+    if (result.firstTimeWelcome) {
+      accountModal.value = 'welcome'
+      return
+    }
+    router.push('/dashboard')
+  }
+}
+
+function dismissAccountModal() {
+  const variant = accountModal.value
+  accountModal.value = null
+  if (variant === 'welcome') router.push('/dashboard')
 }
 </script>
 <template>
   <div class="login-view">
     <AuthLayout>
+      <div
+        v-if="accountModal"
+        class="auth-modal-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-live="polite"
+      >
+        <div class="auth-modal-card">
+          <div class="auth-modal-badge">
+            {{ accountModal === 'welcome' ? 'Welcome to TimeWorth' : 'Account update' }}
+          </div>
+          <h3 class="auth-modal-title">
+            {{
+              accountModal === 'pending'
+                ? 'Account under review'
+                : accountModal === 'rejected'
+                  ? 'Account not approved'
+                  : 'Welcome aboard'
+            }}
+          </h3>
+          <p class="auth-modal-text">
+            {{
+              accountModal === 'pending'
+                ? 'Your employee account is currently being reviewed by the admin. Please wait for approval before logging in.'
+                : accountModal === 'rejected'
+                  ? 'After careful review by the admin, your employee account has been rejected. Please contact the admin if you think this was a mistake.'
+                  : 'Your account has been approved. Welcome to TimeWorth. Click okay to continue to your dashboard.'
+            }}
+          </p>
+          <button type="button" class="btn primary auth-modal-cta" @click="dismissAccountModal">Okay</button>
+        </div>
+      </div>
       <div
         v-if="showEmailConfirmedBanner"
         class="auth-success-banner"
@@ -160,6 +214,71 @@ body.dark-mode .login-view .auth-page {
   display: flex;
   justify-content: flex-end;
   margin-top: -0.15rem;
+}
+
+.login-view .auth-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(6px);
+}
+
+.login-view .auth-modal-card {
+  width: min(100%, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.35rem;
+  border-radius: 18px;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.82)),
+    rgba(14, 165, 233, 0.08);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+}
+
+body.dark-mode .login-view .auth-modal-card {
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.9)),
+    rgba(14, 165, 233, 0.1);
+}
+
+.login-view .auth-modal-badge {
+  align-self: center;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  color: var(--accent-light);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.login-view .auth-modal-title {
+  margin: 0;
+  text-align: center;
+  font-size: 1.2rem;
+  color: var(--text-primary);
+}
+
+.login-view .auth-modal-text {
+  margin: 0;
+  text-align: center;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  font-size: 0.94rem;
+}
+
+.login-view .auth-modal-cta {
+  align-self: center;
+  min-width: 140px;
 }
 
 .login-view .auth-success-banner--spaced {

@@ -119,6 +119,12 @@ function formatSignUpError(e: unknown): string {
 
 const authReady = ref(false)
 
+export type EmployeeSignInResult =
+  | { ok: true; firstTimeWelcome?: boolean }
+  | { error: string }
+  | { pendingReview: true }
+  | { rejected: true }
+
 export function useAuth() {
   const isLoading = ref(false)
   const error = ref<string | null>(null)
@@ -164,7 +170,7 @@ export function useAuth() {
     }
   }
 
-  async function signIn(email: string, password: string) {
+  async function signIn(email: string, password: string): Promise<EmployeeSignInResult> {
     isLoading.value = true
     error.value = null
     try {
@@ -180,7 +186,7 @@ export function useAuth() {
       // Ensure this authenticated user has an employee profile (and is not just an admin).
       const { data: employeeRow, error: employeeErr } = await supabase
         .from('employee')
-        .select('id')
+        .select('id, account_status, isregistered')
         .eq('id', authUser.id)
         .maybeSingle()
 
@@ -201,11 +207,36 @@ export function useAuth() {
         throw new Error('No account found.')
       }
 
-      return { data, error: null }
+      const accountStatus = (employeeRow as { account_status?: string | null }).account_status ?? 'approved'
+      const isRegistered = Boolean((employeeRow as { isregistered?: boolean | null }).isregistered)
+
+      if (accountStatus === 'pending') {
+        await supabase.auth.signOut()
+        user.value = null
+        return { pendingReview: true }
+      }
+
+      if (accountStatus === 'rejected') {
+        await supabase.auth.signOut()
+        user.value = null
+        return { rejected: true }
+      }
+
+      if (!isRegistered) {
+        const { error: updateErr } = await supabase
+          .from('employee')
+          .update({ isregistered: true })
+          .eq('id', authUser.id)
+
+        if (updateErr) throw updateErr
+        return { ok: true, firstTimeWelcome: true }
+      }
+
+      return { ok: true }
     } catch (e) {
       const msg = errMsg(e, 'Sign in failed')
       error.value = msg
-      return { data: null, error: msg }
+      return { error: msg }
     } finally {
       isLoading.value = false
     }
