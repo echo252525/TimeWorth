@@ -639,12 +639,17 @@ function formatDate(iso: string | null): string {
     <template v-else>
       <!-- KPI header -->
       <section class="kpi-row" aria-label="Summary">
-        <div class="kpi-card">
+        <div class="kpi-card kpi-card-people">
+          <div class="kpi-icon-wrap" aria-hidden="true">
+            <span class="material-symbols-outlined kpi-icon">person</span>
+          </div>
           <div class="kpi-value">{{ totalPeople }}</div>
           <div class="kpi-label">People</div>
         </div>
-        <div class="kpi-divider" aria-hidden="true" />
-        <div class="kpi-card">
+        <div class="kpi-card kpi-card-positions">
+          <div class="kpi-icon-wrap" aria-hidden="true">
+            <span class="material-symbols-outlined kpi-icon">work</span>
+          </div>
           <div class="kpi-value">{{ totalDepartments }}</div>
           <div class="kpi-label">Positions</div>
         </div>
@@ -699,7 +704,7 @@ function formatDate(iso: string | null): string {
                   />
                 </th>
                 <th scope="col">User</th>
-                <th scope="col">Status</th>
+                <th class="th-status" scope="col">Status</th>
                 <th scope="col">Email</th>
                 <th scope="col">Position</th>
               </tr>
@@ -738,7 +743,7 @@ function formatDate(iso: string | null): string {
                     <span class="user-name">{{ e.name }}</span>
                   </div>
                 </td>
-                <td class="td-muted">
+                <td class="td-muted td-status">
                   <span
                     class="status-pill"
                     :class="'status-pill--' + presenceForUserId(e.id).kind"
@@ -858,38 +863,74 @@ function formatDate(iso: string | null): string {
 
 /* KPI */
 .kpi-row {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
   margin-bottom: 1.5rem;
-  padding: 1.25rem 1.5rem;
+}
+.kpi-card {
+  min-width: 0;
+  text-align: left;
+  padding: 1.25rem 1.375rem;
   background: var(--bg-secondary);
   border: 1px solid var(--border-light);
   border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
-.kpi-card {
-  flex: 1;
-  text-align: center;
-  min-width: 0;
+body.dark-mode .kpi-card {
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+.kpi-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 999px;
+  margin-bottom: 0.875rem;
+}
+.kpi-card-people .kpi-icon-wrap {
+  background: rgba(34, 197, 94, 0.18);
+}
+.kpi-card-positions .kpi-icon-wrap {
+  background: rgba(147, 51, 234, 0.16);
+}
+body.light-mode .kpi-card-people .kpi-icon-wrap {
+  background: rgba(34, 197, 94, 0.14);
+}
+body.light-mode .kpi-card-positions .kpi-icon-wrap {
+  background: rgba(147, 51, 234, 0.12);
+}
+.kpi-icon {
+  font-size: 1.375rem;
+  font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+  line-height: 1;
+}
+.kpi-card-people .kpi-icon {
+  color: #4ade80;
+}
+.kpi-card-positions .kpi-icon {
+  color: #c084fc;
+}
+body.light-mode .kpi-card-people .kpi-icon {
+  color: #15803d;
+}
+body.light-mode .kpi-card-positions .kpi-icon {
+  color: #7c3aed;
 }
 .kpi-value {
   font-size: 2rem;
   font-weight: 700;
   color: var(--text-primary);
-  line-height: 1.1;
-  letter-spacing: -0.02em;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
 }
 .kpi-label {
-  margin-top: 0.35rem;
+  margin-top: 0.25rem;
   font-size: 0.8125rem;
   color: var(--text-tertiary);
   font-weight: 500;
-}
-.kpi-divider {
-  width: 1px;
-  background: var(--border-light);
-  margin: 0.25rem 0;
-  flex-shrink: 0;
+  letter-spacing: 0.01em;
 }
 
 /* Controls */
@@ -995,6 +1036,11 @@ function formatDate(iso: string | null): string {
   text-align: center;
   vertical-align: middle;
 }
+.th-status {
+  width: 1%;
+  min-width: 9rem;
+  white-space: nowrap;
+}
 .data-row {
   cursor: pointer;
   transition: background 0.12s ease;
@@ -1068,6 +1114,12 @@ function formatDate(iso: string | null): string {
 .td-muted {
   color: var(--text-secondary);
 }
+.td-status {
+  width: 1%;
+  min-width: 9rem;
+  white-space: nowrap;
+  vertical-align: middle;
+}
 .status-pill {
   display: inline-block;
   font-size: 0.75rem;
@@ -1076,6 +1128,7 @@ function formatDate(iso: string | null): string {
   border-radius: 999px;
   color: var(--text-secondary);
   background: var(--bg-hover);
+  white-space: nowrap;
 }
 .status-pill--not_clocked_in {
   color: var(--text-tertiary);
