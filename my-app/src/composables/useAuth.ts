@@ -33,12 +33,23 @@ function errMsg(e: unknown, fallback: string): string {
 }
 
 export function getPublicAppBaseUrl(): string {
-  const configured =
+  const configured = String(
     import.meta.env.VITE_PUBLIC_APP_URL
     || import.meta.env.VITE_SITE_URL
-    || DEPLOYED_APP_URL
+    || ''
+  ).trim()
 
-  return String(configured).replace(/\/$/, '')
+  if (!configured) return DEPLOYED_APP_URL
+
+  try {
+    const parsed = new URL(configured)
+    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+      return DEPLOYED_APP_URL
+    }
+    return configured.replace(/\/$/, '')
+  } catch {
+    return DEPLOYED_APP_URL
+  }
 }
 
 function buildPublicAppUrl(path: string): string {
