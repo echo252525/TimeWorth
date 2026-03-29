@@ -73,6 +73,11 @@ interface Emp {
   phone_number: string | null
   picture: string | null
 }
+
+interface PositionRow {
+  position_id: string
+  title: string
+}
 interface AttendanceRecord {
   clock_in: string | null
   clock_out: string | null
@@ -80,12 +85,15 @@ interface AttendanceRecord {
 }
 
 const list = ref<Emp[]>([])
+const positionRows = ref<PositionRow[]>([])
 const avatarUrls = ref<Record<string, string | null>>({})
 const loading = ref(true)
 const error = ref<string | null>(null)
 
 const searchQuery = ref('')
-const filterStatus = ref<'all' | 'active'>('all')
+const filterStatus = ref<'all' | 'active' | 'not_active'>('all')
+/** Select value: `position_in_company` contains "admin" (case-insensitive). */
+const FILTER_POSITION_ADMIN = '__filter_admin__'
 const filterPosition = ref<string>('all')
 const selectedIds = ref<string[]>([])
 const headerCheckboxRef = ref<HTMLInputElement | null>(null)
@@ -209,6 +217,20 @@ function presenceForUserId(userId: string): HoverPresence {
     tickKind: null,
     activeRecord: lastOut ?? null
   }
+}
+
+/** Clocked in or on lunch today (open attendance row). */
+function isEmployeeActiveToday(userId: string): boolean {
+  const p = presenceForUserId(userId)
+  return p.kind === 'clocked_in' || p.kind === 'on_lunch'
+}
+
+function normalizePositionLabel(s: string | null | undefined): string {
+  return (s ?? '').trim().toLowerCase()
+}
+
+function employeePositionContainsAdmin(e: Emp): boolean {
+  return normalizePositionLabel(e.position_in_company).includes('admin')
 }
 
 function tableStatusLabel(userId: string): string {
@@ -418,13 +440,9 @@ watch(
 )
 
 
-const positionOptions = computed(() => {
-  const set = new Set(list.value.map((e) => e.position_in_company).filter(Boolean))
-  return Array.from(set).sort((a, b) => a.localeCompare(b))
-})
-
 const totalPeople = computed(() => list.value.length)
 const totalDepartments = computed(() => {
+  if (positionRows.value.length) return positionRows.value.length
   const set = new Set(list.value.map((e) => e.position_in_company).filter(Boolean))
   return set.size
 })
@@ -442,11 +460,16 @@ const filteredList = computed(() => {
         (e.phone_number && e.phone_number.toLowerCase().includes(q))
     )
   }
-  if (filterPosition.value !== 'all') {
-    rows = rows.filter((e) => e.position_in_company === filterPosition.value)
+  if (filterPosition.value === FILTER_POSITION_ADMIN) {
+    rows = rows.filter((e) => employeePositionContainsAdmin(e))
+  } else if (filterPosition.value !== 'all') {
+    const want = normalizePositionLabel(filterPosition.value)
+    rows = rows.filter((e) => normalizePositionLabel(e.position_in_company) === want)
   }
   if (filterStatus.value === 'active') {
-    rows = rows.filter((e) => Boolean(e.id))
+    rows = rows.filter((e) => isEmployeeActiveToday(e.id))
+  } else if (filterStatus.value === 'not_active') {
+    rows = rows.filter((e) => !isEmployeeActiveToday(e.id))
   }
   return rows
 })
@@ -459,6 +482,29 @@ watchEffect(() => {
   el.indeterminate = n > 0 && n < ids.length
   el.checked = ids.length > 0 && n === ids.length
 })
+
+watch(
+  () => positionRows.value.map((p) => p.title),
+  (titles) => {
+    if (filterPosition.value === 'all' || filterPosition.value === FILTER_POSITION_ADMIN) {
+      return
+    }
+    const want = normalizePositionLabel(filterPosition.value)
+    const stillValid = titles.some((t) => normalizePositionLabel(t) === want)
+    if (!stillValid) {
+      filterPosition.value = 'all'
+    }
+  }
+)
+
+async function loadPositions() {
+  const { data, error: err } = await supabase
+    .from('position')
+    .select('position_id, title')
+    .order('title', { ascending: true })
+  if (err) return
+  positionRows.value = (data ?? []) as PositionRow[]
+}
 
 async function loadEmployees() {
   loading.value = true
@@ -483,6 +529,7 @@ async function loadEmployees() {
 }
 
 onMounted(() => {
+  void loadPositions()
   loadEmployees()
   attendanceRefreshTimer = setInterval(() => {
     loadAttendanceSnapshot()
@@ -621,13 +668,15 @@ function formatDate(iso: string | null): string {
             <select v-model="filterStatus" class="filter-select" aria-label="Filter by status">
               <option value="all">All</option>
               <option value="active">Active</option>
+              <option value="not_active">Not active</option>
             </select>
             <ChevronDownIcon class="select-chevron" aria-hidden="true" />
           </div>
           <div class="select-wrap">
             <select v-model="filterPosition" class="filter-select" aria-label="Filter by position">
               <option value="all">All positions</option>
-              <option v-for="p in positionOptions" :key="p" :value="p">{{ p }}</option>
+              <option v-for="p in positionRows" :key="p.position_id" :value="p.title">{{ p.title }}</option>
+              <option :value="FILTER_POSITION_ADMIN">Admin</option>
             </select>
             <ChevronDownIcon class="select-chevron" aria-hidden="true" />
           </div>
