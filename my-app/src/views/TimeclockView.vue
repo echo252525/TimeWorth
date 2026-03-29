@@ -945,9 +945,6 @@ async function handleCancelFacial() {
       <!-- Left: Hero timeclock -->
       <div class="hero-section">
         <h1 class="hero-title">Timeclock</h1>
-        <p class="muted hero-intro">
-          Use this page to clock in and out to record your attendance in real time.
-        </p>
         <p v-if="error" class="error">{{ error }}</p>
         <p v-if="locationError" class="error">{{ locationError }}</p>
         <div v-if="isLoading && !todayRecord && step === 'idle'" class="muted">Loading…</div>
@@ -991,7 +988,7 @@ async function handleCancelFacial() {
                 </div>
                 <div
                   v-if="remainingHoursLabel"
-                  class="time-left-ring"
+                  class="time-left-badge"
                   :aria-label="isOnLunch ? 'Time left in work day' : 'Time left before 8h target'"
                 >
                   <svg class="time-left-icon" viewBox="0 0 40 40" aria-hidden="true">
@@ -1043,42 +1040,17 @@ async function handleCancelFacial() {
             </template>
           </div>
           <!-- Choose modality (after Clock in click) -->
-          <div v-else-if="step === 'choose_modality'" class="hero-card choose-modality-card">
-            <p class="choose-modality-lead">Where are you working?</p>
-            <div class="modality-segment" role="group" aria-label="Work location">
-              <div class="modality-segment__track">
-                <div
-                  class="modality-segment__thumb"
-                  :class="{ 'modality-segment__thumb--wfh': workModality === 'wfh' }"
-                  aria-hidden="true"
-                />
-                <button
-                  type="button"
-                  class="modality-segment__opt"
-                  :class="{ 'modality-segment__opt--active': workModality === 'office' }"
-                  :aria-pressed="workModality === 'office'"
-                  @click="workModality = 'office'"
-                >
-                  Office
-                </button>
-                <button
-                  type="button"
-                  class="modality-segment__opt"
-                  :class="{ 'modality-segment__opt--active': workModality === 'wfh' }"
-                  :aria-pressed="workModality === 'wfh'"
-                  @click="workModality = 'wfh'"
-                >
-                  WFH
-                </button>
-              </div>
+          <div v-else-if="step === 'choose_modality'" class="hero-card">
+            <p class="muted">Where are you working?</p>
+            <div class="modality-btns">
+              <button type="button" class="btn" :class="{ primary: workModality === 'office', secondary: workModality !== 'office' }" @click="workModality = 'office'">Office</button>
+              <button type="button" class="btn" :class="{ primary: workModality === 'wfh', secondary: workModality !== 'wfh' }" @click="workModality = 'wfh'">WFH</button>
             </div>
-            <p v-if="(officeFetchingLocation || wfhFetchingLocation) && !locationIn" class="muted choose-modality-muted">
+            <p v-if="(officeFetchingLocation || wfhFetchingLocation) && !locationIn" class="muted">
               Getting location…
             </p>
-            <p v-if="isOutsideOfficeRadius" class="block-msg choose-modality-block-msg">
-              You are outside the location of the branch so you cannot continue.
-            </p>
-            <div class="actions choose-modality-actions">
+            <p v-if="isOutsideOfficeRadius" class="block-msg">You are outside the location of the branch so you cannot continue.</p>
+            <div class="actions">
               <button
                 type="button"
                 class="btn primary"
@@ -1098,14 +1070,41 @@ async function handleCancelFacial() {
           </div>
           <!-- Idle: start -->
           <div v-else class="hero-card hero-idle">
-            <p class="muted hero-sub hero-idle-hint">Track location to clock in</p>
-            <button type="button" class="btn primary hero-cta" :disabled="isLoading" @click="onClockInClick">
-              <span v-if="isLoading" class="btn-loading-wrap">
-                <span class="btn-loading-spinner" aria-hidden="true"></span>
-                <span>Clocking in…</span>
-              </span>
-              <span v-else>Clock in</span>
-            </button>
+            <div class="hero-sub-row">
+              <p class="muted hero-sub">
+                Track location to clock in
+              </p>
+              <div v-if="remainingHoursLabel" class="time-left-badge" aria-label="Time left before clock out">
+                <svg class="time-left-icon" viewBox="0 0 40 40" aria-hidden="true">
+                  <circle
+                    class="time-left-track"
+                    cx="20"
+                    cy="20"
+                    r="14"
+                    fill="none"
+                  />
+                  <circle
+                    class="time-left-progress"
+                    cx="20"
+                    cy="20"
+                    r="14"
+                    fill="none"
+                    :stroke-dasharray="timeLeftCircumference"
+                    :stroke-dashoffset="timeLeftDashOffset"
+                    :stroke="timeLeftProgressColor"
+                  />
+                  <text
+                    x="20"
+                    y="23"
+                    class="time-left-number time-left-number-pulse"
+                    text-anchor="middle"
+                  >
+                    {{ remainingHoursLabel }}
+                  </text>
+                </svg>
+              </div>
+            </div>
+            <button type="button" class="btn hero-cta" :disabled="isLoading" @click="onClockInClick">Clock in</button>
             <div v-if="completedToday.length" class="completed-list">
               <p class="muted small">Today</p>
               <div v-for="r in completedToday" :key="r.attendance_id" class="completed-row">
@@ -1191,53 +1190,10 @@ async function handleCancelFacial() {
 @media (max-width: 900px) { .timeclock-layout { grid-template-columns: 1fr; } }
 .hero-section { min-width: 0; max-width: 560px; }
 .hero-title { margin: 0 0 0.5rem; font-size: 1.75rem; font-weight: 600; letter-spacing: -0.02em; }
-.hero-intro { margin: 0 0 1.25rem !important; max-width: 36rem; line-height: 1.5; }
 .hero-sub { margin: 0 0 1rem; font-size: 0.9375rem; }
 .hero-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 2rem; margin-top: 0.5rem; }
-/* Same minimal panel treatment as DashboardView .kpi-card / .report-panel */
-.hero-card.choose-modality-card,
-.hero-card.hero-idle {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 1.25rem;
-  background: #e9f1fc;
-  border: 1px solid rgba(15, 23, 42, 0.1);
-  border-radius: 12px;
-  box-sizing: border-box;
-}
-.hero-card.hero-idle .completed-list {
-  border-top-color: rgba(15, 23, 42, 0.12);
-}
-.choose-modality-lead {
-  margin: 0 !important;
-}
-.hero-card.choose-modality-card .modality-segment {
-  max-width: none;
-  margin: 0;
-}
-.choose-modality-muted {
-  margin: 0 !important;
-}
-.choose-modality-block-msg {
-  margin: 0 !important;
-}
-.hero-idle-hint { margin: 0 !important; line-height: 1.45; }
-.hero-cta {
-  width: 100%;
-  padding: 0.9375rem 1.5rem;
-  font-size: 1.0625rem;
-  font-weight: 600;
-  border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(14, 165, 233, 0.35);
-  transition: box-shadow 0.2s ease, transform 0.15s ease;
-}
-.hero-cta:not(:disabled):hover {
-  box-shadow: 0 6px 20px rgba(14, 165, 233, 0.45);
-}
-.hero-cta:not(:disabled):active {
-  transform: scale(0.99);
-}
+.hero-idle { padding: 2.5rem; }
+.hero-cta { padding: 0.875rem 2rem; font-size: 1.125rem; font-weight: 600; border-radius: 12px; }
 .error { color: #f87171; font-size: 0.875rem; margin: 0 0 0.5rem; }
 .muted { color: #64748b; font-size: 0.875rem; margin: 0.5rem 0; }
 .block-msg { color: #fbbf24; margin: 0 0 1rem; }
@@ -1247,89 +1203,12 @@ async function handleCancelFacial() {
 .timer.lunch-timer { color: #fbbf24; }
 .timer-wrap .sub { margin-top: 0.5rem; font-size: 0.8125rem; }
 .lunch-info { margin: 0.25rem 0; }
-/* Segmented control (not separate buttons): sliding pill + inverted label colors */
-.modality-segment {
-  margin: 0.75rem 0 0.5rem;
-  max-width: 20rem;
-}
-.modality-segment__track {
-  position: relative;
-  display: flex;
-  flex-direction: row;
-  padding: 4px;
-  border-radius: 9999px;
-  background: #0ea5e9;
-}
-.modality-segment__thumb {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  width: calc(50% - 4px);
-  height: calc(100% - 8px);
-  border-radius: 9999px;
-  background: #fff;
-  transition: transform 0.22s cubic-bezier(0.3, 0.7, 0.3, 1);
-  pointer-events: none;
-  z-index: 0;
-  will-change: transform;
-}
-.modality-segment__thumb--wfh {
-  transform: translateX(100%);
-}
-.modality-segment__opt {
-  position: relative;
-  z-index: 1;
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 0.5rem 0.75rem;
-  margin: 0;
-  border: none;
-  background: transparent;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  font-family: inherit;
-  line-height: 1.25;
-  cursor: pointer;
-  color: #fff;
-  border-radius: 9999px;
-  transition: color 0.18s ease;
-}
-.modality-segment__opt--active {
-  color: #0ea5e9;
-}
-.modality-segment__opt:focus {
-  outline: none;
-}
-.modality-segment__opt:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.95);
-  outline-offset: 2px;
-}
-.modality-segment__opt--active:focus-visible {
-  outline-color: #0ea5e9;
-}
+.modality-btns { display: flex; gap: 0.5rem; margin: 0.5rem 0; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1rem; }
-.actions.choose-modality-actions {
-  justify-content: flex-end;
-  margin-top: 0.25rem;
-}
-.btn {
-  padding: 0.5rem 1rem;
-  border-radius: 8px;
-  font-size: 0.9375rem;
-  font-weight: 500;
-  cursor: pointer;
-  border: 1px solid transparent;
-  transition: opacity 0.2s, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-/* Match Bootstrap .btn-primary */
-.btn.primary { background: #0ea5e9; color: #fff; border-color: #0ea5e9; }
-.btn.primary:hover:not(:disabled) { background: #0284c7; border-color: #0284c7; }
-.btn.primary:active:not(:disabled) { background: #0369a1; border-color: #0369a1; }
-/* Match Bootstrap .btn-secondary (solid gray, not ghost) */
-.btn.secondary { background: #6c757d; color: #fff; border-color: #6c757d; }
-.btn.secondary:hover:not(:disabled) { background: #5c636a; border-color: #565e64; color: #fff; }
-.btn.secondary:active:not(:disabled) { background: #565e64; border-color: #51585e; }
-.btn:disabled { opacity: 0.65; cursor: not-allowed; }
+.btn { padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.9375rem; font-weight: 500; cursor: pointer; border: none; transition: opacity 0.2s; }
+.btn.primary { background: #0ea5e9; color: #fff; }
+.btn.secondary { background: rgba(255,255,255,0.1); color: #e2e8f0; }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-loading-wrap { display: inline-flex; align-items: center; gap: 0.5rem; }
 .btn-loading-spinner {
   width: 16px;
@@ -1368,10 +1247,11 @@ async function handleCancelFacial() {
   min-height: 320px;
   border-radius: 16px;
   overflow: hidden;
+  border: 1px solid var(--border-color);
   background:
     radial-gradient(circle at top, rgba(56,189,248,0.22), rgba(15,23,42,0.98)),
     linear-gradient(135deg, rgba(15,23,42,1), rgba(15,23,42,0.92));
-    box-shadow: rgba(0, 0, 0, 0.16) 0px 3px 6px, rgba(0, 0, 0, 0.23) 0px 3px 6px;
+  box-shadow: 0 18px 40px rgba(15,23,42,0.7);
 }
 .map-loading-overlay {
   position: absolute;
@@ -1462,11 +1342,17 @@ async function handleCancelFacial() {
 }
 .clocked-hero-meta { margin: 0 !important; font-size: 0.8125rem; }
 
-.time-left-ring {
-  flex-shrink: 0;
+.time-left-badge {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(15,23,42,0.92);
+  border: 1px solid rgba(56,189,248,0.7);
+  box-shadow: 0 6px 18px rgba(15,23,42,0.7);
+  transform-origin: center;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
 
 .time-left-icon {
@@ -1505,5 +1391,11 @@ async function handleCancelFacial() {
 .liveness-cancel-spinner {
   border-color: rgba(148, 163, 184, 0.3);
   border-top-color: #94a3b8;
+}
+
+.time-left-badge:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(15,23,42,0.85);
+  border-color: #38bdf8;
 }
 </style>
