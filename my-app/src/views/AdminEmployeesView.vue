@@ -15,7 +15,7 @@ import {
 
 /** Columns needed for employee hover (maps use `location_in` / `location_out` as `lat,lng` text). */
 const ATTENDANCE_HOVER_SELECT =
-  'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,work_modality,liveness_verifications_id,created_at,updated_at'
+  'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,work_modality,facial_verifications_id,created_at,updated_at'
 
 /**
  * Prefer `location_in` (GPS). If missing and office, fall back to registered branch coords.

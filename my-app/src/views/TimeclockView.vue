@@ -3,18 +3,12 @@ import { onMounted, onUnmounted, nextTick, ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import markerIconUrl from 'leaflet/dist/images/marker-icon.png'
-import markerIcon2xUrl from 'leaflet/dist/images/marker-icon-2x.png'
-import markerShadowUrl from 'leaflet/dist/images/marker-shadow.png'
-delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: string })._getIconUrl
-L.Icon.Default.mergeOptions({ iconUrl: markerIconUrl, iconRetinaUrl: markerIcon2xUrl, shadowUrl: markerShadowUrl })
 import {
   useAttendance,
   BRANCHES,
   RADIUS_M,
   getBranch,
   parseLocation,
-  isOutsideBranch,
   isOutsideWfhRadius,
   storedToRealInstant,
   type WorkModality,
@@ -30,8 +24,6 @@ const {
   isClockedIn,
   isOnLunch,
   usedLunchBreak,
-  elapsedDisplay,
-  lunchElapsedDisplay,
   isLoading,
   error,
   fetchToday,
@@ -52,7 +44,8 @@ const locationIn = ref<{ lat: number; lng: number } | null>(null)
 const locationOut = ref<{ lat: number; lng: number } | null>(null)
 const locationError = ref<string | null>(null)
 const clockOutConfirm = ref<{ outsideOffice?: boolean; outsideWfh?: boolean } | null>(null)
-
+const nowTick = ref(Date.now())
+let timerInterval: number | null = null
 // Liveness verification state
 const livenessVerificationId = ref<string | null>(null)
 const facialScanSuccess = ref(false)
@@ -112,26 +105,18 @@ function resumeLivenessRow(row: { id: string }) {
     .subscribe()
 }
 
-async function cancelLiveness() {
-  const id = livenessVerificationId.value
-  if (id) {
-    await supabase.from('facial_verifications').delete().eq('id', id)
-  }
-  closeLivenessRealtime()
-  livenessVerificationId.value = null
-  livenessError.value = null
-  step.value = 'choose_modality'
-  locationIn.value = null
-  locationError.value = null
-}
-
 onMounted(() => {
+  // ✅ START TIMER (THIS IS THE FIX)
+  timerInterval = window.setInterval(() => {
+    nowTick.value = Date.now()
+  }, 1000)
+
   fetchToday()
   loadUserProfile()
   nextTick(() => { if (mapContainer.value) initMap() })
   startLiveLocationWatch()
   fetchLocationOnce()
-  // Check if we should auto-trigger clock in
+
   if (route.query.clockin === 'true' && !isClockedIn.value && step.value === 'idle') {
     nextTick(() => {
       onClockInClick()
@@ -151,6 +136,10 @@ onUnmounted(() => {
   circle?.remove()
   map?.remove()
   map = null
+  if (timerInterval) {
+  clearInterval(timerInterval)
+  timerInterval = null
+}
 })
 
 const activeBranch = computed(() => {
@@ -412,24 +401,24 @@ function fetchLocationOnce() {
   officeUserAddress.value = null
   officeFetchingLocation.value = true
   wfhFetchingLocation.value = true
-  getLocation()
-    .then((loc) => {
+  void (async () => {
+    try {
+      const loc = await getLocation()
       locationIn.value = loc
       console.log('[Timeclock] location fetched', { lat: loc.lat, lng: loc.lng })
       nextTick(() => updateMapView())
-      reverseGeocode(loc.lat, loc.lng).then((addr) => {
+      void reverseGeocode(loc.lat, loc.lng).then((addr) => {
         officeUserAddress.value = addr
         wfhAddress.value = addr
       })
-    })
-    .catch((err) => {
+    } catch (err) {
       console.warn('[Timeclock] getLocation failed', err)
-    })
-    .finally(() => {
+    } finally {
       officeFetchingLocation.value = false
       wfhFetchingLocation.value = false
       console.log('[Timeclock] fetchLocationOnce done, loading flags cleared')
-    })
+    }
+  })()
 }
 
 watch(workModality, () => {
@@ -457,18 +446,11 @@ watch(
   { immediate: true }
 )
 
-watch(
-  () => ({ in: isClockedIn.value, el: elapsedDisplay.value, id: todayRecord.value?.attendance_id }),
-  (v) => {
-    if (v.in && v.id) console.debug('[Timeclock] timer', { elapsedDisplay: v.el, attendanceId: v.id })
-  }
-)
-
 watch(step, async (s, prev) => {
-  const verificationId = livenessVerificationId.value ?? todayRecord.value?.liveness_verifications_id ?? null
+  const verificationId = livenessVerificationId.value ?? todayRecord.value?.facial_verifications_id ?? null
   if (s === 'facial_out' && verificationId) {
-    if (!livenessVerificationId.value && todayRecord.value?.liveness_verifications_id) {
-      livenessVerificationId.value = todayRecord.value.liveness_verifications_id
+    if (!livenessVerificationId.value && todayRecord.value?.facial_verifications_id) {
+      livenessVerificationId.value = todayRecord.value.facial_verifications_id
     }
     closeLivenessRealtime()
     const id = verificationId
@@ -705,7 +687,7 @@ async function onFacialClockInVerified() {
     }
   }
   const branchId = workModality.value === 'office' ? selectedBranch.value?.id : undefined
-  await clockIn(workModality.value, { locationIn: locStr, facialStatus: 'verified', branchLocation: branchId, livenessVerificationId: livenessVerificationId.value ?? undefined })
+  await clockIn(workModality.value, { locationIn: locStr, facialStatus: 'verified', branchLocation: branchId, facialVerificationId: livenessVerificationId.value ?? undefined })
   // Match WFH: enter clocked-in state immediately so the live timer is visible (not hidden under step==='facial').
   step.value = 'clocked_in'
   closeLivenessRealtime()
@@ -758,28 +740,6 @@ async function doClockOut() {
   }
 }
 
-async function doClockOutAfterFacial() {
-  locationError.value = null
-  locationOut.value = null
-  try {
-    const loc = await getLocation()
-    locationOut.value = loc
-    const locStr = locationString(loc)!
-    const mod = todayRecord.value?.work_modality
-    const branchId = todayRecord.value?.branch_location ?? null
-    if (mod === 'office' && isOutsideBranch(loc, branchId)) {
-      clockOutConfirm.value = { outsideOffice: true }
-      return
-    }
-    await clockOut(locStr)
-    step.value = 'idle'
-    locationOut.value = null
-  } catch {
-    await clockOut()
-    step.value = 'idle'
-  }
-}
-
 function confirmClockOutOutside() {
   const loc = locationString(locationOut.value)
   if (!loc) return
@@ -795,22 +755,57 @@ function cancelClockOutConfirm() {
   locationOut.value = null
 }
 
-function cancelFlow() {
-  step.value = 'idle'
-  locationIn.value = null
-  locationError.value = null
-  if (!isClockedIn) step.value = 'idle'
+function formatElapsedMs(ms: number) {
+  const safe = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(safe / 3600)
+  const m = Math.floor((safe % 3600) / 60)
+  const s = safe % 60
+  return `${h}h ${m}m ${s}s`
 }
 
-function backToModality() {
-  step.value = 'choose_modality'
-  locationIn.value = null
-  locationError.value = null
-}
+const liveElapsedDisplay = computed(() => {
+  const r = todayRecord.value
+  const now = nowTick.value
+  if (!r?.clock_in || r.clock_out) return '0h 0m 0s'
 
-function fmt(t: string | null) {
-  return t ? new Date(t).toLocaleTimeString() : '—'
-}
+  const start = storedToRealInstant(r.clock_in)
+  let lunchMs = 0
+  if (r.lunch_break_start) {
+    const lunchEnd = r.lunch_break_end ? storedToRealInstant(r.lunch_break_end) : now
+    lunchMs = Math.max(0, lunchEnd - storedToRealInstant(r.lunch_break_start))
+  }
+
+  return formatElapsedMs(now - start - lunchMs)
+})
+
+const liveLunchElapsedDisplay = computed(() => {
+  const r = todayRecord.value
+  const now = nowTick.value
+  if (!r?.lunch_break_start || r.lunch_break_end) return '0h 0m 0s'
+  return formatElapsedMs(now - storedToRealInstant(r.lunch_break_start))
+})
+
+watch(
+  () => ({
+    in: isClockedIn.value,
+    el: liveElapsedDisplay.value,
+    lunch: liveLunchElapsedDisplay.value,
+    id: todayRecord.value?.attendance_id,
+    tick: nowTick.value
+  }),
+  (v) => {
+    if (v.in && v.id) {
+      console.log('[Timeclock] timer tick', {
+        attendanceId: v.id,
+        elapsedDisplay: v.el,
+        lunchElapsedDisplay: v.lunch,
+        tick: v.tick,
+        step: step.value
+      })
+    }
+  }
+)
+
 function fmtStored(t: string | null) {
   return t ? new Date(storedToRealInstant(t)).toLocaleTimeString() : '—'
 }
@@ -899,6 +894,8 @@ const timeLeftDashOffset = computed(() => {
   return (1 - timeLeftProgressFraction.value) * timeLeftCircumference
 })
 
+
+
 /** Elapsed work fraction (0 = start, 1 = 8h, >1 = overtime) for timer color. */
 const elapsedFractionForColor = computed(() => {
   if (TARGET_DAY_SECONDS <= 0) return 0
@@ -977,12 +974,12 @@ async function handleCancelFacial() {
                 <div class="clocked-hero-left">
                   <template v-if="isOnLunch">
                     <p class="timer-label">Lunch break</p>
-                    <div class="timer lunch-timer timer-hero-main">{{ lunchElapsedDisplay }}</div>
-                    <p class="muted sub">Work: {{ elapsedDisplay }}</p>
+                    <div class="timer lunch-timer timer-hero-main">{{ liveLunchElapsedDisplay }}</div>
+                    <p class="muted sub">Work: {{ liveElapsedDisplay }}</p>
                   </template>
                   <template v-else>
                     <p class="muted hero-sub clocked-hero-label">Working · {{ todayRecord.work_modality ?? '—' }}</p>
-                    <div class="timer timer-hero-main" aria-live="polite">{{ elapsedDisplay }}</div>
+                    <div class="timer timer-hero-main" aria-live="polite">{{ liveElapsedDisplay }}</div>
                     <p class="muted clocked-hero-meta">In at {{ fmtStored(todayRecord.clock_in) }}</p>
                   </template>
                 </div>

@@ -17,7 +17,7 @@ export interface AttendanceRow {
   location_out: string | null
   branch_location: string | null
   work_modality: WorkModality | null
-  liveness_verifications_id: string | null
+  facial_verifications_id: string | null
   created_at: string
   updated_at: string
 }
@@ -163,16 +163,19 @@ function hasExplicitUtcOffset(isoString: string): boolean {
  * Convert a stored attendance timestamp to epoch ms for math and display.
  * - App-written values from `getNowAsLocalDateTimeZ()` use a trailing `Z` but encode **local** wall time;
  *   real instant = parsed UTC ms + local timezone offset.
- * - Values with an explicit offset (`+08`, etc.) or without `Z` are parsed by `Date` as real instants — no extra offset.
+ * - Postgres may normalize those same wall-time values to `+00:00`; treat zero-offset values like `Z`.
+ * - Values with a non-zero explicit offset (`+08`, etc.) or without any zone suffix are parsed by `Date`
+ *   as real instants — no extra offset.
  */
 export function storedToRealInstant(isoString: string | null): number {
   if (!isoString) return 0
-  const storedMs = new Date(isoString).getTime()
+  const trimmed = isoString.trim()
+  const storedMs = new Date(trimmed).getTime()
   if (Number.isNaN(storedMs)) return 0
-  if (hasExplicitUtcOffset(isoString)) return storedMs
-  if (/Z\s*$/i.test(isoString.trim())) {
+  if (/Z\s*$/i.test(trimmed) || /[+-]00(?::00)?$/.test(trimmed)) {
     return storedMs + new Date().getTimezoneOffset() * 60 * 1000
   }
+  if (hasExplicitUtcOffset(trimmed)) return storedMs
   return storedMs
 }
 
@@ -186,15 +189,47 @@ export function useAttendance() {
   const tick = ref(0)
   let tickInterval: ReturnType<typeof setInterval> | null = null
   function startTick() {
-    if (tickInterval) return
+    if (tickInterval) {
+      console.debug('[useAttendance] startTick skipped; interval already running', {
+        attendanceId: todayRecord.value?.attendance_id ?? null
+      })
+      return
+    }
     tick.value = Date.now()
+    console.debug('[useAttendance] startTick', {
+      attendanceId: todayRecord.value?.attendance_id ?? null,
+      clockIn: todayRecord.value?.clock_in ?? null,
+      tick: tick.value
+    })
     tickInterval = setInterval(() => { tick.value = Date.now() }, 1000)
   }
   function stopTick() {
-    if (tickInterval) clearInterval(tickInterval)
+    if (tickInterval) {
+      console.debug('[useAttendance] stopTick', {
+        attendanceId: todayRecord.value?.attendance_id ?? null,
+        clockOut: todayRecord.value?.clock_out ?? null
+      })
+      clearInterval(tickInterval)
+    }
     tickInterval = null
   }
-  watch(isClockedIn, (v) => { if (v) startTick(); else stopTick() }, { immediate: true })
+  watch(
+    () => ({
+      attendanceId: todayRecord.value?.attendance_id ?? null,
+      clockIn: todayRecord.value?.clock_in ?? null,
+      clockOut: todayRecord.value?.clock_out ?? null
+    }),
+    (state) => {
+      const shouldTick = !!state.clockIn && !state.clockOut
+      console.debug('[useAttendance] tick state changed', {
+        ...state,
+        shouldTick
+      })
+      if (shouldTick) startTick()
+      else stopTick()
+    },
+    { immediate: true }
+  )
   onUnmounted(stopTick)
 
   function formatMs(ms: number) {
@@ -261,7 +296,7 @@ export function useAttendance() {
     todayRecords.value = incoming
   }
 
-  async function clockIn(workModality: WorkModality, opts?: { branchLocation?: string; locationIn?: string; facialStatus?: string; livenessVerificationId?: string }) {
+  async function clockIn(workModality: WorkModality, opts?: { branchLocation?: string; locationIn?: string; facialStatus?: string; facialVerificationId?: string }) {
     if (!userId.value) return
     isLoading.value = true
     error.value = null
@@ -275,7 +310,7 @@ export function useAttendance() {
         branch_location: opts?.branchLocation ?? null,
         location_in: opts?.locationIn ?? null,
         work_modality: workModality,
-        liveness_verifications_id: opts?.livenessVerificationId ?? null,
+        facial_verifications_id: opts?.facialVerificationId ?? null,
         updated_at: now
       })
       .select()
