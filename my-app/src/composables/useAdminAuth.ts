@@ -25,7 +25,6 @@ export interface AdminRow {
   name: string
   employeeid: string
   position_in_company: string
-  company_branch: string
   picture: string | null
   email: string
   role: AdminRole
@@ -98,7 +97,6 @@ export function useAdminAuth() {
     name: string
     employeeid: string
     position_in_company: string
-    company_branch: string
     email: string
     password: string
   }) {
@@ -120,7 +118,6 @@ export function useAdminAuth() {
       name: p.name,
       employeeid: p.employeeid,
       position_in_company: p.position_in_company,
-      company_branch: p.company_branch,
       email: p.email,
       role: 'pending'
     })

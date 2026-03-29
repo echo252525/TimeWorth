@@ -5,7 +5,6 @@ import 'leaflet/dist/leaflet.css'
 import { useAdminAuth } from '../composables/useAdminAuth'
 import { getSignedProfileUrl } from '../composables/useAuth'
 import {
-  BRANCHES,
   parseLocation,
   type AttendanceRow
 } from '../composables/useAttendance'
@@ -77,7 +76,6 @@ const runningMarkers = ref<{ marker: L.Marker; pin: MapPin }[]>([])
 // Filters
 const filterLocationType = ref<'clock_in' | 'clock_out' | 'both'>('both')
 const filterModality = ref<'all' | 'office' | 'wfh'>('all')
-const filterBranch = ref<string>('all')
 
 export type MapPinState = 'not_clocked_in' | 'clocked_in' | 'on_lunch' | 'clocked_out'
 
@@ -176,7 +174,6 @@ function getRunningElapsed(record: MapRecord): string {
 const filteredPins = computed((): MapPin[] => {
   const pins: MapPin[] = []
   const mod = filterModality.value
-  const branchId = filterBranch.value === 'all' ? null : filterBranch.value
   const locType = filterLocationType.value
   const locFilter = (state: MapPinState) => {
     if (locType === 'both') return true
@@ -199,7 +196,6 @@ const filteredPins = computed((): MapPin[] => {
     const modality = r.work_modality ?? null
     if (mod === 'office' && modality !== 'office') continue
     if (mod === 'wfh' && modality !== 'wfh') continue
-    if (branchId && (r.branch_location !== branchId || modality !== 'office')) continue
 
     const inLoc = parseLocation(r.location_in)
     const outLoc = parseLocation(r.location_out)
@@ -284,7 +280,6 @@ const filteredPins = computed((): MapPin[] => {
     const modality = lastRow.work_modality ?? null
     if (filterModality.value === 'office' && modality !== 'office') continue
     if (filterModality.value === 'wfh' && modality !== 'wfh') continue
-    if (filterBranch.value !== 'all' && lastRow.branch_location !== filterBranch.value) continue
     const name = lastRow.employee_name || 'Unknown'
     const initial = (name.trim().slice(0, 1) || '?').toUpperCase()
     pins.push({
@@ -479,7 +474,7 @@ function initMap() {
   updateMapMarkers()
 }
 
-watch([filteredPins, filterLocationType, filterModality, filterBranch], () => {
+watch([filteredPins, filterLocationType, filterModality], () => {
   nextTick(() => updateMapMarkers())
 }, { deep: true })
 
@@ -570,13 +565,6 @@ onUnmounted(() => {
               <option value="wfh">WFH</option>
             </select>
           </label>
-          <label class="filter-group">
-            <span class="filter-label">Branch</span>
-            <select v-model="filterBranch" class="filter-select">
-              <option value="all">All branches</option>
-              <option v-for="b in BRANCHES" :key="b.id" :value="b.id">{{ b.name }}</option>
-            </select>
-          </label>
         </div>
       </div>
       <div class="hero-map-wrap">
@@ -621,7 +609,6 @@ onUnmounted(() => {
   gap: 0.75rem 1rem;
   flex: 1;
   min-width: 0;
-  justify-content: space-between;
 }
 .hero-map-date {
   padding: 0.35rem 0.5rem;
