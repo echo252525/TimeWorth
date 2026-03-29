@@ -5,19 +5,7 @@ import autoTable from 'jspdf-autotable'
 import supabase from '../lib/supabaseClient'
 import { user } from '../composables/useAuth'
 import { isTravelFlagged, getBranch, parseLocation, getLocalDateString, storedToRealInstant, type AttendanceRow, type WorkModality } from '../composables/useAttendance'
-import {
-  CalendarIcon,
-  ClockIcon,
-  BriefcaseIcon,
-  ArrowDownCircleIcon,
-  ArrowUpCircleIcon,
-  ChartBarIcon,
-  PauseIcon,
-  MapPinIcon,
-  PencilSquareIcon,
-  CheckCircleIcon,
-  XMarkIcon
-} from '@heroicons/vue/24/outline'
+import { ClockIcon, PencilSquareIcon, CheckCircleIcon, XMarkIcon } from '@heroicons/vue/24/outline'
 
 const list = ref<AttendanceRow[]>([])
 const isLoading = ref(true)
@@ -249,16 +237,6 @@ onMounted(() => {
   loadEmployeeData()
 })
 
-function formatTimeAMPM(iso: string | null): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  const h = d.getHours()
-  const m = d.getMinutes()
-  const am = h < 12
-  const h12 = h % 12 || 12
-  return `${h12}:${m.toString().padStart(2, '0')}${am ? 'AM' : 'PM'}`
-}
-
 /** 12-hour times for PDF/CSV export: `H:MM A.M.` / `P.M.` */
 function formatTime12hApm(iso: string | null): string {
   if (!iso) return '—'
@@ -333,11 +311,6 @@ function imageToCircularPngDataUrl(img: HTMLImageElement, pixelSize = 512): stri
 async function loadCircularLogoDataUrl(src: string): Promise<string> {
   const img = await loadImageElement(src)
   return imageToCircularPngDataUrl(img)
-}
-
-function formatDateLong(dateKey: string): string {
-  if (!dateKey || dateKey === '—') return '—'
-  return new Date(dateKey).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long' })
 }
 
 async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
@@ -478,7 +451,6 @@ const filteredRows = computed(() => {
 
 interface DayRow {
   dateKey: string
-  dateLabel: string
   clockIn: string
   clockOut: string
   total: string
@@ -505,12 +477,7 @@ const allDates = computed(() => {
   return Array.from(dateSet).sort().reverse() // Most recent first
 })
 
-const weekDays = computed(() => {
-  return allDates.value.map(dateKey => ({
-    dateKey,
-    dateLabel: formatDateLong(dateKey)
-  }))
-})
+const weekDays = computed(() => allDates.value.map(dateKey => ({ dateKey })))
 
 const tableRows = computed(() => {
   // Access cityCache to make this computed reactive to cache updates
@@ -522,7 +489,7 @@ const tableRows = computed(() => {
     if (!byDate[key]) byDate[key] = []
     byDate[key].push(r)
   }
-  return weekDays.value.map(({ dateKey, dateLabel }) => {
+  return weekDays.value.map(({ dateKey }) => {
     const dayRows = byDate[dateKey] ?? []
     let clockIn = '—'
     let clockOut = '—'
@@ -537,10 +504,10 @@ const tableRows = computed(() => {
     let editRequestStatus: 'pending' | 'approved' | 'rejected' | null = null
 
     if (dayRows.length && sorted.length > 0 && sorted[0]) {
-      clockIn = formatTimeAMPM(new Date(storedToRealInstant(sorted[0].clock_in)).toISOString())
+      clockIn = formatTime12hApmFromStored(sorted[0].clock_in)
       const last = sorted[sorted.length - 1]
       if (last) {
-        clockOut = formatTimeAMPM(new Date(storedToRealInstant(last.clock_out)).toISOString())
+        clockOut = formatTime12hApmFromStored(last.clock_out)
       }
       // Calculate total seconds (excluding breaks)
       for (const r of dayRows) {
@@ -666,7 +633,6 @@ const tableRows = computed(() => {
     }
     return {
       dateKey,
-      dateLabel,
       clockIn,
       clockOut,
       total,
@@ -742,7 +708,6 @@ const dayGroups = computed(() => {
       const dailyTotal = totalH || totalM ? `${totalH}h ${totalM}m` : '0h'
       return {
         date: dateKey,
-        dateLabel: dateKey !== '—' ? formatDateLong(dateKey) : '—',
         rows,
         dailyTotal
       }
@@ -882,7 +847,7 @@ function openEditModalForDay(row: DayRow) {
   const target = row.entries[0]
   if (!target) return
   editTargetEntry.value = target
-  editTargetDateLabel.value = row.dateLabel
+  editTargetDateLabel.value = row.dateKey
   editNewClockIn.value = toLocalDateTimeInput(target.clock_in)
   editNewClockOut.value = toLocalDateTimeInput(target.clock_out)
   editNewLunchStart.value = toLocalDateTimeInput(target.lunch_break_start)
@@ -900,7 +865,7 @@ function editButtonTitle(row: DayRow): string {
   if (row.hasPendingEdit) return 'Edit request pending'
   if (row.editRequestStatus === 'approved') return 'Request approved — you can submit another edit'
   if (row.editRequestStatus === 'rejected') return 'Request declined — you can submit a new edit'
-  return 'Request edit for ' + row.dateLabel
+  return 'Request edit for ' + row.dateKey
 }
 
 async function confirmEditRequest() {
@@ -1013,15 +978,12 @@ async function confirmEditRequest() {
   }
 }
 </script>
-<template>
+times<template>
   <div class="page">
     <div class="top-bar">
       <div class="filters">
         <label class="filter-group">
-          <span class="filter-label">
-            <CalendarIcon class="filter-icon" />
-            Date:
-          </span>
+          <span class="filter-label">Date:</span>
           <select v-model="dateFilter" class="filter-select" aria-label="Date filter">
             <option value="today">Today</option>
             <option value="yesterday">Yesterday</option>
@@ -1034,10 +996,7 @@ async function confirmEditRequest() {
           {{ formatDateRange() }}
         </span>
         <label class="filter-group">
-          <span class="filter-label">
-            <ClockIcon class="filter-icon" />
-            Time:
-          </span>
+          <span class="filter-label">Time:</span>
           <select v-model="timeFilter" class="filter-select" aria-label="Time filter">
             <option value="all">All</option>
             <option value="undertime">Undertime</option>
@@ -1046,10 +1005,7 @@ async function confirmEditRequest() {
           </select>
         </label>
         <label class="filter-group">
-          <span class="filter-label">
-            <BriefcaseIcon class="filter-icon" />
-            Modality:
-          </span>
+          <span class="filter-label">Modality:</span>
           <select v-model="modalityFilter" class="filter-select" aria-label="Modality filter">
             <option value="all">All</option>
             <option value="office">Office</option>
@@ -1061,18 +1017,12 @@ async function confirmEditRequest() {
         <label class="filter-check">
           <input v-model="showTimes" type="checkbox" class="filter-check-input" />
           <span class="filter-check-box"></span>
-          <span class="filter-check-label">
-            <ClockIcon class="filter-check-icon" />
-            Times
-          </span>
+          <span class="filter-check-label">Time</span>
         </label>
         <label class="filter-check">
           <input v-model="showBreaks" type="checkbox" class="filter-check-input" />
           <span class="filter-check-box"></span>
-          <span class="filter-check-label">
-            <PauseIcon class="filter-check-icon" />
-            Breaks
-          </span>
+          <span class="filter-check-label">Breaks</span>
         </label>
       </div>
     </div>
@@ -1085,54 +1035,14 @@ async function confirmEditRequest() {
         <table class="ts-table">
           <thead>
             <tr>
-              <th>
-                <span class="th-content">
-                  <CalendarIcon class="th-icon" />
-                  Date
-                </span>
-              </th>
-              <th v-if="showTimes">
-                <span class="th-content">
-                  <ArrowDownCircleIcon class="th-icon" />
-                  First Clock In
-                </span>
-              </th>
-              <th v-if="showTimes">
-                <span class="th-content">
-                  <ArrowUpCircleIcon class="th-icon" />
-                  Last Clock Out
-                </span>
-              </th>
-              <th v-if="showTimes">
-                <span class="th-content">
-                  <ChartBarIcon class="th-icon" />
-                  Total
-                </span>
-              </th>
-              <th v-if="showBreaks">
-                <span class="th-content">
-                  <PauseIcon class="th-icon" />
-                  Planned Breaks
-                </span>
-              </th>
-              <th>
-                <span class="th-content">
-                  <MapPinIcon class="th-icon" />
-                  Location
-                </span>
-              </th>
-              <th v-if="showInsights">
-                <span class="th-content">
-                  <BriefcaseIcon class="th-icon" />
-                  Modality
-                </span>
-              </th>
-              <th>
-                <span class="th-content">
-                  <PencilSquareIcon class="th-icon" />
-                  Edit
-                </span>
-              </th>
+              <th>Date</th>
+              <th v-if="showTimes">Clock In</th>
+              <th v-if="showTimes">Clock Out</th>
+              <th v-if="showTimes">Total Hours</th>
+              <th v-if="showBreaks">Planned Breaks</th>
+              <th>Location</th>
+              <th v-if="showInsights">Modality</th>
+              <th>Edit</th>
             </tr>
           </thead>
           <tbody>
@@ -1145,7 +1055,7 @@ async function confirmEditRequest() {
               >
                 <td class="ts-date">
                   <div class="ts-date-content">
-                    {{ row.dateLabel }}
+                    {{ row.dateKey }}
                     <span v-if="row.hasMultipleEntries" class="expand-icon" :class="{ 'expanded': expandedRow === row.dateKey }">▼</span>
                   </div>
                 </td>
@@ -1196,9 +1106,9 @@ async function confirmEditRequest() {
                         <div class="ts-entry-details">
                           <div class="ts-entry-row">
                             <span class="ts-entry-label">Clock In:</span>
-                            <span class="ts-entry-value">{{ formatTimeAMPM(new Date(storedToRealInstant(entry.clock_in)).toISOString()) }}</span>
+                            <span class="ts-entry-value">{{ formatTime12hApmFromStored(entry.clock_in) }}</span>
                             <span class="ts-entry-label">Clock Out:</span>
-                            <span class="ts-entry-value">{{ formatTimeAMPM(new Date(storedToRealInstant(entry.clock_out)).toISOString()) }}</span>
+                            <span class="ts-entry-value">{{ formatTime12hApmFromStored(entry.clock_out) }}</span>
                           </div>
                           <div class="ts-entry-row">
                             <span class="ts-entry-label">Duration:</span>
@@ -1338,18 +1248,6 @@ async function confirmEditRequest() {
   font-weight: 500;
   color: var(--text-primary, #334155);
   white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  vertical-align: middle;
-}
-.filter-icon {
-  width: 1rem;
-  height: 1rem;
-  color: var(--text-secondary, #64748b);
-  flex-shrink: 0;
-  display: inline-block;
-  vertical-align: middle;
 }
 .filter-select {
   padding: 0.4rem 0.75rem;
@@ -1440,18 +1338,6 @@ async function confirmEditRequest() {
 }
 .filter-check-label {
   font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  vertical-align: middle;
-}
-.filter-check-icon {
-  width: 1rem;
-  height: 1rem;
-  color: var(--text-secondary, #64748b);
-  flex-shrink: 0;
-  display: inline-block;
-  vertical-align: middle;
 }
 
 .error-msg { color: #dc2626; font-size: 0.875rem; margin: 0 0 1rem; }
@@ -1478,20 +1364,6 @@ async function confirmEditRequest() {
   background: var(--bg-secondary, #f1f5f9);
   color: var(--text-secondary, #475569);
   font-weight: 600;
-}
-.th-content {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  vertical-align: middle;
-}
-.th-icon {
-  width: 1.125rem;
-  height: 1.125rem;
-  color: var(--text-secondary, #475569);
-  flex-shrink: 0;
-  display: inline-block;
-  vertical-align: middle;
 }
 .ts-table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-color, #e2e8f0); color: var(--text-primary, #1e293b); }
 .ts-row:last-child { border-bottom: none; }

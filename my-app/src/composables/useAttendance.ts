@@ -151,13 +151,29 @@ function getNowAsLocalDateTimeZ(): string {
 }
 
 /**
- * Convert a stored attendance timestamp (local date/time stored as "Z") back to the real instant
- * for elapsed/total time calculations and display. Stored value is "local time as UTC"; real = stored + TZ offset.
+ * True when the value includes a real numeric UTC offset (Postgres timestamptz, e.g. `...+08`, `...+08:00`).
+ * `Date` already yields the correct instant; the fake-`Z` correction must not be applied.
+ */
+function hasExplicitUtcOffset(isoString: string): boolean {
+  const s = isoString.trim()
+  return /[+-]\d{2}(:\d{2})?$/.test(s)
+}
+
+/**
+ * Convert a stored attendance timestamp to epoch ms for math and display.
+ * - App-written values from `getNowAsLocalDateTimeZ()` use a trailing `Z` but encode **local** wall time;
+ *   real instant = parsed UTC ms + local timezone offset.
+ * - Values with an explicit offset (`+08`, etc.) or without `Z` are parsed by `Date` as real instants — no extra offset.
  */
 export function storedToRealInstant(isoString: string | null): number {
   if (!isoString) return 0
   const storedMs = new Date(isoString).getTime()
-  return storedMs + new Date().getTimezoneOffset() * 60 * 1000
+  if (Number.isNaN(storedMs)) return 0
+  if (hasExplicitUtcOffset(isoString)) return storedMs
+  if (/Z\s*$/i.test(isoString.trim())) {
+    return storedMs + new Date().getTimezoneOffset() * 60 * 1000
+  }
+  return storedMs
 }
 
 export function useAttendance() {
