@@ -69,8 +69,8 @@ interface Emp {
   name: string
   email: string
   position_in_company: string
-  company_branch: string
-  employee_no: number
+  employee_no: string | number
+  phone_number: string | null
   picture: string | null
 }
 interface AttendanceRecord {
@@ -425,7 +425,7 @@ const positionOptions = computed(() => {
 
 const totalPeople = computed(() => list.value.length)
 const totalDepartments = computed(() => {
-  const set = new Set(list.value.map((e) => e.company_branch).filter(Boolean))
+  const set = new Set(list.value.map((e) => e.position_in_company).filter(Boolean))
   return set.size
 })
 
@@ -438,8 +438,8 @@ const filteredList = computed(() => {
         e.name.toLowerCase().includes(q) ||
         e.email.toLowerCase().includes(q) ||
         e.position_in_company.toLowerCase().includes(q) ||
-        e.company_branch.toLowerCase().includes(q) ||
-        String(e.employee_no).includes(q)
+        String(e.employee_no).toLowerCase().includes(q) ||
+        (e.phone_number && e.phone_number.toLowerCase().includes(q))
     )
   }
   if (filterPosition.value !== 'all') {
@@ -465,7 +465,7 @@ async function loadEmployees() {
   error.value = null
   const { data, error: err } = await supabase
     .from('employee')
-    .select('id, name, email, position_in_company, company_branch, employee_no, picture')
+    .select('id, name, email, position_in_company, employee_no, phone_number, picture')
     .order('name')
   loading.value = false
   if (err) {
@@ -599,7 +599,7 @@ function formatDate(iso: string | null): string {
         <div class="kpi-divider" aria-hidden="true" />
         <div class="kpi-card">
           <div class="kpi-value">{{ totalDepartments }}</div>
-          <div class="kpi-label">Departments</div>
+          <div class="kpi-label">Positions</div>
         </div>
       </section>
 
@@ -754,8 +754,8 @@ function formatDate(iso: string | null): string {
                 <dd>{{ selectedEmployee.email }}</dd>
                 <dt>Position</dt>
                 <dd>{{ selectedEmployee.position_in_company || '—' }}</dd>
-                <dt>Branch</dt>
-                <dd>{{ selectedEmployee.company_branch || '—' }}</dd>
+                <dt>Phone</dt>
+                <dd>{{ selectedEmployee.phone_number || '—' }}</dd>
                 <dt>Employee no.</dt>
                 <dd>{{ selectedEmployee.employee_no ?? '—' }}</dd>
               </dl>

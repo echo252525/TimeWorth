@@ -1,16 +1,19 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AuthLayout from '../components/AuthLayout.vue'
 import { useAuth } from '../composables/useAuth'
+import supabase from '../lib/supabaseClient'
 
 const router = useRouter()
 const { signUp, isLoading, error } = useAuth()
 const form = reactive({
-  name: '',
+  first_name: '',
+  middle_initial: '',
+  last_name: '',
   position_in_company: '',
-  company_branch: '',
   employee_no: '' as string,
+  phone_number: '',
   email: '',
   password: '',
   confirmPassword: ''
@@ -19,6 +22,31 @@ const showPassword = ref(false)
 const showConfirmPassword = ref(false)
 /** True after signup when email must be verified before a session exists (typical Supabase flow). */
 const postSignupAwaitingEmail = ref(false)
+
+const positionOptions = ref<{ position_id: string; title: string }[]>([])
+const positionsLoading = ref(false)
+
+onMounted(async () => {
+  positionsLoading.value = true
+  const { data, error: posErr } = await supabase.from('position').select('position_id, title').order('title', { ascending: true })
+  positionsLoading.value = false
+  if (!posErr && data?.length) positionOptions.value = data as { position_id: string; title: string }[]
+})
+
+/** First letter uppercase, rest lowercase (as stored in DB). */
+function titleCasePart(s: string): string {
+  const t = s.trim()
+  if (!t) return ''
+  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
+}
+
+function combineFullName(): string {
+  const first = titleCasePart(form.first_name)
+  const mid = titleCasePart(form.middle_initial)
+  const last = titleCasePart(form.last_name)
+  const parts = [first, mid, last].filter(Boolean)
+  return parts.join(' ')
+}
 
 function goBack() {
   router.push({ name: 'Home' })
@@ -33,14 +61,26 @@ function toggleConfirmPassword() {
 }
 
 async function onSubmit() {
-  const num = Number(form.employee_no)
-  if (!Number.isInteger(num) || num < 1) { error.value = 'Employee number must be a positive number'; return }
+  if (!form.first_name.trim() || !form.last_name.trim()) {
+    error.value = 'First name and last name are required'
+    return
+  }
+  const emp = form.employee_no.trim()
+  if (!emp || !/^[a-zA-Z0-9]+$/.test(emp)) {
+    error.value = 'Employee number must contain only letters and numbers (no spaces)'
+    return
+  }
+  const phone = form.phone_number.trim()
+  if (!phone) {
+    error.value = 'Phone number is required'
+    return
+  }
   if (form.password !== form.confirmPassword) { error.value = 'Passwords do not match'; return }
   const result = await signUp({
-    name: form.name,
+    name: combineFullName(),
     position_in_company: form.position_in_company,
-    company_branch: form.company_branch,
-    employee_no: num,
+    employee_no: emp,
+    phone_number: phone,
     email: form.email,
     password: form.password
   })
@@ -69,10 +109,33 @@ async function onSubmit() {
     <template v-else>
     <h2 class="auth-title"><strong>CREATE ACCOUNT</strong></h2>
     <form class="auth-form" @submit.prevent="onSubmit">
-      <div class="field"><label for="name">FULL NAME</label><input id="name" v-model="form.name" type="text" required placeholder="Enter your full name" autocomplete="name" /></div>
-      <div class="field"><label for="position">POSITION IN COMPANY</label><input id="position" v-model="form.position_in_company" type="text" required placeholder="e.g. Developer" /></div>
-      <div class="field"><label for="branch">COMPANYBRANCH</label><input id="branch" v-model="form.company_branch" type="text" required placeholder="Enter your company branch" /></div>
-      <div class="field"><label for="empno">EMPLOYEE NO.</label><input id="empno" v-model="form.employee_no" type="number" required min="1" placeholder="Enter employee no." /></div>
+      <div class="field"><label for="first_name">FIRST NAME</label><input id="first_name" v-model="form.first_name" type="text" required placeholder="First name" autocomplete="given-name" /></div>
+      <div class="field"><label for="last_name">LAST NAME</label><input id="last_name" v-model="form.last_name" type="text" required placeholder="Last name" autocomplete="family-name" /></div>
+      <div class="field"><label for="middle_initial">MIDDLE INITIAL</label><input id="middle_initial" v-model="form.middle_initial" type="text" maxlength="8" placeholder="Optional" autocomplete="additional-name" /></div>
+      <div class="field">
+        <label for="position">POSITION IN COMPANY</label>
+        <select
+          v-if="positionOptions.length"
+          id="position"
+          v-model="form.position_in_company"
+          class="select-input"
+          required
+        >
+          <option disabled value="">Select a position</option>
+          <option v-for="p in positionOptions" :key="p.position_id" :value="p.title">{{ p.title }}</option>
+        </select>
+        <input
+          v-else
+          id="position"
+          v-model="form.position_in_company"
+          type="text"
+          required
+          :placeholder="positionsLoading ? 'Loading positions…' : 'e.g. Developer'"
+          :disabled="positionsLoading"
+        />
+      </div>
+      <div class="field"><label for="empno">EMPLOYEE NO.</label><input id="empno" v-model="form.employee_no" type="text" required autocomplete="off" placeholder="Letters and numbers only" pattern="[A-Za-z0-9]+" title="Letters and numbers only" /></div>
+      <div class="field"><label for="phone">PHONE NUMBER</label><input id="phone" v-model="form.phone_number" type="tel" required autocomplete="tel" placeholder="e.g. +63 9xx xxx xxxx" /></div>
       <div class="field"><label for="email">COMPANY EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="company.email@pcworth.com" autocomplete="email" /></div>
       <div class="field">
         <label for="password">Password</label>
@@ -147,4 +210,18 @@ async function onSubmit() {
   </AuthLayout>
 </template>
 <style scoped>
+.select-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 1rem;
+  box-sizing: border-box;
+}
+.select-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 </style>

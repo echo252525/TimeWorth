@@ -27,6 +27,7 @@ const router = createRouter({
         { path: '', name: 'AdminHome', component: () => import('../views/AdminHomeView.vue') },
         { path: 'employees', name: 'AdminEmployees', component: () => import('../views/AdminEmployeesView.vue') },
         { path: 'edit-requests', name: 'AdminEditRequests', component: () => import('../views/AdminEditRequestsView.vue') },
+        { path: 'system-configuration', name: 'AdminSystemConfiguration', component: () => import('../views/AdminSystemConfiguration.vue') },
         { path: 'settings', name: 'AdminSettings', component: () => import('../views/AdminSettingsView.vue') }
       ]
     }

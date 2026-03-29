@@ -7,8 +7,8 @@ const user = ref<User | null>(null)
 interface EmployeeSignup {
   name: string
   position_in_company: string
-  company_branch: string
-  employee_no: number
+  employee_no: string
+  phone_number: string
   email: string
   password: string
 }
@@ -79,8 +79,8 @@ export function useAuth() {
         id: data.user.id,
         name: p.name,
         position_in_company: p.position_in_company,
-        company_branch: p.company_branch,
-        employee_no: Number(p.employee_no),
+        employee_no: p.employee_no.trim(),
+        phone_number: p.phone_number.trim(),
         email: p.email
       })
       if (insertError) throw insertError

@@ -7,6 +7,7 @@ import {
   HomeIcon,
   UsersIcon,
   PencilSquareIcon,
+  RectangleStackIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon
 } from '@heroicons/vue/24/outline'
@@ -89,6 +90,7 @@ const nav = [
   { path: '/admin', label: 'Home', icon: HomeIcon },
   { path: '/admin/employees', label: 'Employees', icon: UsersIcon },
   { path: '/admin/edit-requests', label: 'Edit request', icon: PencilSquareIcon },
+  { path: '/admin/system-configuration', label: 'System configuration', icon: RectangleStackIcon },
   { path: '/admin/settings', label: 'Settings', icon: Cog6ToothIcon }
 ]
 function isActive(path: string) {

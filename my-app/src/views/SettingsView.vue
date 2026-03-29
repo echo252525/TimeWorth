@@ -9,8 +9,8 @@ const { user, getSignedProfileUrl } = useAuth()
 const name = ref('')
 const email = ref('')
 const positionInCompany = ref('')
-const companyBranch = ref('')
 const employeeNo = ref('')
+const phoneNumber = ref('')
 const currentPictureUrl = ref<string | null>(null)
 const oldPicturePath = ref<string | null>(null)
 const loading = ref(true)
@@ -45,8 +45,8 @@ const showPersonalInfoForm = ref(false)
 interface PersonalBaseline {
   name: string
   positionInCompany: string
-  companyBranch: string
   employeeNo: string
+  phoneNumber: string
   email: string
 }
 const personalBaseline = ref<PersonalBaseline | null>(null)
@@ -55,8 +55,8 @@ function capturePersonalBaseline() {
   personalBaseline.value = {
     name: name.value.trim(),
     positionInCompany: positionInCompany.value.trim(),
-    companyBranch: companyBranch.value.trim(),
     employeeNo: String(employeeNo.value ?? '').trim(),
+    phoneNumber: phoneNumber.value.trim(),
     email: email.value.trim(),
   }
 }
@@ -72,8 +72,8 @@ function cancelEditPersonalInfo() {
     const b = personalBaseline.value
     name.value = b.name
     positionInCompany.value = b.positionInCompany
-    companyBranch.value = b.companyBranch
     employeeNo.value = b.employeeNo
+    phoneNumber.value = b.phoneNumber
     email.value = b.email
   }
   showPersonalInfoForm.value = false
@@ -88,8 +88,8 @@ const personalInfoDirty = computed(() => {
   return (
     name.value.trim() !== b.name ||
     positionInCompany.value.trim() !== b.positionInCompany ||
-    companyBranch.value.trim() !== b.companyBranch ||
     String(employeeNo.value ?? '').trim() !== b.employeeNo ||
+    phoneNumber.value.trim() !== b.phoneNumber ||
     email.value.trim() !== b.email
   )
 })
@@ -137,13 +137,13 @@ onMounted(async () => {
   if (!user.value?.id) return
   loading.value = true
   error.value = null
-  const { data } = await supabase.from('employee').select('name, picture, email, position_in_company, company_branch, employee_no').eq('id', user.value.id).maybeSingle()
+  const { data } = await supabase.from('employee').select('name, picture, email, position_in_company, employee_no, phone_number').eq('id', user.value.id).maybeSingle()
   if (data) {
     name.value = data.name ?? ''
     email.value = data.email ?? ''
     positionInCompany.value = data.position_in_company ?? ''
-    companyBranch.value = data.company_branch ?? ''
     employeeNo.value = data.employee_no != null ? String(data.employee_no) : ''
+    phoneNumber.value = (data as { phone_number?: string | null }).phone_number ?? ''
     const path = data.picture
     oldPicturePath.value = path && !path.startsWith('http') ? path : null
     if (path && !path.startsWith('http')) {
@@ -578,9 +578,9 @@ async function save() {
 
   const trimmedName = name.value.trim()
   const trimmedPosition = positionInCompany.value.trim()
-  const trimmedBranch = companyBranch.value.trim()
   const trimmedEmail = email.value.trim()
-  const empNum = Number(String(employeeNo.value).trim())
+  const trimmedEmp = String(employeeNo.value ?? '').trim()
+  const trimmedPhone = phoneNumber.value.trim()
 
   if (!trimmedName) {
     error.value = 'Full name is required'
@@ -590,12 +590,12 @@ async function save() {
     error.value = 'Position is required'
     return
   }
-  if (!trimmedBranch) {
-    error.value = 'Branch is required'
+  if (!trimmedEmp || !/^[a-zA-Z0-9]+$/.test(trimmedEmp)) {
+    error.value = 'Employee number must contain only letters and numbers'
     return
   }
-  if (!Number.isInteger(empNum) || empNum < 1) {
-    error.value = 'Employee number must be a positive number'
+  if (!trimmedPhone) {
+    error.value = 'Phone number is required'
     return
   }
   if (!trimmedEmail) {
@@ -614,14 +614,14 @@ async function save() {
     const updates: {
       name?: string
       position_in_company?: string
-      company_branch?: string
-      employee_no?: number
+      employee_no?: string
+      phone_number?: string
       email?: string
     } = {}
     if (trimmedName !== b.name) updates.name = trimmedName
     if (trimmedPosition !== b.positionInCompany) updates.position_in_company = trimmedPosition
-    if (trimmedBranch !== b.companyBranch) updates.company_branch = trimmedBranch
-    if (String(empNum) !== b.employeeNo) updates.employee_no = empNum
+    if (trimmedEmp !== b.employeeNo) updates.employee_no = trimmedEmp
+    if (trimmedPhone !== b.phoneNumber) updates.phone_number = trimmedPhone
     if (trimmedEmail !== b.email) updates.email = trimmedEmail
 
     if (Object.keys(updates).length > 0) {
@@ -687,8 +687,8 @@ async function save() {
                     <span class="summary-value summary-value--email">{{ email || '—' }}</span>
                   </div>
                   <div class="summary-item">
-                    <span class="summary-label">Branch</span>
-                    <span class="summary-value">{{ companyBranch || '—' }}</span>
+                    <span class="summary-label">Phone</span>
+                    <span class="summary-value">{{ phoneNumber || '—' }}</span>
                   </div>
                   <div class="summary-item summary-item--empty" aria-hidden="true"></div>
                 </div>
@@ -722,10 +722,11 @@ async function save() {
                       <input
                         id="settings-emp-no"
                         v-model="employeeNo"
-                        type="number"
-                        min="1"
-                        step="1"
-                        placeholder="10001"
+                        type="text"
+                        autocomplete="off"
+                        placeholder="e.g. A1001"
+                        pattern="[A-Za-z0-9]+"
+                        title="Letters and numbers only"
                       />
                     </div>
                   </div>
@@ -741,12 +742,13 @@ async function save() {
                       />
                     </div>
                     <div class="summary-item personal-form__cell">
-                      <label class="summary-label" for="settings-branch">Branch</label>
+                      <label class="summary-label" for="settings-phone">Phone</label>
                       <input
-                        id="settings-branch"
-                        v-model="companyBranch"
-                        type="text"
-                        placeholder="Branch"
+                        id="settings-phone"
+                        v-model="phoneNumber"
+                        type="tel"
+                        autocomplete="tel"
+                        placeholder="Phone number"
                       />
                     </div>
                     <div class="summary-item summary-item--empty" aria-hidden="true"></div>
