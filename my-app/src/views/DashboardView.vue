@@ -522,7 +522,7 @@ watch(reportPeriod, () => fetchReport())
       <!-- Hero Section at Top -->
       <header class="hero-section-top">
         <div class="hero-content-top">
-          <h1 class="hero-welcome">Welcome {{ employeeName || user?.email?.split('@')[0] || 'there' }}</h1>
+          <h1 class="hero-welcome">Welcome, {{ employeeName || user?.email?.split('@')[0] || 'there' }}</h1>
           <p v-if="employeePosition" class="hero-position">{{ employeePosition }}</p>
           <div class="hero-hours-display" :style="{ color: getHoursColor(hoursToday) }">
             <span class="hero-hours-value">{{ formatHours(hoursToday) }}</span>
@@ -1402,30 +1402,6 @@ body.light-mode .hero-section-top {
   background: linear-gradient(135deg, rgba(56,189,248,0.12) 0%, var(--bg-secondary) 50%, rgba(59,130,246,0.08) 100%);
 }
 
-:root.light-mode .kpi-icon-green,
-body.light-mode .kpi-icon-green {
-  background: rgba(34,197,94,0.2);
-  color: #16a34a;
-}
-
-:root.light-mode .kpi-icon-blue,
-body.light-mode .kpi-icon-blue {
-  background: rgba(59,130,246,0.2);
-  color: #2563eb;
-}
-
-:root.light-mode .kpi-icon-orange,
-body.light-mode .kpi-icon-orange {
-  background: rgba(249,115,22,0.2);
-  color: #ea580c;
-}
-
-:root.light-mode .kpi-icon-purple,
-body.light-mode .kpi-icon-purple {
-  background: rgba(168,85,247,0.2);
-  color: #9333ea;
-}
-
 :root.light-mode .period-dropdown,
 body.light-mode .period-dropdown {
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -1440,11 +1416,6 @@ body.light-mode .custom-date-picker {
 body.light-mode .period-option.active {
   background: rgba(56,189,248,0.2);
   color: #0284c7;
-}
-
-:root.light-mode .date-input-group input[type="date"],
-body.light-mode .date-input-group input[type="date"] {
-  color-scheme: light;
 }
 
 :root.light-mode .x-axis-label-today,

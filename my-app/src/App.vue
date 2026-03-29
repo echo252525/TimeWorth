@@ -79,4 +79,45 @@ body.light-mode {
   position: relative;
   min-height: 100vh;
 }
+
+/* Light mode: KPI icon contrast (Dashboard + Admin; compound selectors beat scoped SFC rules) */
+body.light-mode .kpi-icon.kpi-icon-green,
+body.light-mode .admin-kpi-icon.admin-kpi-icon-green {
+  background: rgba(34, 197, 94, 0.2);
+  color: #16a34a;
+}
+body.light-mode .admin-kpi-icon.admin-kpi-icon-green {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+body.light-mode .kpi-icon.kpi-icon-blue,
+body.light-mode .admin-kpi-icon.admin-kpi-icon-blue {
+  background: rgba(59, 130, 246, 0.2);
+  color: #2563eb;
+}
+body.light-mode .admin-kpi-icon.admin-kpi-icon-blue {
+  border-color: rgba(59, 130, 246, 0.35);
+}
+body.light-mode .kpi-icon.kpi-icon-orange,
+body.light-mode .admin-kpi-icon.admin-kpi-icon-orange {
+  background: rgba(249, 115, 22, 0.2);
+  color: #ea580c;
+}
+body.light-mode .admin-kpi-icon.admin-kpi-icon-orange {
+  border-color: rgba(249, 115, 22, 0.35);
+}
+body.light-mode .kpi-icon.kpi-icon-purple,
+body.light-mode .admin-kpi-icon.admin-kpi-icon-purple {
+  background: rgba(168, 85, 247, 0.2);
+  color: #9333ea;
+}
+body.light-mode .admin-kpi-icon.admin-kpi-icon-purple {
+  border-color: rgba(168, 85, 247, 0.35);
+}
+
+/* Native date/select should follow light chrome in light theme */
+body.light-mode .date-input-group input[type="date"],
+body.light-mode .hero-map-date,
+body.light-mode .filter-select {
+  color-scheme: light;
+}
 </style>

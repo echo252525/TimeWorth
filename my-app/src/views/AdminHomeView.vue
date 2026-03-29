@@ -509,8 +509,8 @@ onUnmounted(() => {
 
 <template>
   <div class="page">
-    <h1>Admin</h1>
-    <p class="muted intro">Welcome, {{ adminProfile?.name ?? adminProfile?.email }}. View employee locations below.</p>
+    <h1 class="fw-bold">Welcome, Admin {{ adminProfile?.name ?? adminProfile?.email }}.</h1>
+    <p class="muted intro">View employee locations below.</p>
 
     <section class="admin-kpis">
       <div v-if="kpiLoading" class="admin-kpis-loading">Loading…</div>
@@ -550,22 +550,22 @@ onUnmounted(() => {
       <div class="hero-map-header">
         <h2 class="hero-map-title">Employee locations</h2>
         <div class="hero-map-controls">
-          <input v-model="mapDate" type="date" class="hero-map-date" @change="fetchMapData" />
+          <input v-model="mapDate" type="date" class="hero-map-date" @change="fetchMapData"/>
           <div class="hero-map-filters">
             <label class="filter-group">
-              <span class="filter-label">Location</span>
+              <span class="filter-label">Status</span>
               <select v-model="filterLocationType" class="filter-select">
-                <option value="both">Clock in & out</option>
-                <option value="clock_in">Clock in only</option>
-                <option value="clock_out">Clock out only</option>
+                <option value="both">All Records</option>
+                <option value="clock_in">Clocked In</option>
+                <option value="clock_out">Clocked Out</option>
               </select>
             </label>
             <label class="filter-group">
               <span class="filter-label">Modality</span>
               <select v-model="filterModality" class="filter-select">
                 <option value="all">All</option>
-                <option value="office">Office only</option>
-                <option value="wfh">WFH only</option>
+                <option value="office">Office</option>
+                <option value="wfh">WFH</option>
               </select>
             </label>
             <label class="filter-group">
@@ -593,36 +593,36 @@ onUnmounted(() => {
 <style scoped>
 .page { width: 100%; max-width: 100%; }
 .page h1 { margin: 0 0 0.5rem; font-size: 1.5rem; font-weight: 600; }
-.muted { color: #94a3b8; font-size: 0.9375rem; margin: 0 0 1rem; }
+.muted { color: var(--text-secondary); font-size: 0.9375rem; margin: 0 0 1rem; }
 .intro { margin-bottom: 1.5rem; }
 
 .admin-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
 @media (max-width: 900px) { .admin-kpis { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 480px) { .admin-kpis { grid-template-columns: 1fr; } }
-.admin-kpis-loading { grid-column: 1 / -1; text-align: center; color: #94a3b8; padding: 1.5rem; }
-.admin-kpi-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; }
-.admin-kpi-icon { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.admin-kpi-icon svg { width: 24px; height: 24px; color: #fff; }
+.admin-kpis-loading { grid-column: 1 / -1; text-align: center; color: var(--text-secondary); padding: 1.5rem; }
+.admin-kpi-card { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 14px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.admin-kpi-icon { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #fff; }
+.admin-kpi-icon svg { width: 24px; height: 24px; color: currentColor; }
 .admin-kpi-icon-green { background: rgba(34, 197, 94, 0.25); border: 1px solid rgba(34, 197, 94, 0.5); }
 .admin-kpi-icon-purple { background: rgba(168, 85, 247, 0.25); border: 1px solid rgba(168, 85, 247, 0.5); }
 .admin-kpi-icon-blue { background: rgba(59, 130, 246, 0.25); border: 1px solid rgba(59, 130, 246, 0.5); }
 .admin-kpi-icon-orange { background: rgba(249, 115, 22, 0.25); border: 1px solid rgba(249, 115, 22, 0.5); }
-.admin-kpi-value { font-size: 1.75rem; font-weight: 700; color: #f1f5f9; line-height: 1.2; }
-.admin-kpi-label { font-size: 0.8125rem; color: #94a3b8; }
+.admin-kpi-value { font-size: 1.75rem; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
+.admin-kpi-label { font-size: 0.8125rem; color: var(--text-secondary); }
 
-.hero-map-section { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 1.25rem; margin-bottom: 1.5rem; }
+.hero-map-section { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 16px; padding: 1.25rem; margin-bottom: 1.5rem; }
 .hero-map-header { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-bottom: 1rem; }
-.hero-map-title { margin: 0; font-size: 1.125rem; font-weight: 600; }
+.hero-map-title { margin: 0; font-size: 1.125rem; font-weight: 600; color: var(--text-primary); }
 .hero-map-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; flex: 1; }
-.hero-map-date { padding: 0.4rem 0.6rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: rgba(15,23,42,0.6); color: inherit; font-size: 0.875rem; }
+.hero-map-date { padding: 0.4rem 0.6rem; border-radius: 8px; border: 1px solid var(--border-light); background: var(--bg-tertiary); color: var(--text-primary); font-size: 0.875rem; }
 .hero-map-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
 .filter-group { display: flex; align-items: center; gap: 0.35rem; }
 .filter-group.filter-check { gap: 0.5rem; }
-.filter-label { font-size: 0.8125rem; color: #94a3b8; white-space: nowrap; }
-.filter-select { padding: 0.4rem 0.6rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: rgba(15,23,42,0.6); color: inherit; font-size: 0.8125rem; min-width: 120px; }
+.filter-label { font-size: 0.8125rem; color: var(--text-secondary); white-space: nowrap; }
+.filter-select { padding: 0.4rem 0.6rem; border-radius: 8px; border: 1px solid var(--border-light); background: var(--bg-tertiary); color: var(--text-primary); font-size: 0.8125rem; min-width: 120px; }
 .filter-checkbox { width: 1rem; height: 1rem; accent-color: #38bdf8; }
 
-.hero-map-wrap { position: relative; min-height: 380px; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); background: #f1f5f9; }
+.hero-map-wrap { position: relative; min-height: 380px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border-light); background: #f1f5f9; }
 .hero-map { width: 100%; height: 380px; border-radius: 12px; }
 .hero-map-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: rgba(15,23,42,0.5); color: #e2e8f0; font-size: 0.9375rem; z-index: 10; }
 .spinner { width: 20px; height: 20px; border: 2px solid rgba(56,189,248,0.3); border-top-color: #38bdf8; border-radius: 50%; animation: admin-spin 0.7s linear infinite; }
