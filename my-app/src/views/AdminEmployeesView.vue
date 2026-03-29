@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, watchEffect, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { MagnifyingGlassIcon, ChevronDownIcon } from '@heroicons/vue/24/outline'
@@ -95,8 +95,6 @@ const filterStatus = ref<'all' | 'active' | 'not_active'>('all')
 /** Select value: `position_in_company` contains "admin" (case-insensitive). */
 const FILTER_POSITION_ADMIN = '__filter_admin__'
 const filterPosition = ref<string>('all')
-const selectedIds = ref<string[]>([])
-const headerCheckboxRef = ref<HTMLInputElement | null>(null)
 
 const selectedEmployee = ref<Emp | null>(null)
 const profilePictureUrl = ref<string | null>(null)
@@ -474,15 +472,6 @@ const filteredList = computed(() => {
   return rows
 })
 
-watchEffect(() => {
-  const ids = filteredList.value.map((e) => e.id)
-  const n = ids.filter((id) => selectedIds.value.includes(id)).length
-  const el = headerCheckboxRef.value
-  if (!el) return
-  el.indeterminate = n > 0 && n < ids.length
-  el.checked = ids.length > 0 && n === ids.length
-})
-
 watch(
   () => positionRows.value.map((p) => p.title),
   (titles) => {
@@ -542,22 +531,6 @@ onUnmounted(() => {
   stopHoverTick()
   destroyMiniMap()
 })
-
-function toggleRow(id: string) {
-  const i = selectedIds.value.indexOf(id)
-  if (i === -1) selectedIds.value = [...selectedIds.value, id]
-  else selectedIds.value = selectedIds.value.filter((x) => x !== id)
-}
-
-function toggleSelectAll() {
-  const ids = filteredList.value.map((e) => e.id)
-  const allOn = ids.length > 0 && ids.every((id) => selectedIds.value.includes(id))
-  if (allOn) {
-    selectedIds.value = selectedIds.value.filter((id) => !ids.includes(id))
-  } else {
-    selectedIds.value = [...new Set([...selectedIds.value, ...ids])]
-  }
-}
 
 function openEmployee(e: Emp) {
   cancelHoverLeave()
@@ -694,15 +667,6 @@ function formatDate(iso: string | null): string {
           <table class="data-table">
             <thead>
               <tr>
-                <th class="th-check" scope="col">
-                  <input
-                    ref="headerCheckboxRef"
-                    type="checkbox"
-                    class="row-check"
-                    aria-label="Select all visible"
-                    @click.prevent="toggleSelectAll"
-                  />
-                </th>
                 <th scope="col">User</th>
                 <th class="th-status" scope="col">Status</th>
                 <th scope="col">Email</th>
@@ -714,20 +678,10 @@ function formatDate(iso: string | null): string {
                 v-for="e in filteredList"
                 :key="e.id"
                 class="data-row"
-                :class="{ 'data-row-selected': selectedIds.includes(e.id) }"
                 @mouseenter="onRowEnter(e, $event)"
                 @mouseleave="onRowLeave"
                 @click="openEmployee(e)"
               >
-                <td class="td-check" @click.stop>
-                  <input
-                    type="checkbox"
-                    class="row-check"
-                    :checked="selectedIds.includes(e.id)"
-                    :aria-label="`Select ${e.name}`"
-                    @click.stop.prevent="toggleRow(e.id)"
-                  />
-                </td>
                 <td class="td-user">
                   <div class="user-cell">
                     <div class="avatar">
@@ -1031,11 +985,6 @@ body.light-mode .kpi-card-positions .kpi-icon {
   border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
 }
-.th-check {
-  width: 48px;
-  text-align: center;
-  vertical-align: middle;
-}
 .th-status {
   width: 1%;
   min-width: 9rem;
@@ -1048,12 +997,6 @@ body.light-mode .kpi-card-positions .kpi-icon {
 .data-row:hover {
   background: var(--bg-hover);
 }
-.data-row-selected {
-  background: rgba(99, 102, 241, 0.12);
-}
-:root.light-mode .data-row-selected {
-  background: rgba(99, 102, 241, 0.14);
-}
 .data-table tbody td {
   padding: 0.65rem 1rem;
   border-bottom: 1px solid var(--border-color);
@@ -1061,16 +1004,6 @@ body.light-mode .kpi-card-positions .kpi-icon {
 }
 .data-table tbody tr:last-child td {
   border-bottom: none;
-}
-.td-check {
-  width: 48px;
-  text-align: center;
-}
-.row-check {
-  width: 1.05rem;
-  height: 1.05rem;
-  accent-color: var(--accent-light);
-  cursor: pointer;
 }
 .user-cell {
   display: flex;
