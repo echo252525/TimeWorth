@@ -4,7 +4,7 @@
  */
 import { ref, computed } from 'vue'
 import supabase from '../lib/supabaseClient'
-import { useAuth } from './useAuth'
+import { buildAdminEmailConfirmationRedirect, useAuth } from './useAuth'
 
 /** Private bucket; paths are `{auth_uuid}/{filename}` — use `getSignedAdminProfileUrl` for display. */
 export const ADMIN_PROFILE_BUCKET = 'admin_profile'
@@ -103,7 +103,7 @@ export function useAdminAuth() {
     const { data: authData, error: authErr } = await supabase.auth.signUp({
       email: p.email,
       password: p.password,
-      options: { emailRedirectTo: undefined }
+      options: { emailRedirectTo: buildAdminEmailConfirmationRedirect() }
     })
     if (authErr || !authData.user) return { data: null, error: authErr?.message ?? 'Sign up failed' }
     if (authData.session) {

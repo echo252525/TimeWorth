@@ -14,6 +14,8 @@ interface EmployeeSignup {
 }
 
 const BUCKET = 'employee_profile'
+export type PasswordResetOrigin = 'employee' | 'admin'
+const DEPLOYED_APP_URL = 'https://time-worth-gk3a.vercel.app'
 
 /** Get a signed URL for displaying a profile image. path = bucket object path (same as employee.picture column). */
 export async function getSignedProfileUrl(path: string | null, expiresIn = 3600): Promise<string | null> {
@@ -28,6 +30,57 @@ function errMsg(e: unknown, fallback: string): string {
   if (err?.status === 429 || (typeof err?.message === 'string' && err.message.includes('429')))
     return 'Too many attempts. Please wait a few minutes and try again.'
   return e instanceof Error ? e.message : fallback
+}
+
+export function getPublicAppBaseUrl(): string {
+  const configured =
+    import.meta.env.VITE_PUBLIC_APP_URL
+    || import.meta.env.VITE_SITE_URL
+    || DEPLOYED_APP_URL
+
+  return String(configured).replace(/\/$/, '')
+}
+
+function buildPublicAppUrl(path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${getPublicAppBaseUrl()}${normalizedPath}`
+}
+
+export function buildPasswordResetRedirect(origin: PasswordResetOrigin = 'employee'): string {
+  return buildPublicAppUrl(`/reset-password?from=${origin}`)
+}
+
+function buildEmployeeEmailConfirmationRedirect(): string {
+  return buildPublicAppUrl('/login?email_confirmed=1')
+}
+
+export function buildAdminEmailConfirmationRedirect(): string {
+  return buildPublicAppUrl('/admin/login')
+}
+
+export async function sendPasswordResetEmail(
+  email: string,
+  origin: PasswordResetOrigin = 'employee'
+): Promise<{ error: string | null }> {
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: buildPasswordResetRedirect(origin)
+    })
+    if (error) throw error
+    return { error: null }
+  } catch (e) {
+    return { error: errMsg(e, 'Unable to send reset link') }
+  }
+}
+
+export async function updateCurrentUserPassword(password: string): Promise<{ error: string | null }> {
+  try {
+    const { error } = await supabase.auth.updateUser({ password })
+    if (error) throw error
+    return { error: null }
+  } catch (e) {
+    return { error: errMsg(e, 'Unable to update password') }
+  }
 }
 
 /** Friendly copy for signup; Supabase often returns "User already registered" for duplicate emails. */
@@ -71,7 +124,11 @@ export function useAuth() {
     isLoading.value = true
     error.value = null
     try {
-      const { data, error: signUpError } = await supabase.auth.signUp({ email: p.email, password: p.password, options: { emailRedirectTo: undefined } })
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: p.email,
+        password: p.password,
+        options: { emailRedirectTo: buildEmployeeEmailConfirmationRedirect() }
+      })
       if (signUpError) throw signUpError
       if (!data.user) throw new Error('Sign up failed')
       if (data.session) await supabase.auth.setSession({ access_token: data.session.access_token, refresh_token: data.session.refresh_token })

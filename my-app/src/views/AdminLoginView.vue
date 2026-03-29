@@ -12,11 +12,19 @@ const isLoading = ref(false)
 const error = ref<string | null>(null)
 const showPendingReview = ref(false)
 const showPassword = ref(false)
+const showPasswordResetBanner = ref(false)
 
 watch(
   () => route.query.pending,
   (p) => {
     if (p === '1') showPendingReview.value = true
+    if (route.query.password_reset === '1') {
+      showPasswordResetBanner.value = true
+      router.replace({
+        path: '/admin/login',
+        query: route.query.pending ? { pending: String(route.query.pending) } : {}
+      })
+    }
   },
   { immediate: true }
 )
@@ -74,6 +82,17 @@ async function onSubmit() {
         </div>
       </template>
       <template v-else>
+        <div
+          v-if="showPasswordResetBanner"
+          class="auth-success-banner auth-success-banner--spaced"
+          role="status"
+          aria-live="polite"
+        >
+          <p class="auth-success-banner__title">Password updated</p>
+          <p class="auth-success-banner__text">
+            Your admin password has been changed. Sign in with your new password.
+          </p>
+        </div>
         <h2 class="auth-title"><strong>ADMIN LOGIN</strong></h2>
         <form class="auth-form" @submit.prevent="onSubmit">
           <div class="field">
@@ -117,6 +136,15 @@ async function onSubmit() {
               </button>
             </div>
           </div>
+          <div class="forgot-password-row">
+            <button
+              type="button"
+              class="auth-link-btn"
+              @click="router.push({ path: '/forgot-password', query: form.email.trim() ? { from: 'admin', email: form.email.trim() } : { from: 'admin' } })"
+            >
+              Forgot password?
+            </button>
+          </div>
           <p
             v-if="error"
             class="error"
@@ -145,5 +173,30 @@ async function onSubmit() {
 body.dark-mode .login-view .auth-page {
   background: #122c4a;
   background: linear-gradient(260deg, rgba(18, 44, 74, 1) 0%, rgba(74, 16, 16, 1) 100%);
+}
+
+.login-view .auth-link-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-light);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.login-view .auth-link-btn:hover {
+  text-decoration: underline;
+}
+
+.login-view .forgot-password-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -0.15rem;
+}
+
+.login-view .auth-success-banner--spaced {
+  margin-bottom: 1rem;
 }
 </style>

@@ -11,13 +11,24 @@ const form = reactive({ email: '', password: '' })
 const showPassword = ref(false)
 /** Shown after user lands from Supabase email confirmation link (see useAuth signUp emailRedirectTo). */
 const showEmailConfirmedBanner = ref(false)
+const showPasswordResetBanner = ref(false)
 
 onMounted(() => {
-  if (route.query.email_confirmed !== '1') return
-  showEmailConfirmedBanner.value = true
   const nextQuery = { ...route.query }
-  delete nextQuery.email_confirmed
-  router.replace({ path: route.path, query: nextQuery })
+  let shouldReplaceQuery = false
+
+  if (route.query.email_confirmed === '1') {
+    showEmailConfirmedBanner.value = true
+    delete nextQuery.email_confirmed
+    shouldReplaceQuery = true
+  }
+  if (route.query.password_reset === '1') {
+    showPasswordResetBanner.value = true
+    delete nextQuery.password_reset
+    shouldReplaceQuery = true
+  }
+
+  if (shouldReplaceQuery) router.replace({ path: route.path, query: nextQuery })
 })
 
 function goBack() {
@@ -45,6 +56,17 @@ async function onSubmit() {
         <p class="auth-success-banner__title">Email confirmed</p>
         <p class="auth-success-banner__text">
           You have successfully confirmed your email. You can now log in.
+        </p>
+      </div>
+      <div
+        v-if="showPasswordResetBanner"
+        class="auth-success-banner auth-success-banner--spaced"
+        role="status"
+        aria-live="polite"
+      >
+        <p class="auth-success-banner__title">Password updated</p>
+        <p class="auth-success-banner__text">
+          Your password has been changed. Sign in with your new password.
         </p>
       </div>
       <h2 class="auth-title"><strong>LOGIN</strong></h2>
@@ -80,6 +102,15 @@ async function onSubmit() {
             </button>
           </div>
         </div>
+        <div class="forgot-password-row">
+          <button
+            type="button"
+            class="auth-link-btn"
+            @click="router.push({ path: '/forgot-password', query: form.email.trim() ? { from: 'employee', email: form.email.trim() } : { from: 'employee' } })"
+          >
+            Forgot password?
+          </button>
+        </div>
         <p
           v-if="error"
           class="error"
@@ -108,5 +139,30 @@ async function onSubmit() {
 body.dark-mode .login-view .auth-page {
   background: #122c4a;
   background: linear-gradient(260deg, rgba(18, 44, 74, 1) 0%, rgba(74, 16, 16, 1) 100%);
+}
+
+.login-view .auth-link-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-light);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.login-view .auth-link-btn:hover {
+  text-decoration: underline;
+}
+
+.login-view .forgot-password-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -0.15rem;
+}
+
+.login-view .auth-success-banner--spaced {
+  margin-bottom: 1rem;
 }
 </style>
