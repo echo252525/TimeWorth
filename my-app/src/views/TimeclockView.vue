@@ -1248,7 +1248,7 @@ async function handleCancelFacial() {
   background:
     radial-gradient(circle at top, rgba(56,189,248,0.22), rgba(15,23,42,0.98)),
     linear-gradient(135deg, rgba(15,23,42,1), rgba(15,23,42,0.92));
-  box-shadow: 0 18px 40px rgba(15,23,42,0.7);
+    box-shadow: rgba(50, 50, 93, 0.25) 0px 2px 5px -1px, rgba(0, 0, 0, 0.3) 0px 1px 3px -1px;
 }
 .map-loading-overlay {
   position: absolute;
