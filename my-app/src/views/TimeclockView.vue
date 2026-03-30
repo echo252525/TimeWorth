@@ -51,6 +51,7 @@ const livenessVerificationId = ref<string | null>(null)
 const facialScanSuccess = ref(false)
 const livenessLoading = ref(false)
 const livenessError = ref<string | null>(null)
+const clockOutLoading = ref(false)
 let livenessRealtimeChannel: ReturnType<typeof supabase.channel> | null = null
 
 const wfhFetchingLocation = ref(false)
@@ -711,14 +712,15 @@ async function cancelFacialModal() {
 }
 
 async function doClockOut() {
+  clockOutLoading.value = true
   locationError.value = null
   locationOut.value = null
-  const mod = todayRecord.value?.work_modality
-  if (mod === 'office') {
-    step.value = 'facial_out'
-    return
-  }
   try {
+    const mod = todayRecord.value?.work_modality
+    if (mod === 'office') {
+      step.value = 'facial_out'
+      return
+    }
     const loc = await getLocation()
     locationOut.value = loc
     const locStr = locationString(loc)!
@@ -732,6 +734,8 @@ async function doClockOut() {
   } catch {
     await clockOut()
     step.value = 'idle'
+  } finally {
+    clockOutLoading.value = false
   }
 }
 
@@ -855,7 +859,7 @@ async function handleCancelFacial() {
           <!-- Active session -->
           <div v-if="todayRecord && !todayRecord.clock_out" class="hero-card hero-idle">
             <div v-if="step === 'facial_out'" class="confirm-wrap facial-out-wrap">
-              <p class="muted">Face verification in progress…</p>
+              <p class="muted">Face verification in progress… Saving your clock-out…</p>
             </div>
             <div v-else-if="clockOutConfirm" class="confirm-wrap">
               <p class="confirm-msg">
@@ -909,8 +913,8 @@ async function handleCancelFacial() {
                     <span v-else>End lunch</span>
                   </button>
                 </template>
-                <button type="button" class="btn primary btn-clockout" :disabled="isLoading" @click="doClockOut">
-                  <span v-if="isLoading" class="btn-loading-wrap">
+                <button type="button" class="btn primary btn-clockout" :disabled="isLoading || clockOutLoading" @click="doClockOut">
+                  <span v-if="isLoading || clockOutLoading" class="btn-loading-wrap">
                     <span class="btn-loading-spinner" aria-hidden="true"></span>
                     <span>Clocking out…</span>
                   </span>
