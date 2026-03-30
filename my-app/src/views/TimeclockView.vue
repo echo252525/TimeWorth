@@ -251,14 +251,9 @@ function updateUserMarker() {
         ? officeUserAddress.value
         : `${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`
     userMarker.bindTooltip(
-      `<div class="map-tooltip-inner map-tooltip-you"><strong>You are here</strong><span class="map-tooltip-address" title="${escapeHtml(fullAddress)}">${escapeHtml(fullAddress)}</span></div>`,
+      `<div class="map-tooltip-inner map-tooltip-you"><span class="map-tooltip-address" title="${escapeHtml(fullAddress)}">${escapeHtml(fullAddress)}</span></div>`,
       { permanent: false, direction: 'top', offset: [0, -USER_MARKER_SIZE - 8], className: 'map-bound-tooltip map-bound-tooltip-user', sticky: true }
     )
-    userLabelMarker = L.marker([loc.lat, loc.lng], { icon: userLabelIcon }).addTo(map!)
-    userLabelMarker.bindTooltip(
-      `<div class="map-tooltip-inner map-tooltip-you-label"><strong>You are here</strong><span class="map-tooltip-address-hover">${escapeHtml(fullAddress)}</span></div>`,
-      { permanent: true, direction: 'top', offset: [0, -USER_MARKER_SIZE - 12], className: 'map-bound-tooltip map-bound-tooltip-user-label', interactive: true }
-    ).openTooltip()
   } else {
     userMarker = null
     userLabelMarker = null
@@ -990,7 +985,7 @@ async function handleCancelFacial() {
           </div>
         </div>
         <p class="map-caption muted">
-          <span v-if="userLoc" class="you-are-here">You are here</span>
+          <span v-if="userLoc" class="you-are-here">Your current location</span>
           <template v-if="userLoc"> · </template>
           {{ workModality === 'office' && activeBranch ? activeBranch.address : (workModality === 'wfh' && wfhAddress ? wfhAddress : 'Location') }}{{ workModality === 'office' ? ` · ${RADIUS_M}m radius` : '' }}
         </p>
@@ -1525,7 +1520,7 @@ async function handleCancelFacial() {
   color: #64748b;
   font-size: 0.75rem;
   white-space: normal;
-  word-break: break-word;
+  
   max-width: 240px;
   display: block;
   opacity: 0;
@@ -1533,12 +1528,6 @@ async function handleCancelFacial() {
   overflow: hidden;
   transition: opacity 0.2s ease, max-height 0.3s ease, margin-top 0.2s ease;
   margin-top: 0;
-}
-
-.map-wrap-wrapper :deep(.map-bound-tooltip-user-label:hover .map-tooltip-address-hover) {
-  opacity: 1;
-  max-height: 300px;
-  margin-top: 6px;
 }
 
 .map-wrap-wrapper :deep(.map-bound-tooltip-user-label) {
