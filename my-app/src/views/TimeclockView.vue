@@ -957,7 +957,7 @@ async function handleCancelFacial() {
           <div v-else class="hero-card hero-idle">
             <div class="hero-sub-row">
               <p class="muted hero-sub">
-                Track location to clock in
+                Clock in and out here to track your daily attendance.
               </p>
             </div>
             <button type="button" class="btn hero-cta" :disabled="isLoading" @click="onClockInClick">Clock in</button>
@@ -1084,14 +1084,16 @@ async function handleCancelFacial() {
 
 .hero-card {
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid #9ee2ff;
   border-radius: 16px;
-  padding: 2rem;
+  padding: 1rem 2rem;
   margin-top: 0.5rem;
 }
 
 .hero-idle {
-  padding: 2.5rem;
+  padding: 1rem 2rem;
+  box-shadow: rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, 
+    rgba(0, 0, 0, 0.06) 0px 1px 2px 0px;
 }
 
 .hero-cta {
@@ -1166,9 +1168,10 @@ async function handleCancelFacial() {
   border-radius: 8px;
   font-size: 0.9375rem;
   font-weight: 500;
-  cursor: pointer;
-  border: none;
+  cursor: pointer;  
   transition: opacity 0.2s;
+  background: #0ea5e9;
+  color: #fff;
 }
 
 .btn.primary {
@@ -1336,8 +1339,7 @@ async function handleCancelFacial() {
 
 .completed-list {
   margin-top: 1.5rem;
-  padding-top: 1rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid #9ee2ff;
 }
 
 .completed-list .small {
@@ -1362,12 +1364,12 @@ async function handleCancelFacial() {
   min-height: 320px;
   border-radius: 16px;
   overflow: hidden;
-  border: 1px solid var(--border-color);
+  border: 1px solid #9ee2ff;
   background:
     radial-gradient(circle at top, rgba(56, 189, 248, 0.22), rgba(15, 23, 42, 0.98)),
     linear-gradient(135deg, rgba(15, 23, 42, 1), rgba(15, 23, 42, 0.92));
-  box-shadow: rgba(50, 50, 93, 0.25) 0px 2px 5px -1px,
-    rgba(0, 0, 0, 0.3) 0px 1px 3px -1px;
+    box-shadow: rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, 
+      rgba(0, 0, 0, 0.06) 0px 1px 2px 0px;
 }
 
 .map-loading-overlay {
