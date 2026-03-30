@@ -251,7 +251,7 @@ function updateUserMarker() {
         ? officeUserAddress.value
         : `${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`
     userMarker.bindTooltip(
-      `<div class="map-tooltip-inner map-tooltip-you"><span class="map-tooltip-address" title="${escapeHtml(fullAddress)}">${escapeHtml(fullAddress)}</span></div>`,
+      `<div class="map-tooltip-inner map-tooltip-you"><strong></strong><span class="map-tooltip-address" title="${escapeHtml(fullAddress)}">${escapeHtml(fullAddress)}</span></div>`,
       { permanent: false, direction: 'top', offset: [0, -USER_MARKER_SIZE - 8], className: 'map-bound-tooltip map-bound-tooltip-user', sticky: true }
     )
   } else {
@@ -1493,13 +1493,7 @@ async function handleCancelFacial() {
 
 .map-wrap-wrapper :deep(.map-bound-tooltip-user) {
   white-space: normal;
-  max-width: 260px;
-  text-align: center;
-}
-
-.map-wrap-wrapper :deep(.map-bound-tooltip-user-label) {
-  white-space: normal;
-  max-width: 280px;
+  width: 280px;
   text-align: center;
 }
 
@@ -1520,7 +1514,7 @@ async function handleCancelFacial() {
   color: #64748b;
   font-size: 0.75rem;
   white-space: normal;
-  
+  word-break: break-word;
   max-width: 240px;
   display: block;
   opacity: 0;
@@ -1528,10 +1522,6 @@ async function handleCancelFacial() {
   overflow: hidden;
   transition: opacity 0.2s ease, max-height 0.3s ease, margin-top 0.2s ease;
   margin-top: 0;
-}
-
-.map-wrap-wrapper :deep(.map-bound-tooltip-user-label) {
-  cursor: pointer;
 }
 
 .map-wrap-wrapper :deep(.map-tooltip-address[title]) {
