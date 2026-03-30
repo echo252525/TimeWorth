@@ -836,95 +836,6 @@ function formatTotalTime(interval: string | null) {
   return parts.join(' ')
 }
 
-function parseIntervalSeconds(interval: string | null): number {
-  if (!interval) return 0
-  const timeMatch = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (timeMatch) {
-    const [, hStr, mStr, sStr] = timeMatch
-    const h = Number(hStr) || 0
-    const m = Number(mStr) || 0
-    const s = Number(sStr) || 0
-    return h * 3600 + m * 60 + s
-  }
-  const match = interval.match(/(\d+)\s*hours?|(\d+)\s*minutes?|(\d+)\s*seconds?/gi)
-  if (!match) return 0
-  let h = 0, m = 0, s = 0
-  match.forEach((p) => {
-    const n = parseInt(p, 10)
-    if (p.toLowerCase().includes('hour')) h = n
-    else if (p.toLowerCase().includes('minute')) m = n
-    else if (p.toLowerCase().includes('second')) s = n
-  })
-  return h * 3600 + m * 60 + s
-}
-
-const TARGET_DAY_SECONDS = 8 * 3600
-// Radius used for the minimalist time-left ring indicator
-const timeLeftRadius = 14
-const timeLeftCircumference = 2 * Math.PI * timeLeftRadius
-
-const workedSecondsToday = computed(() => {
-  return completedToday.value.reduce(
-    (sum, r) => sum + parseIntervalSeconds((r as { total_time: string | null }).total_time ?? null),
-    0
-  )
-})
-
-const remainingSecondsToday = computed(() => {
-  return Math.max(0, TARGET_DAY_SECONDS - workedSecondsToday.value)
-})
-
-const remainingHoursLabel = computed(() => {
-  if (remainingSecondsToday.value <= 0) return '0h'
-  const hours = remainingSecondsToday.value / 3600
-  if (hours >= 1) {
-    const rounded = Math.round(hours * 10) / 10
-    return `${rounded}h`
-  }
-  const mins = Math.max(1, Math.round(remainingSecondsToday.value / 60))
-  return `${mins}m`
-})
-
-const timeLeftProgressFraction = computed(() => {
-  if (TARGET_DAY_SECONDS <= 0) return 0
-  return Math.max(0, Math.min(1, remainingSecondsToday.value / TARGET_DAY_SECONDS))
-})
-
-const timeLeftDashOffset = computed(() => {
-  return (1 - timeLeftProgressFraction.value) * timeLeftCircumference
-})
-
-
-
-/** Elapsed work fraction (0 = start, 1 = 8h, >1 = overtime) for timer color. */
-const elapsedFractionForColor = computed(() => {
-  if (TARGET_DAY_SECONDS <= 0) return 0
-  return workedSecondsToday.value / TARGET_DAY_SECONDS
-})
-
-/** CSS color for the circular timer progress stroke: Blue → Green → Red by elapsed time. */
-const timeLeftProgressColor = computed(() => {
-  const t = elapsedFractionForColor.value
-  const blue = { r: 14, g: 165, b: 233 }
-  const green = { r: 34, g: 197, b: 94 }
-  const red = { r: 248, g: 113, b: 113 }
-  let r: number, g: number, b: number
-  if (t <= 0.5) {
-    r = blue.r; g = blue.g; b = blue.b
-  } else if (t <= 1) {
-    const u = (t - 0.5) / 0.5
-    r = Math.round(blue.r + (green.r - blue.r) * u)
-    g = Math.round(blue.g + (green.g - blue.g) * u)
-    b = Math.round(blue.b + (green.b - blue.b) * u)
-  } else {
-    const u = Math.min(1, (t - 1) / 0.5)
-    r = Math.round(green.r + (red.r - green.r) * u)
-    g = Math.round(green.g + (red.g - green.g) * u)
-    b = Math.round(green.b + (red.b - green.b) * u)
-  }
-  return `rgb(${r}, ${g}, ${b})`
-})
-
 const cancelFacialLoading = ref(false)
 async function handleCancelFacial() {
   cancelFacialLoading.value = true
@@ -969,7 +880,6 @@ async function handleCancelFacial() {
               </div>
             </div>
             <template v-else>
-              <!-- Same layout as idle card: left = ticking timer, right = 8h ring — so office/WFH match -->
               <div class="hero-sub-row clocked-hero-row">
                 <div class="clocked-hero-left">
                   <template v-if="isOnLunch">
@@ -982,28 +892,6 @@ async function handleCancelFacial() {
                     <div class="timer timer-hero-main" aria-live="polite">{{ liveElapsedDisplay }}</div>
                     <p class="muted clocked-hero-meta">In at {{ fmtStored(todayRecord.clock_in) }}</p>
                   </template>
-                </div>
-                <div
-                  v-if="remainingHoursLabel"
-                  class="time-left-badge"
-                  :aria-label="isOnLunch ? 'Time left in work day' : 'Time left before 8h target'"
-                >
-                  <svg class="time-left-icon" viewBox="0 0 40 40" aria-hidden="true">
-                    <circle class="time-left-track" cx="20" cy="20" r="14" fill="none" />
-                    <circle
-                      class="time-left-progress"
-                      cx="20"
-                      cy="20"
-                      r="14"
-                      fill="none"
-                      :stroke-dasharray="timeLeftCircumference"
-                      :stroke-dashoffset="timeLeftDashOffset"
-                      :stroke="timeLeftProgressColor"
-                    />
-                    <text x="20" y="23" class="time-left-number time-left-number-pulse" text-anchor="middle">
-                      {{ remainingHoursLabel }}
-                    </text>
-                  </svg>
                 </div>
               </div>
               <div v-if="todayRecord.lunch_break_start" class="lunch-info">
@@ -1071,35 +959,6 @@ async function handleCancelFacial() {
               <p class="muted hero-sub">
                 Track location to clock in
               </p>
-              <div v-if="remainingHoursLabel" class="time-left-badge" aria-label="Time left before clock out">
-                <svg class="time-left-icon" viewBox="0 0 40 40" aria-hidden="true">
-                  <circle
-                    class="time-left-track"
-                    cx="20"
-                    cy="20"
-                    r="14"
-                    fill="none"
-                  />
-                  <circle
-                    class="time-left-progress"
-                    cx="20"
-                    cy="20"
-                    r="14"
-                    fill="none"
-                    :stroke-dasharray="timeLeftCircumference"
-                    :stroke-dashoffset="timeLeftDashOffset"
-                    :stroke="timeLeftProgressColor"
-                  />
-                  <text
-                    x="20"
-                    y="23"
-                    class="time-left-number time-left-number-pulse"
-                    text-anchor="middle"
-                  >
-                    {{ remainingHoursLabel }}
-                  </text>
-                </svg>
-              </div>
             </div>
             <button type="button" class="btn hero-cta" :disabled="isLoading" @click="onClockInClick">Clock in</button>
             <div v-if="completedToday.length" class="completed-list">
@@ -1339,60 +1198,9 @@ async function handleCancelFacial() {
 }
 .clocked-hero-meta { margin: 0 !important; font-size: 0.8125rem; }
 
-.time-left-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.25rem 0.7rem;
-  border-radius: 999px;
-  background: rgba(15,23,42,0.92);
-  border: 1px solid rgba(56,189,248,0.7);
-  box-shadow: 0 6px 18px rgba(15,23,42,0.7);
-  transform-origin: center;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
-}
-
-.time-left-icon {
-  width: 32px;
-  height: 32px;
-}
-
-.time-left-track {
-  stroke: rgba(148,163,184,0.6);
-  stroke-width: 3;
-}
-
-.time-left-progress {
-  stroke-width: 3;
-  stroke-linecap: round;
-  transform: rotate(-90deg);
-  transform-origin: 50% 50%;
-  transition: stroke-dashoffset 0.45s cubic-bezier(0.3, 0.7, 0.3, 1), stroke 0.5s ease;
-}
-
-.time-left-number {
-  font-size: 0.9rem;
-  font-weight: 700;
-  fill: #e5f2ff;
-}
-
-@keyframes time-left-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.82; }
-}
-
-.time-left-number-pulse {
-  animation: time-left-pulse 1.8s ease-in-out infinite;
-}
-
 .liveness-cancel-spinner {
   border-color: rgba(148, 163, 184, 0.3);
   border-top-color: #94a3b8;
 }
 
-.time-left-badge:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(15,23,42,0.85);
-  border-color: #38bdf8;
-}
 </style>
