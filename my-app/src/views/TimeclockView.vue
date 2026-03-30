@@ -1338,7 +1338,7 @@ async function handleCancelFacial() {
 }
 
 .completed-list {
-  margin-top: 1.5rem;
+  margin-top: 1rem;
   border-top: 1px solid #9ee2ff;
 }
 
@@ -1350,7 +1350,6 @@ async function handleCancelFacial() {
 .completed-row {
   font-size: 0.8125rem;
   color: #94a3b8;
-  padding: 0.25rem 0;
 }
 
 .map-aside {
@@ -1691,7 +1690,7 @@ async function handleCancelFacial() {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.3rem;
 }
 
 .clocked-hero-row {
