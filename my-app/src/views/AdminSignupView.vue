@@ -6,15 +6,37 @@ import { useAdminAuth } from '../composables/useAdminAuth'
 
 const router = useRouter()
 const { signUpAdmin } = useAdminAuth()
-const form = reactive({ name: '', employeeid: '', position_in_company: '', email: '', password: '' })
+const form = reactive({
+  first_name: '',
+  middle_initial: '',
+  last_name: '',
+  employeeid: '',
+  position_in_company: '',
+  email: '',
+  password: ''
+})
 const isLoading = ref(false)
 const error = ref<string | null>(null)
+
+function titleCasePart(s: string): string {
+  const t = s.trim()
+  if (!t) return ''
+  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
+}
+
+function combineFullName(): string {
+  const first = titleCasePart(form.first_name)
+  const mid = titleCasePart(form.middle_initial)
+  const last = titleCasePart(form.last_name)
+  const parts = [first, mid, last].filter(Boolean)
+  return parts.join(' ')
+}
 
 async function onSubmit() {
   isLoading.value = true
   error.value = null
   const r = await signUpAdmin({
-    name: form.name,
+    name: combineFullName(),
     employeeid: form.employeeid,
     position_in_company: form.position_in_company,
     email: form.email,
@@ -29,7 +51,39 @@ async function onSubmit() {
   <AuthLayout>
     <h1>Admin sign up</h1>
     <form class="auth-form" @submit.prevent="onSubmit">
-      <div class="field"><label for="name">Full name</label><input id="name" v-model="form.name" type="text" required placeholder="Admin Name" autocomplete="name" /></div>
+      <div class="field">
+        <label for="first_name">First name</label>
+        <input
+          id="first_name"
+          v-model="form.first_name"
+          type="text"
+          required
+          placeholder="First name"
+          autocomplete="given-name"
+        />
+      </div>
+      <div class="field">
+        <label for="middle_initial">Middle initial</label>
+        <input
+          id="middle_initial"
+          v-model="form.middle_initial"
+          type="text"
+          maxlength="8"
+          placeholder="Optional"
+          autocomplete="additional-name"
+        />
+      </div>
+      <div class="field">
+        <label for="last_name">Last name</label>
+        <input
+          id="last_name"
+          v-model="form.last_name"
+          type="text"
+          required
+          placeholder="Last name"
+          autocomplete="family-name"
+        />
+      </div>
       <div class="field"><label for="employeeid">Employee ID</label><input id="employeeid" v-model="form.employeeid" type="text" required placeholder="ADM-001" autocomplete="off" /></div>
       <div class="field"><label for="position">Position</label><input id="position" v-model="form.position_in_company" type="text" required placeholder="e.g. Admin" autocomplete="organization-title" /></div>
       <div class="field"><label for="email">Email</label><input id="email" v-model="form.email" type="email" required placeholder="admin@company.com" autocomplete="email" /></div>
