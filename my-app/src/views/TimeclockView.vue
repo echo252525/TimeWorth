@@ -926,9 +926,31 @@ async function handleCancelFacial() {
           <!-- Choose modality (after Clock in click) -->
           <div v-else-if="step === 'choose_modality'" class="hero-card">
             <p class="muted">Where are you working?</p>
-            <div class="modality-btns">
-              <button type="button" class="btn" :class="{ primary: workModality === 'office', secondary: workModality !== 'office' }" @click="workModality = 'office'">Office</button>
-              <button type="button" class="btn" :class="{ primary: workModality === 'wfh', secondary: workModality !== 'wfh' }" @click="workModality = 'wfh'">WFH</button>
+            <div
+              class="modality-btns modality-toggle"
+              :class="{ 'is-office': workModality === 'office', 'is-wfh': workModality === 'wfh' }"
+              role="group"
+              aria-label="Work modality"
+            >
+              <span class="modality-toggle-indicator" aria-hidden="true"></span>
+              <button
+                type="button"
+                class="btn modality-toggle-btn"
+                :class="{ primary: workModality === 'office', secondary: workModality !== 'office' }"
+                :aria-pressed="workModality === 'office'"
+                @click="workModality = 'office'"
+              >
+                Office
+              </button>
+              <button
+                type="button"
+                class="btn modality-toggle-btn"
+                :class="{ primary: workModality === 'wfh', secondary: workModality !== 'wfh' }"
+                :aria-pressed="workModality === 'wfh'"
+                @click="workModality = 'wfh'"
+              >
+                WFH
+              </button>
             </div>
             <p v-if="(officeFetchingLocation || wfhFetchingLocation) && !locationIn" class="muted">
               Getting location…
@@ -1099,7 +1121,6 @@ async function handleCancelFacial() {
   padding: 0.875rem 2rem;
   font-size: 1.125rem;
   font-weight: 600;
-  border-radius: 12px;
 }
 
 .error {
@@ -1155,6 +1176,75 @@ async function handleCancelFacial() {
   margin: 0.5rem 0;
 }
 
+/* Segmented toggle (work modality) */
+.modality-toggle {
+  position: relative;
+  gap: 0;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(16, 179, 255, 0.144);
+  box-shadow: none;
+  width: fit-content;
+  overflow: hidden;
+}
+
+.modality-toggle-indicator {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: calc(50% - 6px);
+  height: calc(100% - 12px);
+  border-radius: 999px;
+  background: #0ea5e9;
+  box-shadow: none;
+  transform: translateX(0%);
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.modality-toggle.is-wfh .modality-toggle-indicator {
+  transform: translateX(100%);
+}
+
+.modality-toggle-btn {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 0;
+  border-radius: 999px;
+  padding: 0.6rem 1.2rem;
+  min-width: 140px;
+  justify-content: center;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 0;
+  background: transparent;
+  transition: color 220ms ease, transform 0.12s ease;
+}
+
+.modality-toggle-btn.secondary {
+  color: #0ea5e9;
+  border: 0;
+}
+
+.modality-toggle-btn.primary {
+  color: #ffffff;
+}
+
+.modality-toggle-btn:focus-visible {
+  outline: none;
+}
+
+.modality-toggle-btn:active:not(:disabled) {
+  transform: scale(0.99);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modality-toggle-indicator,
+  .modality-toggle-btn {
+    transition: none;
+  }
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -1164,7 +1254,6 @@ async function handleCancelFacial() {
 
 .btn {
   padding: 0.5rem 1rem;
-  border-radius: 8px;
   font-size: 0.9375rem;
   font-weight: 500;
   cursor: pointer;  
@@ -1181,7 +1270,6 @@ async function handleCancelFacial() {
 .btn.secondary {
   background: rgba(255, 255, 255, 0.1);
   color: #0ea5e9;
-  border: 1px solid #0ea5e9;
 }
 
 .btn:disabled {
