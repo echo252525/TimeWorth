@@ -5,7 +5,10 @@ import autoTable from 'jspdf-autotable'
 import supabase from '../lib/supabaseClient'
 import { user } from '../composables/useAuth'
 import { isTravelFlagged, getBranch, parseLocation, getLocalDateString, storedToRealInstant, type AttendanceRow, type WorkModality } from '../composables/useAttendance'
-import { ClockIcon, PencilSquareIcon, CheckCircleIcon, XMarkIcon } from '@heroicons/vue/24/outline'
+import { ClockIcon, PencilSquareIcon, CheckCircleIcon, XMarkIcon, PhotoIcon } from '@heroicons/vue/24/outline'
+
+const ATTENDANCE_SELECT =
+  'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,created_at,updated_at,work_modality,facial_verifications_id,wfh_pic_url'
 
 const list = ref<AttendanceRow[]>([])
 const isLoading = ref(true)
@@ -52,9 +55,55 @@ const editReason = ref<string>('')
 
 // City cache for reverse geocoded locations
 const cityCache = ref<Record<string, string>>({})
+const WFH_PICTURE_BUCKET = 'wfh_employee_picture'
+const showWfhPhotoModal = ref(false)
+const wfhPhotoModalUrl = ref<string | null>(null)
+const wfhPhotoModalLoading = ref(false)
+const wfhPhotoModalError = ref<string | null>(null)
 
 /** Latest edit-request status per attendance_id for the current user */
 const editRequestStatusMap = ref<Record<string, 'pending' | 'approved' | 'rejected'>>({})
+
+async function openWfhPhotoModal(pathOrUrl: string | null) {
+  console.log('[Timesheet] openWfhPhotoModal called', { pathOrUrl })
+  if (!pathOrUrl) return
+  wfhPhotoModalLoading.value = true
+  wfhPhotoModalError.value = null
+  wfhPhotoModalUrl.value = null
+  showWfhPhotoModal.value = true
+  try {
+    if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+      wfhPhotoModalUrl.value = pathOrUrl
+      console.log('[Timesheet] using direct photo URL', { url: pathOrUrl })
+      return
+    }
+    const { data, error: signedErr } = await supabase
+      .storage
+      .from(WFH_PICTURE_BUCKET)
+      .createSignedUrl(pathOrUrl, 60 * 60)
+    if (signedErr) throw signedErr
+    wfhPhotoModalUrl.value = data.signedUrl
+    console.log('[Timesheet] signed URL created', {
+      bucket: WFH_PICTURE_BUCKET,
+      storagePath: pathOrUrl,
+      hasSignedUrl: !!data.signedUrl
+    })
+  } catch (e) {
+    wfhPhotoModalError.value = e instanceof Error ? e.message : 'Unable to load WFH photo.'
+    console.error('[Timesheet] failed loading WFH photo', {
+      pathOrUrl,
+      error: wfhPhotoModalError.value
+    })
+  } finally {
+    wfhPhotoModalLoading.value = false
+  }
+}
+
+function closeWfhPhotoModal() {
+  showWfhPhotoModal.value = false
+  wfhPhotoModalUrl.value = null
+  wfhPhotoModalError.value = null
+}
 
 function getDateRange() {
   const end = new Date()
@@ -131,16 +180,51 @@ async function fetchData() {
   isLoading.value = true
   error.value = null
   const { start, end } = getDateRange()
+  const startMs = new Date(start).getTime()
+  const endMs = new Date(end).getTime()
+  // Same strategy as timeclock: widen DB bounds so locally-stored wall-time timestamps
+  // (saved with trailing Z) are not excluded before client-side normalization.
+  const padMs = 36 * 60 * 60 * 1000
+  const startWide = new Date(startMs - padMs).toISOString()
+  const endWide = new Date(endMs + padMs).toISOString()
+  console.log('[Timesheet] fetchData start', {
+    userId: user.value.id,
+    start,
+    startWide,
+    end,
+    endWide,
+    modalityFilter: modalityFilter.value
+  })
   const { data, error: err } = await supabase
     .from('attendance')
-    .select('*')
+    .select(ATTENDANCE_SELECT)
     .eq('user_id', user.value.id)
-    .gte('clock_in', start)
-    .lte('clock_in', end)
+    .gte('clock_in', startWide)
+    .lte('clock_in', endWide)
     .order('clock_in', { ascending: false })
   isLoading.value = false
-  if (err) { error.value = err.message; return }
-  list.value = (data ?? []) as AttendanceRow[]
+  if (err) {
+    error.value = err.message
+    console.error('[Timesheet] fetchData error', { message: err.message, details: err })
+    return
+  }
+  const raw = (data ?? []) as AttendanceRow[]
+  list.value = raw.filter((row) => {
+    if (!row.clock_in) return false
+    const realMs = storedToRealInstant(row.clock_in)
+    return realMs >= startMs && realMs <= endMs
+  })
+  console.log('[Timesheet] fetchData result', {
+    rawRows: raw.length,
+    totalRows: list.value.length,
+    wfhRows: list.value.filter((r) => r.work_modality === 'wfh').length,
+    rowsWithWfhPic: list.value.filter((r) => !!r.wfh_pic_url).length,
+    sample: list.value.slice(0, 5).map((r) => ({
+      attendance_id: r.attendance_id,
+      work_modality: r.work_modality,
+      wfh_pic_url: r.wfh_pic_url
+    }))
+  })
 
   await loadEditRequestStatuses()
 }
@@ -268,8 +352,7 @@ function formatExportTableDateCoveredRange(): string {
 }
 
 function publicAssetUrl(file: string): string {
-  const base = import.meta.env.BASE_URL || '/'
-  return `${base}${file}`.replace(/\/{2,}/g, '/')
+  return `/${file}`.replace(/\/{2,}/g, '/')
 }
 
 function loadImageElement(src: string): Promise<HTMLImageElement> {
@@ -466,6 +549,8 @@ interface DayRow {
   editRequestStatus: 'pending' | 'approved' | 'rejected' | null
   entryCount: number
   entries: AttendanceRow[]
+  hasWfhPhoto: boolean
+  firstWfhPhotoPath: string | null
 }
 // Get all unique dates from filtered rows (local date for correct grouping)
 const allDates = computed(() => {
@@ -502,6 +587,9 @@ const tableRows = computed(() => {
     const sorted = dayRows.length ? [...dayRows].sort((a, b) => storedToRealInstant(a.clock_in!) - storedToRealInstant(b.clock_in!)) : []
     let hasPendingEdit = false
     let editRequestStatus: 'pending' | 'approved' | 'rejected' | null = null
+    const firstWfhWithPhoto = sorted.find(
+      (entry) => entry.work_modality === 'wfh' && !!entry.wfh_pic_url
+    ) ?? null
 
     if (dayRows.length && sorted.length > 0 && sorted[0]) {
       clockIn = formatTime12hApmFromStored(sorted[0].clock_in)
@@ -647,7 +735,9 @@ const tableRows = computed(() => {
       hasPendingEdit,
       editRequestStatus,
       entryCount,
-      entries: sorted
+      entries: sorted,
+      hasWfhPhoto: !!firstWfhWithPhoto?.wfh_pic_url,
+      firstWfhPhotoPath: firstWfhWithPhoto?.wfh_pic_url ?? null
     } as DayRow
   }).filter(row => {
     // Apply time filter from dropdown
@@ -659,6 +749,19 @@ const tableRows = computed(() => {
     return true
   })
 })
+
+watch(tableRows, (rows) => {
+  console.log('[Timesheet] tableRows computed', {
+    rowCount: rows.length,
+    rowsWithWfhPhoto: rows.filter((r) => r.hasWfhPhoto).length,
+    firstRows: rows.slice(0, 5).map((r) => ({
+      dateKey: r.dateKey,
+      modality: r.modality,
+      hasWfhPhoto: r.hasWfhPhoto,
+      firstWfhPhotoPath: r.firstWfhPhotoPath
+    }))
+  })
+}, { immediate: true })
 
 // Legacy dayGroups for PDF/Excel (grouped by day with multiple rows per day)
 interface DisplayRow {
@@ -1066,8 +1169,20 @@ times<template>
                 <td class="ts-cell">
                   <span v-if="row.hasMultipleEntries && row.citySummary.includes('locations')" class="location-summary">{{ row.citySummary }}</span>
                   <span v-else>{{ row.city }}</span>
+                  <button
+                    v-if="row.hasWfhPhoto"
+                    type="button"
+                    class="wfh-photo-btn"
+                    title="View WFH photo"
+                    aria-label="View WFH photo"
+                    @click.stop="openWfhPhotoModal(row.firstWfhPhotoPath)"
+                  >
+                    <PhotoIcon class="wfh-photo-icon" />
+                  </button>
                 </td>
-                <td v-if="showInsights" class="ts-cell">{{ row.modality }}</td>
+                <td v-if="showInsights" class="ts-cell">
+                  <span>{{ row.modality }}</span>
+                </td>
                 <td class="ts-cell ts-edit-cell">
                   <div class="ts-edit-cell-inner">
                     <CheckCircleIcon
@@ -1121,6 +1236,19 @@ times<template>
                             <span class="ts-entry-value">{{ entry.work_modality === 'office' ? 'Office' : entry.work_modality === 'wfh' ? 'WFH' : '—' }}</span>
                             <span class="ts-entry-label">Break:</span>
                             <span class="ts-entry-value">{{ lunchMinutes(entry) > 0 ? `${Math.floor(lunchMinutes(entry) / 60)}h ${lunchMinutes(entry) % 60}m` : '—' }}</span>
+                          </div>
+                          <div v-if="entry.work_modality === 'wfh'" class="ts-entry-row">
+                            <span class="ts-entry-label">WFH Photo:</span>
+                            <button
+                              v-if="entry.wfh_pic_url"
+                              type="button"
+                              class="wfh-photo-btn wfh-photo-btn-inline"
+                              @click.stop="openWfhPhotoModal(entry.wfh_pic_url)"
+                            >
+                              <PhotoIcon class="wfh-photo-icon" />
+                              <span>View photo</span>
+                            </button>
+                            <span v-else class="ts-entry-value">—</span>
                           </div>
                         </div>
                       </div>
@@ -1214,6 +1342,20 @@ times<template>
           >
             Confirm
           </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showWfhPhotoModal" class="modal-overlay" @click.self="closeWfhPhotoModal">
+      <div class="modal-content wfh-photo-modal-content">
+        <div class="modal-header">
+          <h3 class="modal-title">WFH Photo</h3>
+          <button type="button" class="modal-close" @click="closeWfhPhotoModal" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body wfh-photo-modal-body">
+          <p v-if="wfhPhotoModalLoading" class="muted">Loading photo…</p>
+          <p v-else-if="wfhPhotoModalError" class="error">{{ wfhPhotoModalError }}</p>
+          <img v-else-if="wfhPhotoModalUrl" :src="wfhPhotoModalUrl" alt="WFH uploaded proof" class="wfh-photo-modal-image" />
         </div>
       </div>
     </div>
@@ -1573,6 +1715,51 @@ times<template>
   padding: 0.4rem 0.75rem;
   background: var(--bg-secondary, #f1f5f9);
   border-radius: 6px;
+}
+
+.wfh-photo-btn {
+  margin-left: 0.45rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-secondary, #f8fafc);
+  color: var(--text-secondary, #475569);
+  border-radius: 8px;
+  padding: 0.24rem 0.48rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.wfh-photo-btn:hover {
+  border-color: var(--accent, #0d9488);
+  color: var(--accent, #0d9488);
+}
+
+.wfh-photo-btn-inline {
+  margin-left: 0;
+}
+
+.wfh-photo-icon {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.wfh-photo-modal-content {
+  max-width: 720px;
+}
+
+.wfh-photo-modal-body {
+  display: flex;
+  justify-content: center;
+}
+
+.wfh-photo-modal-image {
+  width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid var(--border-color, #e2e8f0);
 }
 
 .modal-overlay {

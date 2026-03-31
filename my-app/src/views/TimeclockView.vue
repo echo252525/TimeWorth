@@ -38,12 +38,17 @@ const userInitial = ref<string>('?')
 
 const workModality = ref<WorkModality>('office')
 const selectedBranch = ref<Branch | null>(BRANCHES[0])
-const step = ref<'idle' | 'choose_modality' | 'getting_location' | 'facial' | 'clocked_in' | 'facial_out'>('idle')
+const step = ref<'idle' | 'choose_modality' | 'getting_location' | 'wfh_photo' | 'facial' | 'clocked_in' | 'facial_out'>('idle')
 const liveLocation = ref<{ lat: number; lng: number } | null>(null)
 const locationIn = ref<{ lat: number; lng: number } | null>(null)
 const locationOut = ref<{ lat: number; lng: number } | null>(null)
 const locationError = ref<string | null>(null)
 const clockOutConfirm = ref<{ outsideOffice?: boolean; outsideWfh?: boolean } | null>(null)
+const WFH_PICTURE_BUCKET = 'wfh_employee_picture'
+const wfhPhotoFile = ref<File | null>(null)
+const wfhPhotoPreviewUrl = ref<string | null>(null)
+const wfhPhotoError = ref<string | null>(null)
+const wfhPhotoUploading = ref(false)
 const nowTick = ref(Date.now())
 let timerInterval: number | null = null
 // Liveness verification state
@@ -137,6 +142,10 @@ onUnmounted(() => {
   circle?.remove()
   map?.remove()
   map = null
+  if (wfhPhotoPreviewUrl.value) {
+    URL.revokeObjectURL(wfhPhotoPreviewUrl.value)
+    wfhPhotoPreviewUrl.value = null
+  }
   if (timerInterval) {
   clearInterval(timerInterval)
   timerInterval = null
@@ -230,13 +239,6 @@ function createUserMarkerIcon(): L.DivIcon {
     iconAnchor: [USER_MARKER_SIZE / 2, USER_MARKER_SIZE]
   })
 }
-
-const userLabelIcon = L.divIcon({
-  className: 'map-user-label-icon',
-  html: '',
-  iconSize: [0, 0],
-  iconAnchor: [0, 0]
-})
 
 function updateUserMarker() {
   if (!map) return
@@ -550,6 +552,87 @@ function getLocation(): Promise<{ lat: number; lng: number }> {
   })
 }
 
+function clearWfhPhotoSelection() {
+  if (wfhPhotoPreviewUrl.value) {
+    URL.revokeObjectURL(wfhPhotoPreviewUrl.value)
+    wfhPhotoPreviewUrl.value = null
+  }
+  wfhPhotoFile.value = null
+  wfhPhotoError.value = null
+}
+
+function onWfhPhotoSelected(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0] ?? null
+  if (!file) {
+    clearWfhPhotoSelection()
+    return
+  }
+  if (!file.type.startsWith('image/')) {
+    wfhPhotoError.value = 'Please select an image file.'
+    return
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    wfhPhotoError.value = 'Photo must be 8MB or smaller.'
+    return
+  }
+  if (wfhPhotoPreviewUrl.value) URL.revokeObjectURL(wfhPhotoPreviewUrl.value)
+  wfhPhotoFile.value = file
+  wfhPhotoPreviewUrl.value = URL.createObjectURL(file)
+  wfhPhotoError.value = null
+}
+
+async function uploadWfhPhoto(): Promise<string> {
+  if (!user.value?.id || !wfhPhotoFile.value) throw new Error('Missing WFH photo.')
+  const ext = (wfhPhotoFile.value.name.split('.').pop() || 'jpg').toLowerCase()
+  const safeExt = ext.replace(/[^a-z0-9]/g, '') || 'jpg'
+  const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`
+  const storagePath = `${user.value.id}/${fileName}`
+  const { error: uploadError } = await supabase
+    .storage
+    .from(WFH_PICTURE_BUCKET)
+    .upload(storagePath, wfhPhotoFile.value, {
+      upsert: false,
+      contentType: wfhPhotoFile.value.type || 'image/jpeg'
+    })
+  if (uploadError) throw uploadError
+  return storagePath
+}
+
+async function submitWfhClockIn() {
+  if (!wfhPhotoFile.value) {
+    wfhPhotoError.value = 'Attach a photo before clocking in.'
+    return
+  }
+  wfhPhotoUploading.value = true
+  wfhPhotoError.value = null
+  locationError.value = null
+  try {
+    const loc = locationIn.value ?? await getLocation()
+    const picturePath = await uploadWfhPhoto()
+    if (!loc) return
+    locationIn.value = loc
+    nextTick(() => updateMapView())
+    const locStr = locationString(loc)
+    await clockIn('wfh', { locationIn: locStr ?? undefined, wfhPicUrl: picturePath })
+    step.value = 'clocked_in'
+    clearWfhPhotoSelection()
+    locationIn.value = null
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Failed to upload WFH photo.'
+    wfhPhotoError.value = msg
+    locationError.value = msg
+    step.value = 'wfh_photo'
+  } finally {
+    wfhPhotoUploading.value = false
+  }
+}
+
+function cancelWfhPhotoFlow() {
+  clearWfhPhotoSelection()
+  step.value = 'choose_modality'
+}
+
 function onClockInClick() {
   workModality.value = 'office'
   selectedBranch.value = BRANCHES[0]
@@ -563,19 +646,7 @@ async function selectModalityAndStart(mod: WorkModality) {
   if (mod === 'office' && !branch) return
   locationError.value = null
   if (mod === 'wfh') {
-    try {
-      const loc = locationIn.value ?? await getLocation()
-      if (!loc) return
-      locationIn.value = loc
-      nextTick(() => updateMapView())
-      const locStr = locationString(loc)
-      clockIn('wfh', { locationIn: locStr ?? undefined })
-      step.value = 'clocked_in'
-      locationIn.value = null
-    } catch (e) {
-      locationError.value = e instanceof Error ? e.message : 'Location failed'
-      step.value = 'choose_modality'
-    }
+    step.value = 'wfh_photo'
     return
   }
   step.value = 'getting_location'
@@ -968,6 +1039,38 @@ async function handleCancelFacial() {
                 <span v-else>Continue</span>
               </button>
               <button type="button" class="btn secondary" @click="step = 'idle'">Cancel</button>
+            </div>
+          </div>
+          <div v-else-if="step === 'wfh_photo'" class="hero-card wfh-photo-card">
+            <p class="muted">Attach your WFH photo before clocking in.</p>
+            <div class="wfh-photo-upload">
+              <label class="wfh-photo-upload-label" for="wfh-photo-input">
+                <span>{{ wfhPhotoFile ? 'Replace photo' : 'Attach photo' }}</span>
+              </label>
+              <input
+                id="wfh-photo-input"
+                class="wfh-photo-upload-input"
+                type="file"
+                accept="image/*"
+                @change="onWfhPhotoSelected"
+              />
+              <p v-if="wfhPhotoFile" class="muted small wfh-photo-name">{{ wfhPhotoFile.name }}</p>
+              <div v-if="wfhPhotoPreviewUrl" class="wfh-photo-preview-wrap">
+                <img :src="wfhPhotoPreviewUrl" alt="WFH proof preview" class="wfh-photo-preview" />
+              </div>
+              <p v-if="wfhPhotoError" class="error wfh-photo-error">{{ wfhPhotoError }}</p>
+            </div>
+            <div class="actions">
+              <button
+                type="button"
+                class="btn primary"
+                :disabled="isLoading || wfhPhotoUploading || !wfhPhotoFile"
+                @click="submitWfhClockIn"
+              >
+                <span v-if="wfhPhotoUploading">Uploading…</span>
+                <span v-else>Submit and clock in</span>
+              </button>
+              <button type="button" class="btn secondary" :disabled="wfhPhotoUploading" @click="cancelWfhPhotoFlow">Cancel</button>
             </div>
           </div>
           <!-- Office facial: message shown in modal -->
@@ -1790,6 +1893,59 @@ async function handleCancelFacial() {
 .clocked-hero-meta {
   margin: 0 !important;
   font-size: 0.8125rem;
+}
+
+.wfh-photo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.wfh-photo-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.wfh-photo-upload-input {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px dashed var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.wfh-photo-upload-label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.wfh-photo-name {
+  margin: 0;
+  word-break: break-word;
+}
+
+.wfh-photo-preview-wrap {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+
+.wfh-photo-preview {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+}
+
+.wfh-photo-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--error);
 }
 
 .liveness-cancel-spinner {

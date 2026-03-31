@@ -18,6 +18,7 @@ export interface AttendanceRow {
   branch_location: string | null
   work_modality: WorkModality | null
   facial_verifications_id: string | null
+  wfh_pic_url: string | null
   created_at: string
   updated_at: string
 }
@@ -296,7 +297,7 @@ export function useAttendance() {
     todayRecords.value = incoming
   }
 
-  async function clockIn(workModality: WorkModality, opts?: { branchLocation?: string; locationIn?: string; facialStatus?: string; facialVerificationId?: string }) {
+  async function clockIn(workModality: WorkModality, opts?: { branchLocation?: string; locationIn?: string; facialStatus?: string; facialVerificationId?: string; wfhPicUrl?: string }) {
     if (!userId.value) return
     isLoading.value = true
     error.value = null
@@ -311,6 +312,7 @@ export function useAttendance() {
         location_in: opts?.locationIn ?? null,
         work_modality: workModality,
         facial_verifications_id: opts?.facialVerificationId ?? null,
+        wfh_pic_url: opts?.wfhPicUrl ?? null,
         updated_at: now
       })
       .select()
