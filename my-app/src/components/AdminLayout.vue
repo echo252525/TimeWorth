@@ -49,10 +49,6 @@ function checkMobile() {
   if (!isMobile.value) mobileOpen.value = false
 }
 onMounted(async () => {
-  if (!user.value) {
-    router.replace('/admin/login')
-    return
-  }
   const profile = await fetchAdminProfile()
   if (!profile) {
     router.replace('/admin/login')
@@ -79,7 +75,7 @@ onUnmounted(() => {
 
 async function logout() {
   await signOut()
-  router.push('/')
+  router.replace('/')
 }
 function go(to: string) {
   router.push(to)

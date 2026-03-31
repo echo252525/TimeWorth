@@ -3,21 +3,23 @@ import DashboardLayout from '../components/DashboardLayout.vue'
 import AdminLayout from '../components/AdminLayout.vue'
 import supabase from '../lib/supabaseClient'
 
-async function getAuthenticatedHomeRedirect() {
+type AuthKind = 'guest' | 'employee' | 'admin'
+
+async function getAuthKind(): Promise<AuthKind> {
   const {
     data: { session }
   } = await supabase.auth.getSession()
 
   const uid = session?.user?.id
-  if (!uid) return null
+  if (!uid) return 'guest'
 
   const { data: adminRow } = await supabase
     .from('admin')
-    .select('id')
+    .select('id, role')
     .eq('id', uid)
     .maybeSingle()
 
-  if (adminRow) return { name: 'AdminHome' as const }
+  if (adminRow && (adminRow.role === 'admin' || adminRow.role === 'superadmin')) return 'admin'
 
   const { data: employeeRow } = await supabase
     .from('employee')
@@ -25,9 +27,9 @@ async function getAuthenticatedHomeRedirect() {
     .eq('id', uid)
     .maybeSingle()
 
-  if (employeeRow) return { name: 'Dashboard' as const }
+  if (employeeRow) return 'employee'
 
-  return { name: 'Dashboard' as const }
+  return 'guest'
 }
 
 const router = createRouter({
@@ -36,18 +38,15 @@ const router = createRouter({
     {
       path: '/',
       name: 'Home',
-      component: () => import('../views/HomeView.vue'),
-      beforeEnter: async () => {
-        const redirect = await getAuthenticatedHomeRedirect()
-        return redirect ?? true
-      }
+      component: () => import('../views/HomeView.vue')
     },
-    { path: '/login', name: 'Login', component: () => import('../views/LoginView.vue') },
-    { path: '/signup', name: 'Signup', component: () => import('../views/SignupView.vue') },
-    { path: '/forgot-password', name: 'ForgotPassword', component: () => import('../views/ForgotPasswordView.vue') },
+    { path: '/login', name: 'Login', meta: { guestOnly: true }, component: () => import('../views/LoginView.vue') },
+    { path: '/signup', name: 'Signup', meta: { guestOnly: true }, component: () => import('../views/SignupView.vue') },
+    { path: '/forgot-password', name: 'ForgotPassword', meta: { guestOnly: true }, component: () => import('../views/ForgotPasswordView.vue') },
     { path: '/reset-password', name: 'ResetPassword', component: () => import('../views/ResetPasswordView.vue') },
     {
       path: '/dashboard',
+      meta: { requiresAuth: 'employee' },
       component: DashboardLayout,
       children: [
         { path: '', name: 'Dashboard', component: () => import('../views/DashboardView.vue') },
@@ -56,10 +55,11 @@ const router = createRouter({
         { path: 'settings', name: 'Settings', component: () => import('../views/SettingsView.vue') }
       ]
     },
-    { path: '/admin/login', name: 'AdminLogin', component: () => import('../views/AdminLoginView.vue') },
-    { path: '/admin/signup', name: 'AdminSignup', component: () => import('../views/AdminSignupView.vue') },
+    { path: '/admin/login', name: 'AdminLogin', meta: { guestOnly: true }, component: () => import('../views/AdminLoginView.vue') },
+    { path: '/admin/signup', name: 'AdminSignup', meta: { guestOnly: true }, component: () => import('../views/AdminSignupView.vue') },
     {
       path: '/admin',
+      meta: { requiresAuth: 'admin' },
       component: AdminLayout,
       children: [
         { path: '', name: 'AdminHome', component: () => import('../views/AdminHomeView.vue') },
@@ -70,6 +70,38 @@ const router = createRouter({
       ]
     }
   ]
+})
+
+router.beforeEach(async (to) => {
+  const authKind = await getAuthKind()
+
+  const requiresEmployee = to.matched.some((r) => r.meta.requiresAuth === 'employee')
+  const requiresAdmin = to.matched.some((r) => r.meta.requiresAuth === 'admin')
+  const guestOnly = to.matched.some((r) => r.meta.guestOnly === true)
+
+  if (to.path === '/') {
+    if (authKind === 'admin') return { name: 'AdminHome', replace: true }
+    if (authKind === 'employee') return { name: 'Dashboard', replace: true }
+    return true
+  }
+
+  if (requiresEmployee && authKind !== 'employee') {
+    return { name: 'Login', replace: true }
+  }
+
+  if (requiresAdmin && authKind !== 'admin') {
+    return { name: 'AdminLogin', replace: true }
+  }
+
+  if (guestOnly && authKind === 'employee') {
+    return { name: 'Dashboard', replace: true }
+  }
+
+  if (guestOnly && authKind === 'admin') {
+    return { name: 'AdminHome', replace: true }
+  }
+
+  return true
 })
 
 export default router

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { MagnifyingGlassIcon, ChevronDownIcon } from '@heroicons/vue/24/outline'
+import { MagnifyingGlassIcon, ChevronDownIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/vue/24/outline'
 import supabase from '../lib/supabaseClient'
 import { getSignedProfileUrl } from '../composables/useAuth'
 import {
@@ -72,6 +72,7 @@ interface Emp {
   employee_no: string | number
   phone_number: string | null
   picture: string | null
+  account_status: 'pending' | 'approved' | 'rejected' | null
 }
 
 interface PositionRow {
@@ -100,6 +101,7 @@ const selectedEmployee = ref<Emp | null>(null)
 const profilePictureUrl = ref<string | null>(null)
 const attendanceHistory = ref<AttendanceRecord[]>([])
 const modalLoading = ref(false)
+const statusUpdatingByUser = ref<Record<string, boolean>>({})
 
 /** Today's attendance rows per employee (local calendar day). */
 const attendanceTodayByUser = ref<Record<string, AttendanceRow[]>>({})
@@ -124,7 +126,6 @@ const popPos = ref({ top: 0, left: 0 })
 const miniMapEl = ref<HTMLElement | null>(null)
 const tickNow = ref(Date.now())
 let miniMap: L.Map | null = null
-let miniMarker: L.Layer | null = null
 let hoverTickTimer: ReturnType<typeof setInterval> | null = null
 let attendanceRefreshTimer: ReturnType<typeof setInterval> | null = null
 let leaveHoverTimer: ReturnType<typeof setTimeout> | null = null
@@ -247,6 +248,30 @@ function tableStatusLabel(userId: string): string {
   }
 }
 
+function isPendingAccount(e: Emp): boolean {
+  return e.account_status === 'pending'
+}
+
+async function updateAccountStatus(e: Emp, nextStatus: 'approved' | 'rejected') {
+  if (!isPendingAccount(e)) return
+  statusUpdatingByUser.value[e.id] = true
+  const { error: err } = await supabase
+    .from('employee')
+    .update({ account_status: nextStatus })
+    .eq('id', e.id)
+  statusUpdatingByUser.value[e.id] = false
+  if (err) {
+    error.value = err.message
+    return
+  }
+  list.value = list.value.map((item) =>
+    item.id === e.id ? { ...item, account_status: nextStatus } : item
+  )
+  if (selectedEmployee.value?.id === e.id) {
+    selectedEmployee.value = { ...selectedEmployee.value, account_status: nextStatus }
+  }
+}
+
 const hoverPresence = computed(() => (hoveredEmp.value ? presenceForUserId(hoveredEmp.value.id) : null))
 
 const liveElapsed = computed(() => {
@@ -261,7 +286,6 @@ function destroyMiniMap() {
   if (miniMap) {
     miniMap.remove()
     miniMap = null
-    miniMarker = null
   }
 }
 
@@ -314,7 +338,8 @@ async function loadAttendanceSnapshot() {
     console.warn('[AdminEmployees] attendance open sessions', openErr.message)
   }
 
-  const openByUser: Record<string, AttendanceRow | null> = Object.fromEntries(ids.map((id) => [id, null]))
+  const openByUser: Record<string, AttendanceRow | null> = {}
+  for (const id of ids) openByUser[id] = null
   for (const row of (openData ?? []) as AttendanceRow[]) {
     const uid = row.user_id
     const cur = openByUser[uid]
@@ -345,7 +370,8 @@ async function loadAttendanceSnapshot() {
   attendanceTodayByUser.value = byUser
 
   const missing = ids.filter((id) => !byUser[id]?.length)
-  const lastMap: Record<string, AttendanceRow | null> = Object.fromEntries(ids.map((id) => [id, null]))
+  const lastMap: Record<string, AttendanceRow | null> = {}
+  for (const id of ids) lastMap[id] = null
   if (missing.length) {
     const { data: lastRows } = await supabase
       .from('attendance')
@@ -426,7 +452,7 @@ watch(
       keyboard: false
     }).setView([p.lat, p.lng], 16)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(miniMap)
-    miniMarker = L.circleMarker([p.lat, p.lng], {
+    L.circleMarker([p.lat, p.lng], {
       radius: 9,
       fillColor: '#0ea5e9',
       color: '#fff',
@@ -500,7 +526,7 @@ async function loadEmployees() {
   error.value = null
   const { data, error: err } = await supabase
     .from('employee')
-    .select('id, name, email, position_in_company, employee_no, phone_number, picture')
+    .select('id, name, email, position_in_company, employee_no, phone_number, picture, account_status')
     .order('name')
   loading.value = false
   if (err) {
@@ -533,14 +559,40 @@ onUnmounted(() => {
 })
 
 function openEmployee(e: Emp) {
+  console.log('[AdminEmployees] openEmployee called', {
+    id: e.id,
+    name: e.name,
+    account_status: e.account_status
+  })
   cancelHoverLeave()
   hoveredEmp.value = null
   stopHoverTick()
   destroyMiniMap()
   selectedEmployee.value = e
+  console.log('[AdminEmployees] selectedEmployee set', {
+    selectedId: selectedEmployee.value?.id ?? null
+  })
+}
+
+function onEmployeeRowClick(e: Emp, ev: MouseEvent) {
+  const target = ev.target as HTMLElement | null
+  const clickedStatusBtn = !!target?.closest('.account-status-btn')
+  console.log('[AdminEmployees] row click', {
+    employeeId: e.id,
+    targetTag: target?.tagName ?? null,
+    clickedStatusBtn
+  })
+  if (clickedStatusBtn) {
+    console.log('[AdminEmployees] row click ignored because account-status button was clicked')
+    return
+  }
+  openEmployee(e)
 }
 
 watch(selectedEmployee, async (emp) => {
+  console.log('[AdminEmployees] selectedEmployee watcher fired', {
+    selectedId: emp?.id ?? null
+  })
   profilePictureUrl.value = null
   attendanceHistory.value = []
   if (!emp) return
@@ -560,12 +612,23 @@ watch(selectedEmployee, async (emp) => {
       .lte('clock_in', `${endStr}T23:59:59.999Z`)
       .order('clock_in', { ascending: false })
     attendanceHistory.value = (data ?? []) as AttendanceRecord[]
+    console.log('[AdminEmployees] modal data loaded', {
+      selectedId: emp.id,
+      historyCount: attendanceHistory.value.length,
+      hasProfilePicture: !!profilePictureUrl.value
+    })
   } finally {
     modalLoading.value = false
+    console.log('[AdminEmployees] modal loading finished', {
+      selectedId: emp.id
+    })
   }
 })
 
 function closeModal() {
+  console.log('[AdminEmployees] closeModal called', {
+    selectedBeforeClose: selectedEmployee.value?.id ?? null
+  })
   selectedEmployee.value = null
 }
 
@@ -680,7 +743,7 @@ function formatDate(iso: string | null): string {
                 class="data-row"
                 @mouseenter="onRowEnter(e, $event)"
                 @mouseleave="onRowLeave"
-                @click="openEmployee(e)"
+                @click="onEmployeeRowClick(e, $event)"
               >
                 <td class="td-user">
                   <div class="user-cell">
@@ -698,10 +761,12 @@ function formatDate(iso: string | null): string {
                   </div>
                 </td>
                 <td class="td-muted td-status">
-                  <span
-                    class="status-pill"
-                    :class="'status-pill--' + presenceForUserId(e.id).kind"
-                  >{{ tableStatusLabel(e.id) }}</span>
+                  <div class="status-cell-wrap">
+                    <span
+                      class="status-pill"
+                      :class="'status-pill--' + presenceForUserId(e.id).kind"
+                    >{{ tableStatusLabel(e.id) }}</span>
+                  </div>
                 </td>
                 <td class="td-muted">{{ e.email }}</td>
                 <td class="td-muted">{{ e.position_in_company || '—' }}</td>
@@ -744,8 +809,13 @@ function formatDate(iso: string | null): string {
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="selectedEmployee" class="modal-overlay" @click.self="closeModal">
-        <div class="modal">
+      <div
+        v-if="selectedEmployee"
+        class="modal-overlay"
+        style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:1rem;z-index:2147483647;background:rgba(0,0,0,.45);"
+        @click.self="closeModal"
+      >
+        <div class="employee-modal-panel" style="display:block;position:relative;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;">
           <button type="button" class="modal-close" aria-label="Close" @click="closeModal">&times;</button>
           <div v-if="modalLoading" class="modal-loading">Loading…</div>
           <template v-else>
@@ -767,6 +837,26 @@ function formatDate(iso: string | null): string {
                 <dt>Employee no.</dt>
                 <dd>{{ selectedEmployee.employee_no ?? '—' }}</dd>
               </dl>
+              <div v-if="isPendingAccount(selectedEmployee)" class="modal-account-actions">
+                <button
+                  type="button"
+                  class="account-status-btn approve modal-account-btn"
+                  :disabled="statusUpdatingByUser[selectedEmployee.id]"
+                  @click="updateAccountStatus(selectedEmployee, 'approved')"
+                >
+                  <CheckCircleIcon class="account-status-icon" />
+                  <span>Approve</span>
+                </button>
+                <button
+                  type="button"
+                  class="account-status-btn reject modal-account-btn"
+                  :disabled="statusUpdatingByUser[selectedEmployee.id]"
+                  @click="updateAccountStatus(selectedEmployee, 'rejected')"
+                >
+                  <XCircleIcon class="account-status-icon" />
+                  <span>Reject</span>
+                </button>
+              </div>
             </div>
             <div class="history-section">
               <h3>Last 7 days – Clock in/out</h3>
@@ -1053,6 +1143,55 @@ body.light-mode .kpi-card-positions .kpi-icon {
   white-space: nowrap;
   vertical-align: middle;
 }
+.status-cell-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.account-status-btn {
+  width: 1.45rem;
+  height: 1.45rem;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.account-status-btn.approve {
+  color: #22c55e;
+}
+.account-status-btn.reject {
+  color: #ef4444;
+}
+.account-status-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.account-status-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.account-status-icon {
+  width: 1rem;
+  height: 1rem;
+}
+.modal-account-actions {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: center;
+  gap: 0.6rem;
+}
+.modal-account-btn {
+  width: auto;
+  height: auto;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  gap: 0.35rem;
+}
 .status-pill {
   display: inline-block;
   font-size: 0.75rem;
@@ -1089,7 +1228,7 @@ body.light-mode .kpi-card-positions .kpi-icon {
   border: 1px solid var(--border-light);
   border-radius: 12px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
-  pointer-events: auto;
+  pointer-events: none;
 }
 .eh-name {
   margin: 0 0 0.35rem;
@@ -1170,7 +1309,7 @@ body.light-mode .kpi-card-positions .kpi-icon {
   z-index: 1000;
   padding: 1rem;
 }
-.modal {
+.employee-modal-panel {
   position: relative;
   background: var(--bg-tertiary);
   border-radius: 12px;

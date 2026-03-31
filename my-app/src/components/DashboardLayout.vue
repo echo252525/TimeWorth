@@ -56,7 +56,7 @@ onUnmounted(() => {
 
 async function logout() {
   await signOut()
-  router.push('/')
+  router.replace('/')
 }
 
 function go(to: string) {

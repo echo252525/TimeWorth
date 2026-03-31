@@ -49,7 +49,12 @@ export function useAdminAuth() {
   const adminRole = computed(() => adminProfile.value?.role ?? null)
 
   async function fetchAdminProfile() {
-    const uid = user.value?.id
+    let uid = user.value?.id ?? null
+    if (!uid) {
+      const { data: { session } } = await supabase.auth.getSession()
+      uid = session?.user?.id ?? null
+      if (session?.user) user.value = session.user
+    }
     if (!uid) { adminProfile.value = null; return null }
     const { data, error } = await supabase.from('admin').select('*').eq('id', uid).maybeSingle()
     if (error || !data) { adminProfile.value = null; return null }
