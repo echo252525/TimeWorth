@@ -1593,7 +1593,7 @@ async function handleCancelFacial() {
 .map-edge-indicator {
   position: absolute;
   display: none;
-  z-index: 1000;
+  z-index: 30;
   width: 48px;
   height: 48px;
   cursor: pointer;
@@ -1781,8 +1781,37 @@ async function handleCancelFacial() {
   gap: 3px;
   pointer-events: none;
   text-align: center;
-  z-index: 1000;
+  z-index: 30;
   max-width: calc(100% - 24px);
+}
+
+/* Keep Leaflet from overlapping the mobile sidebar/navbar.
+   The app layout sidebar uses a relatively low z-index (e.g. 50),
+   while Leaflet defaults can go higher via panes/controls.
+   We cap Leaflet + map overlays below the nav stack. */
+.timeclock-page :deep(.leaflet-pane),
+.timeclock-page :deep(.leaflet-map-pane),
+.timeclock-page :deep(.leaflet-tile-pane),
+.timeclock-page :deep(.leaflet-overlay-pane),
+.timeclock-page :deep(.leaflet-shadow-pane),
+.timeclock-page :deep(.leaflet-marker-pane) {
+  z-index: 1;
+}
+.timeclock-page :deep(.leaflet-control),
+.timeclock-page :deep(.leaflet-control-container) {
+  z-index: 20;
+}
+.timeclock-page :deep(.leaflet-top),
+.timeclock-page :deep(.leaflet-bottom) {
+  z-index: 20;
+}
+.timeclock-page :deep(.leaflet-control-zoom),
+.timeclock-page :deep(.leaflet-control-attribution) {
+  z-index: 20;
+}
+.timeclock-page :deep(.leaflet-tooltip),
+.timeclock-page :deep(.leaflet-popup) {
+  z-index: 25;
 }
 
 .map-branch-label strong {
