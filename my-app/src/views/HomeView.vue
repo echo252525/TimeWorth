@@ -15,7 +15,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     <header class="header">
       <div class="brand">
         <img src="/TimeWorthLogo.png" alt="" class="brand-logo" />
-        <span class="brand-text">TimeWorth - wag alisin tong text wait</span>
+        <span class="brand-text">TimeWorth</span>
       </div>
       <nav class="nav">
         <template v-if="adminGate">
@@ -244,15 +244,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 .brand-logo {
   display: block;
-  height: clamp(2rem, 5vw, 2.5rem);
+  height: clamp(2rem, 5vw, 2.75rem);
   width: auto;
   object-fit: contain;
-  border-radius: 0.5rem;
+  border-radius: 999px;
 }
 
 .brand-text {
   font-weight: 700;
-  font-size: clamp(1.1rem, 3vw, 1.35rem);
+  font-size: clamp(1.1rem, 3vw, 1.75rem);
 }
 
 .nav {
