@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { ChevronDownIcon } from '@heroicons/vue/24/outline'
 import supabase from '../lib/supabaseClient'
 import { useAuth } from '../composables/useAuth'
 import {
@@ -211,15 +212,6 @@ onMounted(load)
     <p v-if="error" class="banner-error">{{ error }}</p>
 
     <div class="controls">
-      <label class="filter-label">
-        <span class="sr-only">Filter by status</span>
-        <select v-model="filterStatus" class="filter-select">
-          <option value="all">All statuses</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
-      </label>
       <button type="button" class="btn-ghost" :disabled="loading" @click="load">Refresh</button>
     </div>
 
@@ -232,7 +224,20 @@ onMounted(load)
             <tr>
               <th scope="col">Employee</th>
               <th scope="col">Requested</th>
-              <th scope="col">Status</th>
+              <th scope="col" class="th-status" @click.stop>
+                <div class="th-status-wrap">
+                  <span>Status</span>
+                  <div class="th-status-filter">
+                    <select v-model="filterStatus" class="filter-select filter-select--in-table" aria-label="Filter by status">
+                      <option value="all">All</option>
+                      <option value="pending">Pending</option>
+                      <option value="approved">Approved</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                    <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                  </div>
+                </div>
+              </th>
               <th scope="col">Previous (in → out)</th>
               <th scope="col">Requested (in → out)</th>
               <th scope="col">Modality</th>
@@ -334,6 +339,30 @@ onMounted(load)
   font-size: 0.875rem;
   cursor: pointer;
 }
+.filter-select--in-table {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border-radius: 6px;
+  opacity: 0;
+  cursor: pointer;
+}
+.select-chevron {
+  position: absolute;
+  right: 0.35rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+.select-chevron--in-table {
+  right: 0.35rem;
+}
 .btn-ghost {
   padding: 0.4rem 0.75rem;
   border-radius: 8px;
@@ -390,6 +419,21 @@ onMounted(load)
   font-weight: 500;
   border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
+}
+.th-status {
+  width: 1%;
+}
+.th-status-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+}
+.th-status-filter {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
 }
 .data-table td {
   padding: 0.75rem 1rem;
