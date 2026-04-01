@@ -4,6 +4,8 @@ import supabase from '../lib/supabaseClient'
 import { useAuth } from '../composables/useAuth'
 
 const BUCKET = 'employee_profile'
+const WFH_PICTURE_BUCKET = 'wfh_employee_picture'
+const REGISTERED_FACE_BUCKET = 'registered_user_face'
 
 const { user, getSignedProfileUrl } = useAuth()
 const name = ref('')
@@ -263,6 +265,76 @@ function toggleDeletePasswordVisibility() {
   showDeletePassword.value = !showDeletePassword.value
 }
 
+function joinStoragePath(prefix: string, name: string): string {
+  return prefix ? `${prefix}/${name}` : name
+}
+
+async function listAllStoragePaths(bucket: string, prefix: string): Promise<string[]> {
+  const collected: string[] = []
+  const queue: string[] = [prefix]
+  while (queue.length) {
+    const folder = queue.shift() ?? ''
+    let offset = 0
+    while (true) {
+      const { data, error: listError } = await supabase.storage
+        .from(bucket)
+        .list(folder, { limit: 100, offset, sortBy: { column: 'name', order: 'asc' } })
+      if (listError) throw new Error(listError.message || `Failed to list ${bucket} files`)
+      const rows = data ?? []
+      for (const entry of rows) {
+        const fullPath = joinStoragePath(folder, entry.name)
+        if (entry.id) collected.push(fullPath)
+        else queue.push(fullPath)
+      }
+      if (rows.length < 100) break
+      offset += rows.length
+    }
+  }
+  return collected
+}
+
+async function removeStoragePaths(bucket: string, paths: string[]) {
+  if (!paths.length) return
+  for (let i = 0; i < paths.length; i += 100) {
+    const slice = paths.slice(i, i + 100)
+    const { error: removeError } = await supabase.storage.from(bucket).remove(slice)
+    if (removeError) throw new Error(removeError.message || `Failed to delete files in ${bucket}`)
+  }
+}
+
+async function cleanupAccountStorage(userId: string) {
+  // Private buckets are removed through authenticated storage APIs.
+  const byBucket: Record<string, Set<string>> = {
+    [BUCKET]: new Set<string>(),
+    [WFH_PICTURE_BUCKET]: new Set<string>(),
+    [REGISTERED_FACE_BUCKET]: new Set<string>(),
+  }
+
+  for (const bucket of Object.keys(byBucket)) {
+    const fromPrefix = await listAllStoragePaths(bucket, userId)
+    for (const path of fromPrefix) byBucket[bucket].add(path)
+  }
+
+  if (oldPicturePath.value) byBucket[BUCKET].add(oldPicturePath.value)
+
+  const { data: attendancePictures, error: attendanceError } = await supabase
+    .from('attendance')
+    .select('wfh_pic_url')
+    .eq('user_id', userId)
+    .not('wfh_pic_url', 'is', null)
+  if (attendanceError) {
+    throw new Error(attendanceError.message || 'Failed to load WFH picture paths')
+  }
+  for (const row of attendancePictures ?? []) {
+    const path = (row as { wfh_pic_url?: string | null }).wfh_pic_url
+    if (path) byBucket[WFH_PICTURE_BUCKET].add(path)
+  }
+
+  for (const bucket of Object.keys(byBucket)) {
+    await removeStoragePaths(bucket, [...byBucket[bucket]])
+  }
+}
+
 async function deleteAccount() {
   if (!user.value?.id) return
 
@@ -287,6 +359,8 @@ async function deleteAccount() {
     if (verifyError) {
       throw new Error('Password is incorrect')
     }
+
+    await cleanupAccountStorage(user.value.id)
 
     const session = await supabase.auth.getSession()
 
