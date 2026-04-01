@@ -1500,6 +1500,20 @@ times<template>
   border-collapse: collapse;
   font-size: 0.875rem;
 }
+
+/* Mobile: allow horizontal scroll for wide tables */
+@media (max-width: 767px) {
+  .table-card {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+  .ts-table {
+    width: max-content;
+    min-width: 100%;
+  }
+}
 .ts-table th {
   text-align: left;
   padding: 0.75rem 1rem;
