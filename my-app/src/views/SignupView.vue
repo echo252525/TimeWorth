@@ -126,32 +126,33 @@ async function onSubmit() {
 }
 </script>
 <template>
-  <AuthLayout>
-    <div
-      v-if="postSignupAwaitingEmail"
-      class="auth-success-banner"
-      role="status"
-      aria-live="polite"
-    >
-      <p class="auth-success-banner__title">Account created</p>
-      <p class="auth-success-banner__text">
-        Check your email to verify your address. You can sign in after you confirm the link we sent.
+  <div class="signup-view">
+    <AuthLayout>
+      <div
+        v-if="postSignupAwaitingEmail"
+        class="auth-success-banner"
+        role="status"
+        aria-live="polite"
+      >
+        <p class="auth-success-banner__title">Account created</p>
+        <p class="auth-success-banner__text">
+          Check your email to verify your address. You can sign in after you confirm the link we sent.
+        </p>
+        <router-link class="btn primary auth-success-banner__cta" to="/login">Go to log in</router-link>
+      </div>
+      <template v-else>
+      <h2 class="auth-title"><strong>EMPLOYEE SIGN UP</strong></h2>
+      <p class="signup-step-label" aria-live="polite">
+        <template v-if="signupStep === 1">Personal Information</template>
+        <template v-else-if="signupStep === 2">Employee Information</template>
+        <template v-else>Security</template>
       </p>
-      <router-link class="btn primary auth-success-banner__cta" to="/login">Go to log in</router-link>
-    </div>
-    <template v-else>
-    <h2 class="auth-title"><strong>EMPLOYEE SIGN UP</strong></h2>
-    <p class="signup-step-label" aria-live="polite">
-      <template v-if="signupStep === 1">Personal Information</template>
-      <template v-else-if="signupStep === 2">Employee Information</template>
-      <template v-else>Security</template>
-    </p>
-    <ol class="signup-stepper" aria-label="Sign up progress">
-      <li :class="{ 'signup-stepper__dot--active': signupStep >= 1 }" class="signup-stepper__dot" />
-      <li :class="{ 'signup-stepper__dot--active': signupStep >= 2 }" class="signup-stepper__dot" />
-      <li :class="{ 'signup-stepper__dot--active': signupStep >= 3 }" class="signup-stepper__dot" />
-    </ol>
-    <form class="auth-form signup-form-steps" @submit.prevent="onSubmit">
+      <ol class="signup-stepper" aria-label="Sign up progress">
+        <li :class="{ 'signup-stepper__dot--active': signupStep >= 1 }" class="signup-stepper__dot" />
+        <li :class="{ 'signup-stepper__dot--active': signupStep >= 2 }" class="signup-stepper__dot" />
+        <li :class="{ 'signup-stepper__dot--active': signupStep >= 3 }" class="signup-stepper__dot" />
+      </ol>
+      <form class="auth-form signup-form-steps" @submit.prevent="onSubmit">
       <div ref="step1Panel" v-show="signupStep === 1" class="signup-step-panel">
         <div class="field"><label for="first_name">FIRST NAME</label><input id="first_name" v-model="form.first_name" type="text" required placeholder="First name" autocomplete="given-name" /></div>
         <div class="field"><label for="last_name">LAST NAME</label><input id="last_name" v-model="form.last_name" type="text" required placeholder="Last name" autocomplete="family-name" /></div>
@@ -261,11 +262,23 @@ async function onSubmit() {
         <button type="button" class="btn btn-outline-secondary" @click="prevSignupStep">Back</button>
         <button type="submit" class="btn primary" :disabled="isLoading">{{ isLoading ? 'Creating…' : 'Sign up' }}</button>
       </div>
-    </form>
-    <p class="footer">Already have an account? <router-link to="/login">Log in</router-link></p>
-    </template>
-  </AuthLayout>
+      </form>
+      <p class="footer">Already have an account? <router-link to="/login">Log in</router-link></p>
+      </template>
+    </AuthLayout>
+  </div>
 </template>
+<style>
+.signup-view .auth-page {
+  background: #c2deff;
+  background: linear-gradient(260deg, rgba(194, 222, 255, 1) 0%, rgba(255, 217, 217, 1) 100%);
+}
+
+body.dark-mode .signup-view .auth-page {
+  background: #122c4a;
+  background: linear-gradient(260deg, rgba(18, 44, 74, 1) 0%, rgba(74, 16, 16, 1) 100%);
+}
+</style>
 <style scoped>
 .signup-step-label {
   text-align: center;
