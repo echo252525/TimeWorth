@@ -594,4 +594,21 @@ function isActive(path: string) {
 .nav-label-leave-to {
   opacity: 0;
 }
+
+/* Keep Leaflet UI below the admin sidebar/backdrop. */
+:deep(.leaflet-pane),
+:deep(.leaflet-map-pane),
+:deep(.leaflet-tile-pane),
+:deep(.leaflet-overlay-pane),
+:deep(.leaflet-shadow-pane),
+:deep(.leaflet-marker-pane),
+:deep(.leaflet-tooltip-pane),
+:deep(.leaflet-popup-pane) {
+  z-index: 1;
+}
+:deep(.leaflet-top),
+:deep(.leaflet-bottom),
+:deep(.leaflet-control) {
+  z-index: 10;
+}
 </style>
