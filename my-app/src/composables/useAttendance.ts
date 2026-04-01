@@ -88,6 +88,7 @@ const isLoading = ref(false)
 const error = ref<string | null>(null)
 const todayRecord = computed(() => todayRecords.value.find(r => !r.clock_out) ?? null)
 const completedToday = computed(() => todayRecords.value.filter(r => r.clock_out))
+const OPEN_ROW_FETCH_GRACE_MS = 15000
 
 function msToInterval(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
@@ -186,6 +187,29 @@ export function useAttendance() {
   const isClockedIn = computed(() => !!todayRecord.value?.clock_in && !todayRecord.value?.clock_out)
   const isOnLunch = computed(() => !!todayRecord.value?.lunch_break_start && !todayRecord.value?.lunch_break_end)
   const usedLunchBreak = computed(() => !!(todayRecord.value?.lunch_break_start && todayRecord.value?.lunch_break_end))
+  let attendanceRealtimeChannel: ReturnType<typeof supabase.channel> | null = null
+
+  function closeAttendanceRealtime() {
+    if (attendanceRealtimeChannel) {
+      supabase.removeChannel(attendanceRealtimeChannel)
+      attendanceRealtimeChannel = null
+    }
+  }
+
+  function startAttendanceRealtime(uid: string) {
+    closeAttendanceRealtime()
+    attendanceRealtimeChannel = supabase
+      .channel(`attendance:${uid}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance', filter: `user_id=eq.${uid}` },
+        () => {
+          // Keep attendance state synced across devices/tabs.
+          void fetchToday()
+        }
+      )
+      .subscribe()
+  }
 
   const tick = ref(0)
   let tickInterval: ReturnType<typeof setInterval> | null = null
@@ -231,7 +255,10 @@ export function useAttendance() {
     },
     { immediate: true }
   )
-  onUnmounted(stopTick)
+  onUnmounted(() => {
+    stopTick()
+    closeAttendanceRealtime()
+  })
 
   function formatMs(ms: number) {
     const s = Math.floor(ms / 1000)
@@ -291,11 +318,29 @@ export function useAttendance() {
     // If the range query misses the row (timezone / server lag) or returns before insert is visible,
     // keep the in-memory open session so the timeclock still shows the ticking timer.
     if (prevOpen && !incoming.some((r) => r.attendance_id === prevOpen.attendance_id)) {
-      todayRecords.value = [prevOpen, ...incoming.filter((r) => r.attendance_id !== prevOpen.attendance_id)]
-      return
+      const anchor = prevOpen.updated_at || prevOpen.created_at || prevOpen.clock_in
+      const ageMs = anchor ? Math.max(0, Date.now() - storedToRealInstant(anchor)) : Number.MAX_SAFE_INTEGER
+      if (ageMs <= OPEN_ROW_FETCH_GRACE_MS) {
+        todayRecords.value = [prevOpen, ...incoming.filter((r) => r.attendance_id !== prevOpen.attendance_id)]
+        return
+      }
     }
     todayRecords.value = incoming
   }
+
+  watch(
+    userId,
+    (uid) => {
+      closeAttendanceRealtime()
+      if (!uid) {
+        todayRecords.value = []
+        return
+      }
+      void fetchToday()
+      startAttendanceRealtime(uid)
+    },
+    { immediate: true }
+  )
 
   async function clockIn(workModality: WorkModality, opts?: { branchLocation?: string; locationIn?: string; facialStatus?: string; facialVerificationId?: string; wfhPicUrl?: string }) {
     if (!userId.value) return
