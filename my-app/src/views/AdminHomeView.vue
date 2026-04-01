@@ -504,8 +504,6 @@ onUnmounted(() => {
 
 <template>
   <div class="page">
-    <h1 class="fw-bold">Welcome, Admin {{ adminProfile?.name ?? adminProfile?.email }}.</h1>
-    
     <section class="admin-kpis">
       <div v-if="kpiLoading" class="admin-kpis-loading">Loading…</div>
       <template v-else>
