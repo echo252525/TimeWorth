@@ -96,6 +96,7 @@ const filterStatus = ref<'all' | 'active' | 'not_active'>('all')
 /** Select value: `position_in_company` contains "admin" (case-insensitive). */
 const FILTER_POSITION_ADMIN = '__filter_admin__'
 const filterPosition = ref<string>('all')
+const filterModality = ref<'all' | 'office' | 'wfh'>('all')
 
 const selectedEmployee = ref<Emp | null>(null)
 const profilePictureUrl = ref<string | null>(null)
@@ -257,6 +258,16 @@ function currentWorkModalityLabel(userId: string): string {
   if (!s) return '—'
   // Match app labels: office / wfh
   return s === 'wfh' ? 'WFH' : s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function currentWorkModalityKey(userId: string): 'office' | 'wfh' | null {
+  const p = presenceForUserId(userId)
+  if (p.kind !== 'clocked_in' && p.kind !== 'on_lunch') return null
+  const m = p.activeRecord?.work_modality
+  if (!m) return null
+  const s = String(m).trim().toLowerCase()
+  if (s === 'office' || s === 'wfh') return s
+  return null
 }
 
 function isPendingAccount(e: Emp): boolean {
@@ -506,6 +517,10 @@ const filteredList = computed(() => {
   } else if (filterStatus.value === 'not_active') {
     rows = rows.filter((e) => !isEmployeeActiveToday(e.id))
   }
+  if (filterModality.value !== 'all') {
+    const want = filterModality.value
+    rows = rows.filter((e) => currentWorkModalityKey(e.id) === want)
+  }
   return rows
 })
 
@@ -715,24 +730,6 @@ function formatDate(iso: string | null): string {
             aria-label="Search employees"
           />
         </div>
-        <div class="filters-row">
-          <div class="select-wrap">
-            <select v-model="filterStatus" class="filter-select" aria-label="Filter by status">
-              <option value="all">All</option>
-              <option value="active">Active</option>
-              <option value="not_active">Not active</option>
-            </select>
-            <ChevronDownIcon class="select-chevron" aria-hidden="true" />
-          </div>
-          <div class="select-wrap">
-            <select v-model="filterPosition" class="filter-select" aria-label="Filter by position">
-              <option value="all">All positions</option>
-              <option v-for="p in positionRows" :key="p.position_id" :value="p.title">{{ p.title }}</option>
-              <option :value="FILTER_POSITION_ADMIN">Admin</option>
-            </select>
-            <ChevronDownIcon class="select-chevron" aria-hidden="true" />
-          </div>
-        </div>
       </div>
 
       <!-- Table -->
@@ -743,10 +740,46 @@ function formatDate(iso: string | null): string {
               <tr>
                 <th scope="col">User</th>
                 <th scope="col">Employee ID</th>
-                <th scope="col">Current Work Modality</th>
-                <th class="th-status" scope="col">Status</th>
+                <th class="th-modality" scope="col" @click.stop>
+                  <div class="th-modality-wrap">
+                    <span>Modality</span>
+                    <div class="th-modality-filter">
+                      <select v-model="filterModality" class="filter-select filter-select--in-table" aria-label="Filter by modality">
+                        <option value="all">All</option>
+                        <option value="office">Office</option>
+                        <option value="wfh">WFH</option>
+                      </select>
+                      <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                    </div>
+                  </div>
+                </th>
+                <th class="th-status" scope="col" @click.stop>
+                  <div class="th-status-wrap">
+                    <span>Status</span>
+                    <div class="th-status-filter">
+                      <select v-model="filterStatus" class="filter-select filter-select--in-table" aria-label="Filter by status">
+                        <option value="all">All</option>
+                        <option value="active">Active</option>
+                        <option value="not_active">Not active</option>
+                      </select>
+                      <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                    </div>
+                  </div>
+                </th>
                 <th scope="col">Email</th>
-                <th scope="col">Position</th>
+                <th class="th-position" scope="col" @click.stop>
+                  <div class="th-position-wrap">
+                    <span>Position</span>
+                    <div class="th-position-filter">
+                      <select v-model="filterPosition" class="filter-select filter-select--in-table" aria-label="Filter by position">
+                        <option value="all">All</option>
+                        <option v-for="p in positionRows" :key="p.position_id" :value="p.title">{{ p.title }}</option>
+                        <option :value="FILTER_POSITION_ADMIN">Admin</option>
+                      </select>
+                      <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                    </div>
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1094,6 +1127,66 @@ body.light-mode .kpi-card-positions .kpi-icon {
   width: 1%;
   min-width: 9rem;
   white-space: nowrap;
+}
+.th-status-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+}
+.th-status-filter {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+.th-modality {
+  width: 1%;
+  min-width: 0;
+}
+.th-modality-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+}
+.th-modality-filter {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+.th-position {
+  width: 1%;
+  min-width: 0;
+}
+.th-position-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+}
+.th-position-filter {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+.filter-select--in-table {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border-radius: 6px;
+  opacity: 0;
+  cursor: pointer;
+}
+.select-chevron--in-table {
+  right: 0.35rem;
+  width: 0.95rem;
+  height: 0.95rem;
 }
 .data-row {
   cursor: pointer;
