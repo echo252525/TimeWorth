@@ -1116,6 +1116,84 @@ async function save() {
     grid-area: auto;
   }
 }
+
+/* Mobile spacing tweaks (CSS only) */
+@media (max-width: 640px) {
+  .page-header {
+    margin-bottom: 1rem;
+  }
+  .page-header h1 {
+    font-size: 1.375rem;
+  }
+  .page-desc {
+    font-size: 0.875rem;
+  }
+
+  .card {
+    padding: 1rem;
+    border-radius: 12px;
+  }
+
+  .card-title {
+    margin-bottom: 1rem;
+  }
+
+  .profile-card .profile-row {
+    gap: 0.875rem;
+  }
+
+  .personal-summary {
+    gap: 0.75rem;
+  }
+
+  .personal-card__footer,
+  .security-card__footer,
+  .danger-card__footer {
+    margin-top: 1rem;
+    justify-content: stretch;
+  }
+
+  .form-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .form-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .settings-accent-action-btn,
+  .btn-danger {
+    width: 100%;
+  }
+
+  .modal-overlay {
+    padding: 0.75rem;
+  }
+
+  .modal-header,
+  .modal-body,
+  .modal-footer {
+    padding: 1rem;
+  }
+
+  .modal-body {
+    min-height: 320px;
+  }
+
+  .crop-container,
+  .drop-zone {
+    height: 320px;
+  }
+
+  .crop-guide {
+    font-size: 0.8125rem;
+    padding: 0.45rem 0.75rem;
+  }
+}
 .page-header h1 { margin: 0; font-size: 1.5rem; font-weight: 600; color: var(--text-primary); letter-spacing: -0.02em; }
 .page-desc { margin: 0.25rem 0 0; font-size: 0.9375rem; color: var(--text-tertiary); }
 .loading-state { color: var(--text-tertiary); font-size: 0.9375rem; padding: 2rem 0; }

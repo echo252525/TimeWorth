@@ -1189,6 +1189,61 @@ async function handleCancelFacial() {
   }
 }
 
+/* Mobile spacing tweaks (CSS only) */
+@media (max-width: 767px) {
+  .timeclock-layout {
+    gap: 1rem;
+  }
+
+  .hero-section {
+    max-width: 100%;
+  }
+
+  .hero-title {
+    font-size: 1.5rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .hero-card,
+  .hero-idle {
+    padding: 1rem;
+    border-radius: 14px;
+  }
+
+  .actions {
+    gap: 0.5rem;
+  }
+
+  .actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .modality-toggle {
+    width: 100%;
+  }
+
+  .modality-toggle-btn {
+    min-width: 0;
+    width: 50%;
+    padding: 0.6rem 0.75rem;
+  }
+
+  .map-wrap-wrapper {
+    min-height: 260px;
+    border-radius: 14px;
+  }
+
+  .map-wrap {
+    height: 260px;
+    border-radius: 10px;
+  }
+
+  .map-caption {
+    font-size: 0.6875rem;
+  }
+}
+
 .hero-section {
   min-width: 0;
   max-width: 560px;

@@ -1503,6 +1503,30 @@ times<template>
 
 /* Mobile: allow horizontal scroll for wide tables */
 @media (max-width: 767px) {
+  .top-bar {
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+  .filters {
+    gap: 0.5rem;
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .filter-group {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .filter-select {
+    min-width: 0;
+    width: 100%;
+  }
+  .custom-range-display {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .card-wrap {
+    margin-bottom: 1rem;
+  }
   .table-card {
     overflow-x: auto;
     overflow-y: hidden;
@@ -1512,6 +1536,16 @@ times<template>
   .ts-table {
     width: max-content;
     min-width: 100%;
+  }
+  .ts-table th,
+  .ts-table td {
+    padding: 0.625rem 0.75rem;
+  }
+  .actions {
+    gap: 0.5rem;
+  }
+  .actions .btn {
+    width: 100%;
   }
 }
 .ts-table th {

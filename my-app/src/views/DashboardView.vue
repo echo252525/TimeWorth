@@ -1422,4 +1422,34 @@ body.light-mode .period-option.active {
 body.light-mode .x-axis-label-today {
   color: #0284c7;
 }
+
+/* Extra small-screen spacing tweaks (CSS only) */
+@media (max-width: 767px) {
+  .left {
+    gap: 1rem;
+  }
+
+  .hero-report-row {
+    gap: 1rem;
+  }
+
+  .hero-section-top {
+    padding: 1.5rem 1rem;
+    min-height: 160px;
+    border-radius: 16px;
+  }
+
+  .hero-hours-display {
+    margin: 0.35rem 0;
+  }
+
+  .hero-cta-top {
+    width: 100%;
+    align-self: stretch;
+  }
+
+  .kpi-cards {
+    margin-bottom: 1rem;
+  }
+}
 </style>
