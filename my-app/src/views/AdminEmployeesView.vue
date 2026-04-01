@@ -248,6 +248,17 @@ function tableStatusLabel(userId: string): string {
   }
 }
 
+function currentWorkModalityLabel(userId: string): string {
+  const p = presenceForUserId(userId)
+  if (p.kind !== 'clocked_in' && p.kind !== 'on_lunch') return '—'
+  const m = p.activeRecord?.work_modality
+  if (!m) return '—'
+  const s = String(m).trim().toLowerCase()
+  if (!s) return '—'
+  // Match app labels: office / wfh
+  return s === 'wfh' ? 'WFH' : s.charAt(0).toUpperCase() + s.slice(1)
+}
+
 function isPendingAccount(e: Emp): boolean {
   return e.account_status === 'pending'
 }
@@ -731,6 +742,8 @@ function formatDate(iso: string | null): string {
             <thead>
               <tr>
                 <th scope="col">User</th>
+                <th scope="col">Employee ID</th>
+                <th scope="col">Current Work Modality</th>
                 <th class="th-status" scope="col">Status</th>
                 <th scope="col">Email</th>
                 <th scope="col">Position</th>
@@ -760,6 +773,8 @@ function formatDate(iso: string | null): string {
                     <span class="user-name">{{ e.name }}</span>
                   </div>
                 </td>
+                <td class="td-muted">{{ e.employee_no ?? '—' }}</td>
+                <td class="td-muted">{{ currentWorkModalityLabel(e.id) }}</td>
                 <td class="td-muted td-status">
                   <div class="status-cell-wrap">
                     <span
