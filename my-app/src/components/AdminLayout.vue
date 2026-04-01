@@ -160,19 +160,18 @@ function isActive(path: string) {
 .burger {
   display: none;
   position: fixed;
-  top: 1rem;
-  left: 1rem;
+  top: 0;
+  left: 0;
   z-index: 100;
-  width: 44px;
-  height: 44px;
+  width: 100%;
+  height: 52px;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   cursor: pointer;
-  padding: 0;
+  padding: 0 1rem;
   border: none;
-  background: transparent;
+  background: var(--bg-secondary);
   color: inherit;
-  transition: left 0.3s ease;
 }
 
 .toggle-icon {
@@ -522,11 +521,6 @@ function isActive(path: string) {
 @media (max-width: 767px) {
   .burger {
     display: flex;
-    left: 1rem;
-  }
-
-  .burger.open {
-    left: 216px;
   }
 
   .sidebar {
@@ -537,6 +531,7 @@ function isActive(path: string) {
     width: 260px;
     transform: translateX(-100%);
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3);
+    padding-top: 52px;
   }
 
   .sidebar.mobile-open {
@@ -553,7 +548,7 @@ function isActive(path: string) {
 
   .main {
     margin-left: 0;
-    padding-top: 3rem;
+    padding-top: 52px;
   }
 
   .main-header {
