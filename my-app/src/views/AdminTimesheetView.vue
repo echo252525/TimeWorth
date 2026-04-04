@@ -111,18 +111,39 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
   })
 }
 
-/** Circular clip with object-fit cover, then PNG for jsPDF. */
-function imageToCircularPngDataUrl(img: HTMLImageElement, pixelSize = 512): string {
+/** Rounded-rectangle clip (~5px radius) with object-fit cover for jsPDF letterhead logos. */
+function imageToRoundedLogoPngDataUrl(
+  img: HTMLImageElement,
+  pixelSize = 256,
+  cornerRadiusPx = 5
+): string {
   const canvas = document.createElement('canvas')
   canvas.width = pixelSize
   canvas.height = pixelSize
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('Could not read logo image')
-  const r = pixelSize / 2
+  const rad = Math.min(cornerRadiusPx, pixelSize / 2 - 0.5)
   ctx.clearRect(0, 0, pixelSize, pixelSize)
   ctx.save()
   ctx.beginPath()
-  ctx.arc(r, r, r, 0, Math.PI * 2)
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(0, 0, pixelSize, pixelSize, rad)
+  } else {
+    const x = 0
+    const y = 0
+    const w = pixelSize
+    const h = pixelSize
+    const r = rad
+    ctx.moveTo(x + r, y)
+    ctx.lineTo(x + w - r, y)
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+    ctx.lineTo(x + w, y + h - r)
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+    ctx.lineTo(x + r, y + h)
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+    ctx.lineTo(x, y + r)
+    ctx.quadraticCurveTo(x, y, x + r, y)
+  }
   ctx.closePath()
   ctx.clip()
   const iw = img.naturalWidth
@@ -137,9 +158,9 @@ function imageToCircularPngDataUrl(img: HTMLImageElement, pixelSize = 512): stri
   return canvas.toDataURL('image/png')
 }
 
-async function loadCircularLogoDataUrl(src: string): Promise<string> {
+async function loadRoundedLogoDataUrl(src: string): Promise<string> {
   const img = await loadImageElement(src)
-  return imageToCircularPngDataUrl(img)
+  return imageToRoundedLogoPngDataUrl(img)
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -356,6 +377,14 @@ function buildAttendanceTableBodyFromRows(rows: AttendanceRow[]): string[][] {
   )
 }
 
+/** Letterhead copy for exported PDFs (matches company timesheet template). */
+const PDF_LETTERHEAD = {
+  brand: 'PCWorth',
+  ownedByLabel: 'Owned and Operated by:',
+  legalName: 'DRJ TECHNOLOGIES TRADING CORP.',
+  address: '618 M Earnshaw Street, Sampaloc, Manila, Metro Manila 1008'
+} as const
+
 function createTimesheetPdfDocument(
   emp: EmpLite,
   tableBody: string[][],
@@ -363,59 +392,79 @@ function createTimesheetPdfDocument(
   pcDataUrl: string,
   twDataUrl: string
 ): jsPDF {
-  const pdfTopGapMm = 7
-  const logoSizeMm = 18
-  const logoTopMm = pdfTopGapMm
-  const logoCy = logoTopMm + logoSizeMm / 2
-  const pdfLogoToTitleGapMm = 10
-
+  const marginMm = 14
+  const logoMm = 20
+  const logoTopMm = 8
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
-  doc.addImage(pcDataUrl, 'PNG', 14, logoTopMm, logoSizeMm, logoSizeMm)
-  doc.addImage(twDataUrl, 'PNG', pageW - 14 - logoSizeMm, logoTopMm, logoSizeMm, logoSizeMm)
+  const cx = pageW / 2
 
-  let y = logoCy + logoSizeMm / 2 + pdfLogoToTitleGapMm
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(16)
   doc.setTextColor(0, 0, 0)
-  doc.text('TIMESHEET', 14, y)
+  doc.addImage(pcDataUrl, 'PNG', marginMm, logoTopMm, logoMm, logoMm)
+  doc.addImage(twDataUrl, 'PNG', pageW - marginMm - logoMm, logoTopMm, logoMm, logoMm)
+
+  const addressMaxW = pageW - marginMm * 2 - logoMm * 2 - 8
+  /** Uniform compact baseline step for letterhead (mm). */
+  const letterLineMm = 3.6
+  const titleTopGapMm = 12
+  const titleBottomGapMm = 10
+
+  let hy = logoTopMm + 3
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(12)
+  doc.text(PDF_LETTERHEAD.brand, cx, hy, { align: 'center' })
+  hy += letterLineMm
+
+  doc.setFontSize(9)
+  doc.text(PDF_LETTERHEAD.ownedByLabel, cx, hy, { align: 'center' })
+  hy += letterLineMm
+
+  doc.setFontSize(10)
+  doc.text(PDF_LETTERHEAD.legalName, cx, hy, { align: 'center' })
+  hy += letterLineMm
+
+  doc.setFontSize(8.5)
+  for (const line of doc.splitTextToSize(PDF_LETTERHEAD.address, addressMaxW)) {
+    doc.text(line, cx, hy, { align: 'center' })
+    hy += letterLineMm
+  }
+
+  const headerBottomY = Math.max(logoTopMm + logoMm, hy) + titleTopGapMm
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(14)
+  doc.text('EMPLOYEE TIMESHEET', cx, headerBottomY, { align: 'center' })
+
+  const col1X = marginMm
+  const col2X = cx + 6
+  const empId = emp.employee_no?.trim() || emp.id
+  const position = emp.position_in_company?.trim() || '—'
+  let ey = headerBottomY + titleBottomGapMm
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
-  y += 7
-  doc.text(`Full Name: ${emp.name?.trim() || '—'}`, 14, y)
-  y += 5
-  doc.text('Company Name: PCWorth', 14, y)
-  y += 5
-  doc.text(`Employee Email: ${emp.email?.trim() || '—'}`, 14, y)
-  y += 5
-  doc.text(`Position: ${emp.position_in_company?.trim() || '—'}`, 14, y)
-  y += 5
-  doc.text(`Employee ID: ${emp.employee_no ?? emp.id}`, 14, y)
-  y += 5
-  doc.text(`Date Covered: ${dateCoveredLabel}`, 14, y)
-  y += 6
+  doc.text(`Name: ${emp.name?.trim() || '—'}`, col1X, ey)
+  doc.text(`Position: ${position}`, col2X, ey)
+  ey += 6
+  doc.text(`Email: ${emp.email?.trim() || '—'}`, col1X, ey)
+  doc.text(`Date Covered: ${dateCoveredLabel}`, col2X, ey)
+  ey += 6
+  doc.text(`Employee ID: ${empId}`, col1X, ey)
+
+  const tableStartY = ey + 8
 
   autoTable(doc, {
     head: [
-      [
-        'Date Covered',
-        'Clock in',
-        'Clock out',
-        'Lunch In',
-        'Lunch Out',
-        'Total Hours',
-        'Modality',
-        'Activity'
-      ]
+      ['Date', 'Clock in', 'Clock out', 'Lunch In', 'Lunch Out', 'Total Hours', 'Modality', 'Activity']
     ],
     body: tableBody,
-    startY: y,
-    styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
+    startY: tableStartY,
+    styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', textColor: 0 },
     headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
-    margin: { left: 14, right: 14 },
-    tableWidth: pageW - 28
+    margin: { left: marginMm, right: marginMm },
+    tableWidth: pageW - marginMm * 2
   })
 
   return doc
@@ -433,8 +482,8 @@ async function downloadBulkCurrentMonthPdf() {
     if (!emps.length) return
 
     const [pcDataUrl, twDataUrl] = await Promise.all([
-      loadCircularLogoDataUrl(publicAssetUrl('PCWorthLogo.jpg')),
-      loadCircularLogoDataUrl(publicAssetUrl('TimeWorthLogo.png'))
+      loadRoundedLogoDataUrl(publicAssetUrl('PCWorthLogo.jpg')),
+      loadRoundedLogoDataUrl(publicAssetUrl('TimeWorthLogo.png'))
     ])
 
     const shouldZip = emps.length >= 2
@@ -614,8 +663,8 @@ async function downloadActiveEmployeePdf() {
     if (!boundsPdf) return
 
     const [pcDataUrl, twDataUrl] = await Promise.all([
-      loadCircularLogoDataUrl(publicAssetUrl('PCWorthLogo.jpg')),
-      loadCircularLogoDataUrl(publicAssetUrl('TimeWorthLogo.png'))
+      loadRoundedLogoDataUrl(publicAssetUrl('PCWorthLogo.jpg')),
+      loadRoundedLogoDataUrl(publicAssetUrl('TimeWorthLogo.png'))
     ])
 
     const tableBody = buildAttendanceTableBodyFromRows(historyRows.value)

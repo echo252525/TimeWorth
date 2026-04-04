@@ -20,6 +20,7 @@ const appliedShift = ref<'dayshift' | 'nightshift' | ''>('')
 const employeeName = ref<string | null>(null)
 const employeePosition = ref<string | null>(null)
 const employeeEmail = ref<string | null>(null)
+const employeeNo = ref<string | null>(null)
 
 // Time filter (Undertime, Enough Time, Overtime)
 type TimeFilter = 'all' | 'undertime' | 'enough' | 'overtime'
@@ -250,7 +251,7 @@ async function loadEmployeeData() {
   if (!user.value?.id) return
   const { data } = await supabase
     .from('employee')
-    .select('name, position_in_company, email')
+    .select('name, position_in_company, email, employee_no')
     .eq('id', user.value.id)
     .maybeSingle()
   if (data) {
@@ -258,10 +259,12 @@ async function loadEmployeeData() {
       name: string | null
       position_in_company: string | null
       email: string | null
+      employee_no: string | null
     }
     employeeName.value = row.name
     employeePosition.value = row.position_in_company
     employeeEmail.value = row.email
+    employeeNo.value = row.employee_no
   }
 }
 
@@ -365,18 +368,39 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
   })
 }
 
-/** Circular clip with object-fit cover, then PNG for jsPDF. */
-function imageToCircularPngDataUrl(img: HTMLImageElement, pixelSize = 512): string {
+/** Rounded-rectangle clip (~5px radius) with object-fit cover for jsPDF letterhead logos. */
+function imageToRoundedLogoPngDataUrl(
+  img: HTMLImageElement,
+  pixelSize = 256,
+  cornerRadiusPx = 5
+): string {
   const canvas = document.createElement('canvas')
   canvas.width = pixelSize
   canvas.height = pixelSize
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('Could not read logo image')
-  const r = pixelSize / 2
+  const rad = Math.min(cornerRadiusPx, pixelSize / 2 - 0.5)
   ctx.clearRect(0, 0, pixelSize, pixelSize)
   ctx.save()
   ctx.beginPath()
-  ctx.arc(r, r, r, 0, Math.PI * 2)
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(0, 0, pixelSize, pixelSize, rad)
+  } else {
+    const x = 0
+    const y = 0
+    const w = pixelSize
+    const h = pixelSize
+    const r = rad
+    ctx.moveTo(x + r, y)
+    ctx.lineTo(x + w - r, y)
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+    ctx.lineTo(x + w, y + h - r)
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+    ctx.lineTo(x + r, y + h)
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+    ctx.lineTo(x, y + r)
+    ctx.quadraticCurveTo(x, y, x + r, y)
+  }
   ctx.closePath()
   ctx.clip()
   const iw = img.naturalWidth
@@ -391,9 +415,201 @@ function imageToCircularPngDataUrl(img: HTMLImageElement, pixelSize = 512): stri
   return canvas.toDataURL('image/png')
 }
 
-async function loadCircularLogoDataUrl(src: string): Promise<string> {
+async function loadRoundedLogoDataUrl(src: string): Promise<string> {
   const img = await loadImageElement(src)
-  return imageToCircularPngDataUrl(img)
+  return imageToRoundedLogoPngDataUrl(img)
+}
+
+/** PDF / export: same compact total as AdminTimesheetView. */
+function formatTotalTimeCompact(interval: string | null): string {
+  if (!interval) return '—'
+  const m = interval.match(/^(\d+):(\d+):(\d+)/)
+  if (m) {
+    const [, h, min] = m.map(Number)
+    if (h) return `${h}h ${min}m`
+    return `${min}m`
+  }
+  return interval
+}
+
+/** Same labels as AdminTimesheetView PDF “Activity” column. */
+function attendanceActivityLabel(r: AttendanceRow): string {
+  const v = isTravelFlagged(r)
+  return v === 'travel'
+    ? 'Suspicious location activity'
+    : v === 'possible_travel'
+      ? 'Possible suspicious location activity'
+      : '—'
+}
+
+function safeFileSlug(s: string): string {
+  return (
+    s
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, '')
+      .replace(/\s+/g, '-')
+      .slice(0, 80) || 'timesheet'
+  )
+}
+
+interface TimesheetPdfEmp {
+  id: string
+  name: string | null
+  email: string | null
+  position_in_company: string | null
+  employee_no: string | null
+}
+
+/** Letterhead copy for exported PDFs (matches AdminTimesheetView). */
+const PDF_LETTERHEAD = {
+  brand: 'PCWorth',
+  ownedByLabel: 'Owned and Operated by:',
+  legalName: 'DRJ TECHNOLOGIES TRADING CORP.',
+  address: '618 M Earnshaw Street, Sampaloc, Manila, Metro Manila 1008'
+} as const
+
+function buildPdfTableBodyFromRows(rows: AttendanceRow[]): string[][] {
+  const map: Record<
+    string,
+    Array<{
+      date: string
+      clockIn: string
+      clockOut: string
+      lunchIn: string
+      lunchOut: string
+      total: string
+      modality: string
+      travel: string
+    }>
+  > = {}
+
+  for (const r of rows) {
+    const dateKey = r.clock_in ? getLocalDateString(new Date(storedToRealInstant(r.clock_in))) : '—'
+    if (!map[dateKey]) map[dateKey] = []
+    map[dateKey].push({
+      date: dateKey,
+      clockIn: formatTime12hApmFromStored(r.clock_in),
+      clockOut: formatTime12hApmFromStored(r.clock_out),
+      lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
+      lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
+      total: formatTotalTimeCompact(r.total_time),
+      modality: r.work_modality ? String(r.work_modality).toLowerCase() : '—',
+      travel: attendanceActivityLabel(r)
+    })
+  }
+
+  const flat: Array<[string, string, string, string, string, string, string, string]> = []
+  for (const [dateKey, groupRows] of Object.entries(map).sort(([a], [b]) =>
+    a === '—' ? 1 : b === '—' ? -1 : new Date(b).getTime() - new Date(a).getTime()
+  )) {
+    for (const r of groupRows) {
+      flat.push([
+        dateKey,
+        r.clockIn,
+        r.clockOut,
+        r.lunchIn,
+        r.lunchOut,
+        r.total,
+        r.modality,
+        r.travel
+      ])
+    }
+  }
+
+  return flat.map(([date, clockIn, clockOut, lunchIn, lunchOut, total, modality, travel]) => [
+    date,
+    clockIn,
+    clockOut,
+    lunchIn,
+    lunchOut,
+    total,
+    modality,
+    travel
+  ])
+}
+
+function createTimesheetPdfDocument(
+  emp: TimesheetPdfEmp,
+  tableBody: string[][],
+  dateCoveredLabel: string,
+  pcDataUrl: string,
+  twDataUrl: string
+): jsPDF {
+  const marginMm = 14
+  const logoMm = 20
+  const logoTopMm = 8
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+  const cx = pageW / 2
+
+  doc.setTextColor(0, 0, 0)
+  doc.addImage(pcDataUrl, 'PNG', marginMm, logoTopMm, logoMm, logoMm)
+  doc.addImage(twDataUrl, 'PNG', pageW - marginMm - logoMm, logoTopMm, logoMm, logoMm)
+
+  const addressMaxW = pageW - marginMm * 2 - logoMm * 2 - 8
+  const letterLineMm = 3.6
+  const titleTopGapMm = 12
+  const titleBottomGapMm = 10
+
+  let hy = logoTopMm + 3
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(12)
+  doc.text(PDF_LETTERHEAD.brand, cx, hy, { align: 'center' })
+  hy += letterLineMm
+
+  doc.setFontSize(9)
+  doc.text(PDF_LETTERHEAD.ownedByLabel, cx, hy, { align: 'center' })
+  hy += letterLineMm
+
+  doc.setFontSize(10)
+  doc.text(PDF_LETTERHEAD.legalName, cx, hy, { align: 'center' })
+  hy += letterLineMm
+
+  doc.setFontSize(8.5)
+  for (const line of doc.splitTextToSize(PDF_LETTERHEAD.address, addressMaxW)) {
+    doc.text(line, cx, hy, { align: 'center' })
+    hy += letterLineMm
+  }
+
+  const headerBottomY = Math.max(logoTopMm + logoMm, hy) + titleTopGapMm
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(14)
+  doc.text('EMPLOYEE TIMESHEET', cx, headerBottomY, { align: 'center' })
+
+  const col1X = marginMm
+  const col2X = cx + 6
+  const empId = emp.employee_no?.trim() || emp.id
+  const position = emp.position_in_company?.trim() || '—'
+  let ey = headerBottomY + titleBottomGapMm
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  doc.text(`Name: ${emp.name?.trim() || '—'}`, col1X, ey)
+  doc.text(`Position: ${position}`, col2X, ey)
+  ey += 6
+  doc.text(`Email: ${emp.email?.trim() || '—'}`, col1X, ey)
+  doc.text(`Date Covered: ${dateCoveredLabel}`, col2X, ey)
+  ey += 6
+  doc.text(`Employee ID: ${empId}`, col1X, ey)
+
+  const tableStartY = ey + 8
+
+  autoTable(doc, {
+    head: [
+      ['Date', 'Clock in', 'Clock out', 'Lunch In', 'Lunch Out', 'Total Hours', 'Modality', 'Activity']
+    ],
+    body: tableBody,
+    startY: tableStartY,
+    styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', textColor: 0 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    margin: { left: marginMm, right: marginMm },
+    tableWidth: pageW - marginMm * 2
+  })
+
+  return doc
 }
 
 async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
@@ -790,7 +1006,7 @@ const dayGroups = computed(() => {
       lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
       total: formatTotalTime(r.total_time),
       modality: r.work_modality ? r.work_modality.toLowerCase() : '—',
-      travel: isTravelFlagged(r) === 'travel' ? 'Suspicious location activity' : isTravelFlagged(r) === 'possible_travel' ? 'Possible suspicious location activity' : '—',
+      travel: attendanceActivityLabel(r),
       branch: branch?.name ?? '—',
       raw: r
     })
@@ -838,21 +1054,14 @@ const exportRows = computed(() => {
 })
 
 async function downloadPDF() {
-  /** Space from the top of the page to the logos (mm). Increase for more top margin. */
-  const pdfTopGapMm = 7
-  /** Logo width and height on the PDF (mm). */
-  const logoSizeMm = 18
-  const logoTopMm = pdfTopGapMm
-  const logoCy = logoTopMm + logoSizeMm / 2
-  /** Space from bottom of logos to TIMESHEET title baseline (mm). */
-  const pdfLogoToTitleGapMm = 10
+  if (!user.value?.id) return
 
   let pcDataUrl: string
   let twDataUrl: string
   try {
     ;[pcDataUrl, twDataUrl] = await Promise.all([
-      loadCircularLogoDataUrl(publicAssetUrl('PCWorthLogo.jpg')),
-      loadCircularLogoDataUrl(publicAssetUrl('TimeWorthLogo.png'))
+      loadRoundedLogoDataUrl(publicAssetUrl('PCWorthLogo.jpg')),
+      loadRoundedLogoDataUrl(publicAssetUrl('TimeWorthLogo.png'))
     ])
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Could not load PDF logos'
@@ -861,68 +1070,24 @@ async function downloadPDF() {
     return
   }
 
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  const pageW = doc.internal.pageSize.getWidth()
-
-  doc.addImage(pcDataUrl, 'PNG', 14, logoTopMm, logoSizeMm, logoSizeMm)
-  doc.addImage(twDataUrl, 'PNG', pageW - 14 - logoSizeMm, logoTopMm, logoSizeMm, logoSizeMm)
-
-  let y = logoCy + logoSizeMm / 2 + pdfLogoToTitleGapMm
-
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(16)
-  doc.setTextColor(0, 0, 0)
-  doc.text('TIMESHEET', 14, y)
-
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(10)
-  y += 7
-  const fullName = employeeName.value?.trim() || '—'
-  doc.text(`Full Name: ${fullName}`, 14, y)
-  y += 5
-  doc.text('Company Name: PCWorth', 14, y)
-  y += 5
-  const emailLine = employeeEmail.value?.trim() || user.value?.email || '—'
-  doc.text(`Employee Email: ${emailLine}`, 14, y)
-  y += 5
-  doc.text(`Position: ${employeePosition.value?.trim() || '—'}`, 14, y)
-  y += 5
-  doc.text(`Date Covered: ${formatExportTableDateCoveredRange()}`, 14, y)
-  y += 6
-
-  const tableBody = exportRows.value.map(([date, clockIn, clockOut, lunchIn, lunchOut, total, modality]) => [
-    date,
-    clockIn,
-    clockOut,
-    lunchIn,
-    lunchOut,
-    total,
-    modality,
-    '—'
-  ])
-
-  autoTable(doc, {
-    head: [
-      [
-        'Date Covered',
-        'Clock in',
-        'Clock out',
-        'Lunch In',
-        'Lunch Out',
-        'Total Hours',
-        'Modality',
-        'Activity'
-      ]
-    ],
-    body: tableBody,
-    startY: y,
-    styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7 },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-    margin: { left: 14, right: 14 },
-    tableWidth: pageW - 28
-  })
-  doc.save(`timesheet-${new Date().toISOString().slice(0, 10)}.pdf`)
+  const tableBody = buildPdfTableBodyFromRows(filteredRows.value)
+  const emp: TimesheetPdfEmp = {
+    id: user.value.id,
+    name: employeeName.value,
+    email: employeeEmail.value ?? user.value.email ?? null,
+    position_in_company: employeePosition.value,
+    employee_no: employeeNo.value
+  }
+  const doc = createTimesheetPdfDocument(
+    emp,
+    tableBody,
+    formatExportTableDateCoveredRange(),
+    pcDataUrl,
+    twDataUrl
+  )
+  const today = new Date().toISOString().slice(0, 10)
+  const nameSlug = safeFileSlug(employeeName.value || user.value.email || 'timesheet')
+  doc.save(`timesheet-${nameSlug}-${today}.pdf`)
 }
 
 function toggleRowExpansion(dateKey: string) {
@@ -1081,13 +1246,14 @@ async function confirmEditRequest() {
   }
 }
 </script>
-times<template>
+
+<template>
   <div class="page">
-    <div class="top-bar">
-      <div class="filters">
-        <label class="filter-group">
-          <span class="filter-label">Date:</span>
-          <select v-model="dateFilter" class="filter-select" aria-label="Date filter">
+    <section class="controls" aria-label="Timesheet filters">
+      <div class="controls-row">
+        <label class="control">
+          <span class="control-label">Date</span>
+          <select v-model="dateFilter" class="control-input" aria-label="Date filter">
             <option value="today">Today</option>
             <option value="yesterday">Yesterday</option>
             <option value="last7Days">Last 7 Days</option>
@@ -1098,44 +1264,45 @@ times<template>
         <span v-if="dateFilter === 'custom' && formatDateRange()" class="custom-range-display">
           {{ formatDateRange() }}
         </span>
-        <label class="filter-group">
-          <span class="filter-label">Time:</span>
-          <select v-model="timeFilter" class="filter-select" aria-label="Time filter">
+        <label class="control">
+          <span class="control-label">Time</span>
+          <select v-model="timeFilter" class="control-input" aria-label="Time filter">
             <option value="all">All</option>
             <option value="undertime">Undertime</option>
             <option value="enough">In Time</option>
             <option value="overtime">Overtime</option>
           </select>
         </label>
-        <label class="filter-group">
-          <span class="filter-label">Modality:</span>
-          <select v-model="modalityFilter" class="filter-select" aria-label="Modality filter">
+        <label class="control">
+          <span class="control-label">Modality</span>
+          <select v-model="modalityFilter" class="control-input" aria-label="Modality filter">
             <option value="all">All</option>
             <option value="office">Office</option>
             <option value="wfh">WFH</option>
           </select>
         </label>
       </div>
-      <div class="filters">
+      <div class="controls-row controls-row-toggles">
         <label class="filter-check">
           <input v-model="showTimes" type="checkbox" class="filter-check-input" />
           <span class="filter-check-box"></span>
-          <span class="filter-check-label">Time</span>
+          <span class="filter-check-label">Show time columns</span>
         </label>
         <label class="filter-check">
           <input v-model="showBreaks" type="checkbox" class="filter-check-input" />
           <span class="filter-check-box"></span>
-          <span class="filter-check-label">Breaks</span>
+          <span class="filter-check-label">Show breaks</span>
         </label>
       </div>
-    </div>
+    </section>
 
-    <p v-if="error" class="error-msg">{{ error }}</p>
-    <div v-if="isLoading" class="loading-msg">Loading…</div>
+    <p v-if="error" class="banner-error">{{ error }}</p>
+    <div v-if="isLoading" class="loading-state">Loading…</div>
 
     <div v-else class="card-wrap">
       <div class="table-card">
-        <table class="ts-table">
+        <div class="table-scroll">
+        <table class="data-table ts-table">
           <thead>
             <tr>
               <th>Date</th>
@@ -1259,12 +1426,15 @@ times<template>
             </template>
           </tbody>
         </table>
+        </div>
       </div>
-      <p v-if="!tableRows.length" class="empty-msg">No attendance records found.</p>
+      <p v-if="!tableRows.length" class="empty-hint">No attendance records found.</p>
     </div>
 
-    <div class="actions">
-      <button type="button" class="btn btn-primary" :disabled="!dayGroups.length" @click="downloadPDF">Download PDF</button>
+    <div class="table-toolbar">
+      <button type="button" class="btn btn-primary" :disabled="!dayGroups.length" @click="downloadPDF">
+        Download Timesheet
+      </button>
     </div>
 
     <!-- Custom Date Range Modal -->
@@ -1362,86 +1532,115 @@ times<template>
   </div>
 </template>
 <style scoped>
-.page { width: 100%; max-width: 100%; }
-
-.top-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.25rem;
+.page {
+  width: 100%;
+  max-width: 100%;
 }
 
-.filters {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  flex-wrap: wrap;
+/* Match AdminTimesheetView filter panel */
+.controls {
+  margin-bottom: 1rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
 }
-
-.filter-group {
+.controls-row {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+.controls-row-toggles {
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border-color);
   align-items: center;
-  gap: 0.5rem;
+}
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 140px;
+}
+.control-label {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.control-input {
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-size: 0.875rem;
 }
-.filter-label {
-  font-weight: 500;
-  color: var(--text-primary, #334155);
+.control-input:focus {
+  outline: none;
+  border-color: var(--accent, #0d9488);
+}
+
+.banner-error {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--error, #f87171);
+  border: 1px solid rgba(248, 113, 113, 0.18);
+}
+.loading-state {
+  padding: 1.25rem 1rem;
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+}
+
+.table-card {
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.data-table th {
+  text-align: left;
+  padding: 0.75rem 1rem;
+  color: var(--text-tertiary);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
 }
-.filter-select {
-  padding: 0.4rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  background: var(--bg-secondary, #f8fafc);
-  color: var(--text-primary, #1e293b);
-  font-size: 0.875rem;
-  cursor: pointer;
-  min-width: 120px;
-  transition: all 0.3s ease;
-  position: relative;
+.data-table td {
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: top;
 }
-.filter-select:hover {
-  border-color: var(--accent, #0d9488);
-  background: var(--bg-primary, #fff);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+.data-table .ts-row:last-child td {
+  border-bottom: none;
 }
-.filter-select:focus {
-  outline: none;
-  border-color: var(--accent, #0d9488);
-  background: var(--bg-primary, #fff);
-  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1);
+
+.empty-hint {
+  margin: 0;
+  padding: 0.75rem;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 0.8125rem;
 }
-.filter-select option {
-  padding: 0.5rem;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #1e293b);
-  animation: fadeIn 0.2s ease;
-}
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.filter-date {
-  padding: 0.4rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  background: var(--bg-secondary, #f8fafc);
-  color: var(--text-primary, #1e293b);
-  font-size: 0.875rem;
-  cursor: pointer;
-}
-.filter-date:focus {
-  outline: none;
-  border-color: var(--accent, #0d9488);
+
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
 }
 
 .filter-check {
@@ -1482,81 +1681,47 @@ times<template>
   font-weight: 500;
 }
 
-.error-msg { color: #dc2626; font-size: 0.875rem; margin: 0 0 1rem; }
-.loading-msg { color: var(--text-tertiary, #64748b); font-size: 0.9375rem; padding: 2rem 0; }
-.empty-msg { color: var(--text-tertiary, #64748b); font-size: 0.9375rem; margin-top: 1rem; }
-
-.card-wrap { margin-bottom: 1.5rem; }
-.table-card {
-  background: var(--bg-primary, #fff);
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-  overflow: hidden;
+.card-wrap {
+  margin-bottom: 0.5rem;
 }
 
-.ts-table {
-  width: 100%;
-  border-collapse: collapse;
+.ts-table.ts-table {
   font-size: 0.875rem;
 }
 
 /* Mobile: allow horizontal scroll for wide tables */
 @media (max-width: 767px) {
-  .top-bar {
-    gap: 0.75rem;
-    margin-bottom: 0.75rem;
-  }
-  .filters {
-    gap: 0.5rem;
-    width: 100%;
-    justify-content: flex-start;
-  }
-  .filter-group {
-    width: 100%;
-    justify-content: space-between;
-  }
-  .filter-select {
+  .controls-row .control {
     min-width: 0;
-    width: 100%;
+    flex: 1 1 100%;
   }
   .custom-range-display {
     width: 100%;
     box-sizing: border-box;
   }
   .card-wrap {
-    margin-bottom: 1rem;
+    margin-bottom: 0.5rem;
   }
-  .table-card {
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-    max-width: 100%;
-  }
-  .ts-table {
+  .data-table.ts-table {
     width: max-content;
     min-width: 100%;
   }
-  .ts-table th,
-  .ts-table td {
+  .data-table.ts-table th,
+  .data-table.ts-table td {
     padding: 0.625rem 0.75rem;
   }
-  .actions {
-    gap: 0.5rem;
-  }
-  .actions .btn {
+  .table-toolbar .btn {
     width: 100%;
+    justify-content: center;
   }
 }
-.ts-table th {
-  text-align: left;
-  padding: 0.75rem 1rem;
-  background: var(--bg-secondary, #f1f5f9);
-  color: var(--text-secondary, #475569);
-  font-weight: 600;
+
+.ts-table td {
+  color: var(--text-primary);
 }
-.ts-table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-color, #e2e8f0); color: var(--text-primary, #1e293b); }
-.ts-row:last-child { border-bottom: none; }
+.ts-row:last-child td {
+  border-bottom: none;
+}
 .ts-date { font-weight: 500; }
 .ts-date-content {
   display: flex;
@@ -1748,21 +1913,43 @@ times<template>
   color: #b45309;
 }
 
-.actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
-.btn { padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; transition: opacity 0.2s; }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-primary { background: var(--accent, #0d9488); color: #fff; }
-.btn-secondary { background: var(--bg-secondary, #e2e8f0); color: var(--text-primary, #334155); }
-.btn-secondary:hover:not(:disabled) { opacity: 0.9; }
-.btn-primary:hover:not(:disabled) { opacity: 0.92; }
+.btn {
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.2s;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--accent, #0d9488);
+  color: #fff;
+}
+.btn-secondary {
+  background: var(--bg-secondary, #e2e8f0);
+  color: var(--text-primary, #334155);
+}
+.btn-secondary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.92;
+}
 
 .custom-range-display {
-  font-size: 0.875rem;
-  color: var(--text-primary, #334155);
-  font-weight: 500;
-  padding: 0.4rem 0.75rem;
-  background: var(--bg-secondary, #f1f5f9);
-  border-radius: 6px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  align-self: flex-end;
 }
 
 .wfh-photo-btn {
@@ -1812,21 +1999,20 @@ times<template>
 
 .modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  padding: 1rem;
+  z-index: 2147483647;
+  background: rgba(0, 0, 0, 0.45);
 }
 
 .modal-content {
-  background: var(--bg-primary, #fff);
-  border-radius: 12px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
   width: 90%;
   max-width: 500px;
   max-height: 90vh;
@@ -1837,35 +2023,35 @@ times<template>
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .modal-title {
   margin: 0;
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: var(--text-primary, #1e293b);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .modal-close {
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  color: var(--text-secondary, #64748b);
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   cursor: pointer;
-  padding: 0;
-  width: 32px;
-  height: 32px;
+  font-size: 22px;
+  line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  transition: background 0.2s;
+  transition: opacity 0.2s;
 }
 
 .modal-close:hover {
-  background: var(--bg-secondary, #f1f5f9);
+  opacity: 0.9;
 }
 
 .modal-body {
@@ -1892,10 +2078,10 @@ times<template>
 
 .date-picker-input {
   padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #1e293b);
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-size: 0.875rem;
   cursor: pointer;
 }
@@ -1907,10 +2093,10 @@ times<template>
 
 .date-picker-textarea {
   padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid var(--border-color, #e2e8f0);
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #1e293b);
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-size: 0.875rem;
   resize: vertical;
 }
