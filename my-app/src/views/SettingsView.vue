@@ -838,7 +838,7 @@ async function save() {
         <div v-if="!showPersonalInfoForm" class="personal-card__footer">
           <button type="button" class="btn settings-accent-action-btn" @click="startEditPersonalInfo">
             <span class="material-symbols-outlined" aria-hidden="true">person_edit</span>
-            Edit personal information
+            Edit
           </button>
         </div>
         <div v-else class="personal-card__footer">
@@ -904,7 +904,7 @@ async function save() {
                   </button>
                 </div>
               </div>
-              <div class="field password-form__field">
+              <div class="field password-form__field password-form__field--full">
                 <label for="newPassword">New password</label>
                 <div class="input-with-icon">
                   <input
@@ -934,7 +934,7 @@ async function save() {
                   </button>
                 </div>
               </div>
-              <div class="field password-form__field">
+              <div class="field password-form__field password-form__field--full">
                 <label for="confirmPassword">Confirm new password</label>
                 <div class="input-with-icon">
                   <input

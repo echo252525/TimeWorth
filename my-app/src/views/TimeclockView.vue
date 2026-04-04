@@ -879,6 +879,15 @@ watch(
 function fmtStored(t: string | null) {
   return t ? new Date(storedToRealInstant(t)).toLocaleTimeString() : '—'
 }
+
+/** UI label for `work_modality` (DB stores lowercase e.g. wfh). */
+function formatWorkModalityLabel(m: string | null | undefined): string {
+  if (m == null || m === '') return '—'
+  const v = String(m).trim().toLowerCase()
+  if (v === 'wfh') return 'WFH'
+  if (v === 'office') return 'Office'
+  return String(m).trim()
+}
 function formatTotalTime(interval: string | null) {
   if (!interval) return '—'
   const timeMatch = interval.match(/^(\d+):(\d+):(\d+)/)
@@ -958,7 +967,7 @@ async function handleCancelFacial() {
                     <p class="muted sub">Work: {{ liveElapsedDisplay }}</p>
                   </template>
                   <template v-else>
-                    <p class="muted hero-sub clocked-hero-label">Working · {{ todayRecord.work_modality ?? '—' }}</p>
+                    <p class="muted hero-sub clocked-hero-label">Working · {{ formatWorkModalityLabel(todayRecord.work_modality) }}</p>
                     <div class="timer timer-hero-main" aria-live="polite">{{ liveElapsedDisplay }}</div>
                     <p class="muted clocked-hero-meta">In at {{ fmtStored(todayRecord.clock_in) }}</p>
                   </template>
@@ -1088,7 +1097,7 @@ async function handleCancelFacial() {
             <div v-if="completedToday.length" class="completed-list">
               <p class="muted small">Today</p>
               <div v-for="r in completedToday" :key="r.attendance_id" class="completed-row">
-                {{ fmtStored(r.clock_in) }} – {{ fmtStored(r.clock_out) }} · {{ formatTotalTime(r.total_time) }} · {{ r.work_modality ?? '—' }}
+                {{ fmtStored(r.clock_in) }} – {{ fmtStored(r.clock_out) }} · {{ formatTotalTime(r.total_time) }} · {{ formatWorkModalityLabel(r.work_modality) }}
               </div>
             </div>
           </div>

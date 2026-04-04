@@ -1771,7 +1771,7 @@ async function confirmEditRequest() {
                               @click.stop="openWfhPhotoModal(entry.wfh_pic_url)"
                             >
                               <PhotoIcon class="wfh-photo-icon" />
-                              <span>View photo</span>
+                              <span>View</span>
                             </button>
                             <span v-else class="ts-entry-value">—</span>
                           </div>
