@@ -193,7 +193,9 @@ function formatDate(iso: string) {
 <style scoped>
 .page {
   width: 100%;
-  max-width: 960px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .page h1 {
   margin: 0 0 0.5rem;
