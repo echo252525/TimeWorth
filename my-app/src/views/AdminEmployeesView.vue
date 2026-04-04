@@ -131,6 +131,26 @@ let hoverTickTimer: ReturnType<typeof setInterval> | null = null
 let attendanceRefreshTimer: ReturnType<typeof setInterval> | null = null
 let leaveHoverTimer: ReturnType<typeof setTimeout> | null = null
 
+function parseIntervalToSeconds(interval: string | null | undefined): number {
+  if (!interval) return 0
+  const m = interval.match(/^(\d+):(\d+):(\d+)/)
+  if (m) {
+    const [, h, min, sec] = m.map(Number)
+    return (h || 0) * 3600 + (min || 0) * 60 + (sec || 0)
+  }
+  return 0
+}
+
+/** Display total seconds as e.g. "142h 35m" for KPI. */
+function formatSecondsAsHoursCompact(sec: number): string {
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  if (h === 0 && m === 0) return '0h'
+  if (h === 0) return `${m}m`
+  if (m === 0) return `${h}h`
+  return `${h}h ${m}m`
+}
+
 function formatElapsedMs(ms: number): string {
   const s = Math.floor(ms / 1000)
   const h = Math.floor(s / 3600)
@@ -486,6 +506,129 @@ watch(
 )
 
 
+const topHoursThisMonth = ref<{ name: string; seconds: number } | null>(null)
+const bottomHoursThisMonth = ref<{ name: string; seconds: number } | null>(null)
+const monthHoursLoading = ref(false)
+
+const currentMonthLabelShort = computed(() =>
+  new Date().toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+)
+
+const topHoursValueDisplay = computed(() => {
+  if (monthHoursLoading.value) return '…'
+  const t = topHoursThisMonth.value
+  if (!t || t.seconds <= 0) return '—'
+  return formatSecondsAsHoursCompact(t.seconds)
+})
+
+const bottomHoursValueDisplay = computed(() => {
+  if (monthHoursLoading.value) return '…'
+  const b = bottomHoursThisMonth.value
+  if (!b) return '—'
+  return formatSecondsAsHoursCompact(b.seconds)
+})
+
+const showLeastHoursThisMonth = computed(
+  () => !monthHoursLoading.value && !!topHoursThisMonth.value && !!bottomHoursThisMonth.value
+)
+
+const mostHoursKpiCardTitle = computed(() => {
+  if (monthHoursLoading.value) return undefined
+  const t = topHoursThisMonth.value
+  if (!t || t.seconds <= 0) return undefined
+  return `${t.name}: ${formatSecondsAsHoursCompact(t.seconds)} logged this month (most)`
+})
+
+const leastHoursKpiCardTitle = computed(() => {
+  if (monthHoursLoading.value) return undefined
+  const b = bottomHoursThisMonth.value
+  if (!b) return undefined
+  return `${b.name}: ${formatSecondsAsHoursCompact(b.seconds)} logged this month (least)`
+})
+
+async function loadMonthHoursLeader() {
+  const ids = list.value.map((e) => e.id)
+  if (!ids.length) {
+    topHoursThisMonth.value = null
+    bottomHoursThisMonth.value = null
+    return
+  }
+  monthHoursLoading.value = true
+  try {
+    const now = new Date()
+    const y = now.getFullYear()
+    const mo = now.getMonth()
+    const monthStart = new Date(y, mo, 1)
+    const monthEnd = new Date(y, mo + 1, 0)
+    const startDay = getLocalDateString(monthStart)
+    const endDay = getLocalDateString(monthEnd)
+    const start = `${startDay}T00:00:00.000Z`
+    const end = `${endDay}T23:59:59.999Z`
+
+    const { data, error: qErr } = await supabase
+      .from('attendance')
+      .select('user_id,total_time')
+      .in('user_id', ids)
+      .gte('clock_in', start)
+      .lte('clock_in', end)
+
+    if (qErr) {
+      console.warn('[AdminEmployees] month hours leader', qErr.message)
+      topHoursThisMonth.value = null
+      bottomHoursThisMonth.value = null
+      return
+    }
+
+    const byUser: Record<string, number> = {}
+    for (const id of ids) byUser[id] = 0
+    for (const row of data ?? []) {
+      const uid = (row as { user_id: string }).user_id
+      const tt = (row as { total_time: string | null }).total_time
+      byUser[uid] = (byUser[uid] ?? 0) + parseIntervalToSeconds(tt)
+    }
+
+    let bestId: string | null = null
+    let bestSec = 0
+    let worstId: string | null = null
+    let worstSec = Infinity
+    for (const id of ids) {
+      const t = byUser[id] ?? 0
+      if (t > bestSec) {
+        bestSec = t
+        bestId = id
+      }
+      if (t < worstSec) {
+        worstSec = t
+        worstId = id
+      }
+    }
+
+    if (!bestId || bestSec <= 0) {
+      topHoursThisMonth.value = null
+      bottomHoursThisMonth.value = null
+      return
+    }
+
+    const emp = list.value.find((e) => e.id === bestId)
+    topHoursThisMonth.value = {
+      name: emp?.name?.trim() || 'Employee',
+      seconds: bestSec
+    }
+
+    if (ids.length < 2 || !worstId || worstId === bestId) {
+      bottomHoursThisMonth.value = null
+    } else {
+      const empLo = list.value.find((e) => e.id === worstId)
+      bottomHoursThisMonth.value = {
+        name: empLo?.name?.trim() || 'Employee',
+        seconds: worstSec
+      }
+    }
+  } finally {
+    monthHoursLoading.value = false
+  }
+}
+
 const totalPeople = computed(() => list.value.length)
 const totalDepartments = computed(() => {
   if (positionRows.value.length) return positionRows.value.length
@@ -567,13 +710,15 @@ async function loadEmployees() {
   for (const [id, url] of entries) map[id] = url
   avatarUrls.value = map
   await loadAttendanceSnapshot()
+  await loadMonthHoursLeader()
 }
 
 onMounted(() => {
   void loadPositions()
   loadEmployees()
   attendanceRefreshTimer = setInterval(() => {
-    loadAttendanceSnapshot()
+    void loadAttendanceSnapshot()
+    void loadMonthHoursLeader()
   }, 45000)
 })
 
@@ -706,7 +851,7 @@ function formatDate(iso: string | null): string {
             <span class="material-symbols-outlined kpi-icon">person</span>
           </div>
           <div class="kpi-value">{{ totalPeople }}</div>
-          <div class="kpi-label">People</div>
+          <div class="kpi-label">Employees</div>
         </div>
         <div class="kpi-card kpi-card-positions">
           <div class="kpi-icon-wrap" aria-hidden="true">
@@ -714,6 +859,26 @@ function formatDate(iso: string | null): string {
           </div>
           <div class="kpi-value">{{ totalDepartments }}</div>
           <div class="kpi-label">Positions</div>
+        </div>
+        <div class="kpi-card kpi-card-hours" :title="mostHoursKpiCardTitle">
+          <div class="kpi-icon-wrap" aria-hidden="true">
+            <span class="material-symbols-outlined kpi-icon">schedule</span>
+          </div>
+          <div class="kpi-value">{{ topHoursValueDisplay }}</div>
+          <div class="kpi-label">Most hours ({{ currentMonthLabelShort }})</div>
+          <div v-if="topHoursThisMonth" class="kpi-sub">{{ topHoursThisMonth.name }}</div>
+        </div>
+        <div
+          v-if="showLeastHoursThisMonth"
+          class="kpi-card kpi-card-hours-least"
+          :title="leastHoursKpiCardTitle"
+        >
+          <div class="kpi-icon-wrap" aria-hidden="true">
+            <span class="material-symbols-outlined kpi-icon">timer</span>
+          </div>
+          <div class="kpi-value">{{ bottomHoursValueDisplay }}</div>
+          <div class="kpi-label">Least hours ({{ currentMonthLabelShort }})</div>
+          <div class="kpi-sub">{{ bottomHoursThisMonth?.name }}</div>
         </div>
       </section>
 
@@ -738,7 +903,7 @@ function formatDate(iso: string | null): string {
           <table class="data-table">
             <thead>
               <tr>
-                <th scope="col">User</th>
+                <th scope="col">Name</th>
                 <th scope="col">Employee ID</th>
                 <th class="th-modality" scope="col" @click.stop>
                   <div class="th-modality-wrap">
@@ -953,12 +1118,17 @@ function formatDate(iso: string | null): string {
   margin: 0 0 1rem;
 }
 
-/* KPI */
+/* KPI — 2×2 on narrow viewports; fluid row on wider screens */
 .kpi-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
   margin-bottom: 1.5rem;
+}
+@media (min-width: 900px) {
+  .kpi-row {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  }
 }
 .kpi-card {
   min-width: 0;
@@ -987,11 +1157,23 @@ body.dark-mode .kpi-card {
 .kpi-card-positions .kpi-icon-wrap {
   background: rgba(147, 51, 234, 0.16);
 }
+.kpi-card-hours .kpi-icon-wrap {
+  background: rgba(249, 115, 22, 0.2);
+}
 body.light-mode .kpi-card-people .kpi-icon-wrap {
   background: rgba(34, 197, 94, 0.14);
 }
 body.light-mode .kpi-card-positions .kpi-icon-wrap {
   background: rgba(147, 51, 234, 0.12);
+}
+body.light-mode .kpi-card-hours .kpi-icon-wrap {
+  background: rgba(249, 115, 22, 0.14);
+}
+.kpi-card-hours-least .kpi-icon-wrap {
+  background: rgba(14, 165, 233, 0.18);
+}
+body.light-mode .kpi-card-hours-least .kpi-icon-wrap {
+  background: rgba(14, 165, 233, 0.12);
 }
 .kpi-icon {
   font-size: 1.375rem;
@@ -1004,11 +1186,17 @@ body.light-mode .kpi-card-positions .kpi-icon-wrap {
 .kpi-card-positions .kpi-icon {
   color: #c084fc;
 }
+.kpi-card-hours .kpi-icon {
+  color: #fb923c;
+}
 body.light-mode .kpi-card-people .kpi-icon {
   color: #15803d;
 }
 body.light-mode .kpi-card-positions .kpi-icon {
   color: #7c3aed;
+}
+body.light-mode .kpi-card-hours .kpi-icon {
+  color: #c2410c;
 }
 .kpi-value {
   font-size: 2rem;
@@ -1023,6 +1211,14 @@ body.light-mode .kpi-card-positions .kpi-icon {
   color: var(--text-tertiary);
   font-weight: 500;
   letter-spacing: 0.01em;
+}
+.kpi-sub {
+  margin-top: 0.35rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 /* Controls */

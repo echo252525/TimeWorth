@@ -538,9 +538,9 @@ onUnmounted(() => {
       </template>
     </section>
 
-    <h2 class="hero-map-title fw-bold">Employee Locations</h2>
-    <p class="muted intro">View employee locations below.</p>
     <section class="hero-map-section">
+      <h2 class="hero-map-title fw-bold">Employee Locations</h2>
+      <p class="muted intro mb-4">View employee locations below.</p>
       <div class="hero-map-header">
         <div class="hero-map-filters" role="group" aria-label="Map filters">
           <label class="filter-group">
@@ -583,9 +583,17 @@ onUnmounted(() => {
 .muted { color: var(--text-secondary); font-size: 0.9375rem; margin: 0 0 1rem; }
 .intro { margin-bottom: 0.5rem; }
 
-.admin-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
-@media (max-width: 900px) { .admin-kpis { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 480px) { .admin-kpis { grid-template-columns: repeat(2, 1fr); } }
+.admin-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+@media (min-width: 900px) {
+  .admin-kpis {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
 .admin-kpis-loading { grid-column: 1 / -1; text-align: center; color: var(--text-secondary); padding: 1.5rem; }
 .admin-kpi-card { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 14px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; }
 .admin-kpi-icon { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #fff; }
