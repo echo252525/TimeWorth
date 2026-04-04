@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import supabase from '../lib/supabaseClient'
-import { EyeIcon } from '@heroicons/vue/24/outline'
+import { EyeIcon, ChevronDownIcon } from '@heroicons/vue/24/outline'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import JSZip from 'jszip'
@@ -51,6 +51,80 @@ type HistoryDateFilter = 'today' | 'yesterday' | 'last7Days' | 'lastMonth' | 'cu
 const historyDateFilter = ref<HistoryDateFilter>('lastMonth')
 const historyCustomStartDate = ref<string>('')
 const historyCustomEndDate = ref<string>('')
+
+/** Modal date period: chevron + teleported menu (same pattern as TimesheetView table filters) */
+const showHistoryDateDropdown = ref(false)
+const historyDateFilterTriggerRef = ref<HTMLElement | null>(null)
+const historyDateDropdownStyle = ref<Record<string, string>>({})
+/** Above modal overlay (z-index 2147483647) so the menu is visible and clickable */
+const HISTORY_DATE_MENU_Z = '2147483647'
+
+const historyDateFilterLabel = computed(() => {
+  switch (historyDateFilter.value) {
+    case 'today':
+      return 'Today'
+    case 'yesterday':
+      return 'Yesterday'
+    case 'last7Days':
+      return 'Last 7 Days'
+    case 'lastMonth':
+      return 'Last Month'
+    case 'custom':
+      if (historyCustomStartDate.value && historyCustomEndDate.value) {
+        return `${historyCustomStartDate.value} – ${historyCustomEndDate.value}`
+      }
+      return 'Custom Range'
+    default:
+      return 'Last Month'
+  }
+})
+
+function positionHistoryDateDropdown() {
+  const el = historyDateFilterTriggerRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const minW = Math.max(r.width, 180)
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+  const top = r.bottom + 6
+  const spaceBelow = window.innerHeight - top - 8
+  const estimatedH = 280
+  const openUp = spaceBelow < estimatedH && r.top > spaceBelow
+  historyDateDropdownStyle.value = {
+    position: 'fixed',
+    top: openUp ? `${Math.max(8, r.top - 6 - estimatedH)}px` : `${top}px`,
+    left: `${left}px`,
+    minWidth: `${minW}px`,
+    zIndex: HISTORY_DATE_MENU_Z
+  }
+}
+
+function toggleHistoryDateMenu() {
+  showHistoryDateDropdown.value = !showHistoryDateDropdown.value
+  if (showHistoryDateDropdown.value) void nextTick(() => positionHistoryDateDropdown())
+}
+
+function selectHistoryDateFilter(v: HistoryDateFilter) {
+  showHistoryDateDropdown.value = false
+  historyDateFilter.value = v
+}
+
+function handleHistoryDateFilterClickOutside(event: MouseEvent) {
+  if (!showHistoryDateDropdown.value) return
+  const target = event.target as HTMLElement
+  if (target.closest('.history-date-filter-trigger') || target.closest('.history-date-filter-portal')) return
+  showHistoryDateDropdown.value = false
+}
+
+watch(showHistoryDateDropdown, (open) => {
+  if (open) {
+    void nextTick(() => positionHistoryDateDropdown())
+    window.addEventListener('scroll', positionHistoryDateDropdown, true)
+    window.addEventListener('resize', positionHistoryDateDropdown)
+  } else {
+    window.removeEventListener('scroll', positionHistoryDateDropdown, true)
+    window.removeEventListener('resize', positionHistoryDateDropdown)
+  }
+})
 
 function formatTotalTime(interval: string | null): string {
   if (!interval) return '—'
@@ -617,6 +691,7 @@ async function openEmployeeModal(emp: EmpLite) {
 }
 
 function closeEmployeeModal() {
+  showHistoryDateDropdown.value = false
   activeEmployee.value = null
   activeProfileUrl.value = null
   historyRows.value = []
@@ -682,6 +757,13 @@ async function downloadActiveEmployeePdf() {
 
 onMounted(async () => {
   await loadEmployees()
+  document.addEventListener('click', handleHistoryDateFilterClickOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleHistoryDateFilterClickOutside)
+  window.removeEventListener('scroll', positionHistoryDateDropdown, true)
+  window.removeEventListener('resize', positionHistoryDateDropdown)
 })
 </script>
 
@@ -832,16 +914,81 @@ onMounted(async () => {
           <p v-if="historyError" class="banner-error" style="margin-top:0.75rem">{{ historyError }}</p>
 
           <div class="modal-controls">
-            <label class="control">
+            <div class="control control--date-period">
               <span class="control-label">Date</span>
-              <select v-model="historyDateFilter" class="control-input">
-                <option value="today">Today</option>
-                <option value="yesterday">Yesterday</option>
-                <option value="last7Days">Last 7 Days</option>
-                <option value="lastMonth">Last Month</option>
-                <option value="custom">Custom Range</option>
-              </select>
-            </label>
+              <div ref="historyDateFilterTriggerRef" class="ts-filter-trigger-wrap history-date-filter-trigger">
+                <button
+                  type="button"
+                  class="period-btn ts-filter-period-btn"
+                  aria-haspopup="listbox"
+                  :aria-expanded="showHistoryDateDropdown"
+                  :aria-label="`Date range, ${historyDateFilterLabel}`"
+                  @click.stop="toggleHistoryDateMenu"
+                >
+                  <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+                </button>
+                <Teleport to="body">
+                  <div
+                    v-if="showHistoryDateDropdown"
+                    class="history-date-filter-portal ts-filter-dropdown-portal period-dropdown"
+                    :style="historyDateDropdownStyle"
+                    role="listbox"
+                    @click.stop
+                  >
+                    <button
+                      type="button"
+                      class="period-option"
+                      :class="{ active: historyDateFilter === 'today' }"
+                      role="option"
+                      :aria-selected="historyDateFilter === 'today'"
+                      @click="selectHistoryDateFilter('today')"
+                    >
+                      Today
+                    </button>
+                    <button
+                      type="button"
+                      class="period-option"
+                      :class="{ active: historyDateFilter === 'yesterday' }"
+                      role="option"
+                      :aria-selected="historyDateFilter === 'yesterday'"
+                      @click="selectHistoryDateFilter('yesterday')"
+                    >
+                      Yesterday
+                    </button>
+                    <button
+                      type="button"
+                      class="period-option"
+                      :class="{ active: historyDateFilter === 'last7Days' }"
+                      role="option"
+                      :aria-selected="historyDateFilter === 'last7Days'"
+                      @click="selectHistoryDateFilter('last7Days')"
+                    >
+                      Last 7 Days
+                    </button>
+                    <button
+                      type="button"
+                      class="period-option"
+                      :class="{ active: historyDateFilter === 'lastMonth' }"
+                      role="option"
+                      :aria-selected="historyDateFilter === 'lastMonth'"
+                      @click="selectHistoryDateFilter('lastMonth')"
+                    >
+                      Last Month
+                    </button>
+                    <button
+                      type="button"
+                      class="period-option"
+                      :class="{ active: historyDateFilter === 'custom' }"
+                      role="option"
+                      :aria-selected="historyDateFilter === 'custom'"
+                      @click="selectHistoryDateFilter('custom')"
+                    >
+                      Custom Range
+                    </button>
+                  </div>
+                </Teleport>
+              </div>
+            </div>
             <template v-if="historyDateFilter === 'custom'">
               <label class="control">
                 <span class="control-label">Start</span>
@@ -1278,6 +1425,119 @@ onMounted(async () => {
   gap: 0.75rem;
   align-items: flex-end;
 }
+
+.control--date-period {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.ts-filter-trigger-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.ts-filter-period-btn.period-btn {
+  width: auto;
+  min-width: 1.75rem;
+  justify-content: center;
+  padding: 0.35rem;
+  font-size: 0.75rem;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ts-filter-period-btn.period-btn:hover,
+.ts-filter-period-btn.period-btn:focus,
+.ts-filter-period-btn.period-btn:focus-visible,
+.ts-filter-period-btn.period-btn:active {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
+.period-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.period-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+.ts-period-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+}
+
+.period-btn:hover .ts-period-chevron {
+  color: var(--text-primary);
+  transform: translateY(1px);
+}
+
+.ts-filter-dropdown-portal.period-dropdown {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.375rem;
+  background: var(--bg-primary);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  min-width: 150px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.period-option {
+  display: block;
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.period-option:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.period-option.active {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent);
+}
+
 .history-table-card {
   margin-top: 0.75rem;
   border: 1px solid var(--border-light);
@@ -1526,6 +1786,17 @@ onMounted(async () => {
     font-weight: 500;
     border-radius: 8px;
   }
+}
+
+:root.light-mode .ts-filter-dropdown-portal.period-dropdown,
+body.light-mode .ts-filter-dropdown-portal.period-dropdown {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+:root.light-mode .period-option.active,
+body.light-mode .period-option.active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #0284c7;
 }
 </style>
 

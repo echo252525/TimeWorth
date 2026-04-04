@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { ChevronDownIcon } from '@heroicons/vue/24/outline'
 import supabase from '../lib/supabaseClient'
 import { useAuth } from '../composables/useAuth'
@@ -52,6 +52,69 @@ const filterStatus = ref<'all' | EditStatus>('all')
 const filteredRows = computed(() => {
   if (filterStatus.value === 'all') return rows.value
   return rows.value.filter((r) => r.status === filterStatus.value)
+})
+
+/* Status column filter: chevron + teleported menu (same UX as TimesheetView / AdminEmployeesView) */
+const showStatusFilterDropdown = ref(false)
+const statusFilterTriggerRef = ref<HTMLElement | null>(null)
+const statusFilterDropdownStyle = ref<Record<string, string>>({})
+
+const statusFilterLabel = computed(() => {
+  switch (filterStatus.value) {
+    case 'all':
+      return 'All'
+    case 'pending':
+      return 'Pending'
+    case 'approved':
+      return 'Approved'
+    case 'rejected':
+      return 'Rejected'
+    default:
+      return 'All'
+  }
+})
+
+function positionStatusFilterDropdown() {
+  const el = statusFilterTriggerRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const minW = Math.max(r.width, 160)
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+  statusFilterDropdownStyle.value = {
+    position: 'fixed',
+    top: `${r.bottom + 6}px`,
+    left: `${left}px`,
+    minWidth: `${minW}px`,
+    zIndex: '300'
+  }
+}
+
+function toggleStatusFilterMenu() {
+  showStatusFilterDropdown.value = !showStatusFilterDropdown.value
+  if (showStatusFilterDropdown.value) void nextTick(() => positionStatusFilterDropdown())
+}
+
+function selectStatusFilter(v: 'all' | EditStatus) {
+  showStatusFilterDropdown.value = false
+  filterStatus.value = v
+}
+
+function handleStatusFilterClickOutside(event: MouseEvent) {
+  if (!showStatusFilterDropdown.value) return
+  const target = event.target as HTMLElement
+  if (target.closest('.ts-filter-trigger-wrap') || target.closest('.ts-filter-dropdown-portal')) return
+  showStatusFilterDropdown.value = false
+}
+
+watch(showStatusFilterDropdown, (open) => {
+  if (open) {
+    void nextTick(() => positionStatusFilterDropdown())
+    window.addEventListener('scroll', positionStatusFilterDropdown, true)
+    window.addEventListener('resize', positionStatusFilterDropdown)
+  } else {
+    window.removeEventListener('scroll', positionStatusFilterDropdown, true)
+    window.removeEventListener('resize', positionStatusFilterDropdown)
+  }
 })
 
 function formatDateTime(iso: string | null): string {
@@ -201,7 +264,16 @@ function statusClass(s: EditStatus): string {
   return 'status-pill--rejected'
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  document.addEventListener('click', handleStatusFilterClickOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleStatusFilterClickOutside)
+  window.removeEventListener('scroll', positionStatusFilterDropdown, true)
+  window.removeEventListener('resize', positionStatusFilterDropdown)
+})
 </script>
 
 <template>
@@ -227,14 +299,67 @@ onMounted(load)
               <th scope="col" class="th-status" @click.stop>
                 <div class="th-status-wrap">
                   <span>Status</span>
-                  <div class="th-status-filter">
-                    <select v-model="filterStatus" class="filter-select filter-select--in-table" aria-label="Filter by status">
-                      <option value="all">All</option>
-                      <option value="pending">Pending</option>
-                      <option value="approved">Approved</option>
-                      <option value="rejected">Rejected</option>
-                    </select>
-                    <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                  <div ref="statusFilterTriggerRef" class="ts-filter-trigger-wrap">
+                    <button
+                      type="button"
+                      class="period-btn ts-filter-period-btn"
+                      aria-haspopup="listbox"
+                      :aria-expanded="showStatusFilterDropdown"
+                      :aria-label="`Status filter, ${statusFilterLabel}`"
+                      @click.stop="toggleStatusFilterMenu"
+                    >
+                      <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+                    </button>
+                    <Teleport to="body">
+                      <div
+                        v-if="showStatusFilterDropdown"
+                        class="ts-filter-dropdown-portal period-dropdown"
+                        :style="statusFilterDropdownStyle"
+                        role="listbox"
+                        @click.stop
+                      >
+                        <button
+                          type="button"
+                          class="period-option"
+                          :class="{ active: filterStatus === 'all' }"
+                          role="option"
+                          :aria-selected="filterStatus === 'all'"
+                          @click="selectStatusFilter('all')"
+                        >
+                          All
+                        </button>
+                        <button
+                          type="button"
+                          class="period-option"
+                          :class="{ active: filterStatus === 'pending' }"
+                          role="option"
+                          :aria-selected="filterStatus === 'pending'"
+                          @click="selectStatusFilter('pending')"
+                        >
+                          Pending
+                        </button>
+                        <button
+                          type="button"
+                          class="period-option"
+                          :class="{ active: filterStatus === 'approved' }"
+                          role="option"
+                          :aria-selected="filterStatus === 'approved'"
+                          @click="selectStatusFilter('approved')"
+                        >
+                          Approved
+                        </button>
+                        <button
+                          type="button"
+                          class="period-option"
+                          :class="{ active: filterStatus === 'rejected' }"
+                          role="option"
+                          :aria-selected="filterStatus === 'rejected'"
+                          @click="selectStatusFilter('rejected')"
+                        >
+                          Rejected
+                        </button>
+                      </div>
+                    </Teleport>
                   </div>
                 </div>
               </th>
@@ -327,42 +452,6 @@ onMounted(load)
   margin-bottom: 1rem;
   flex-wrap: wrap;
 }
-.filter-label {
-  display: inline-block;
-}
-.filter-select {
-  padding: 0.4rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid var(--border-light);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-  cursor: pointer;
-}
-.filter-select--in-table {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  margin: 0;
-  border-radius: 6px;
-  opacity: 0;
-  cursor: pointer;
-}
-.select-chevron {
-  position: absolute;
-  right: 0.35rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 0.95rem;
-  height: 0.95rem;
-  color: var(--text-tertiary);
-  pointer-events: none;
-}
-.select-chevron--in-table {
-  right: 0.35rem;
-}
 .btn-ghost {
   padding: 0.4rem 0.75rem;
   border-radius: 8px;
@@ -428,12 +517,111 @@ onMounted(load)
   align-items: center;
   justify-content: flex-start;
   gap: 0.4rem;
+  min-width: 0;
 }
-.th-status-filter {
+
+.ts-filter-trigger-wrap {
   position: relative;
-  width: 26px;
-  height: 26px;
+  flex: 0 0 auto;
+}
+
+.ts-filter-period-btn.period-btn {
+  width: auto;
+  min-width: 1.75rem;
+  justify-content: center;
+  padding: 0.35rem;
+  font-size: 0.75rem;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ts-filter-period-btn.period-btn:hover,
+.ts-filter-period-btn.period-btn:focus,
+.ts-filter-period-btn.period-btn:focus-visible,
+.ts-filter-period-btn.period-btn:active {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
+.period-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.period-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+.ts-period-chevron {
   flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+}
+
+.period-btn:hover .ts-period-chevron {
+  color: var(--text-primary);
+  transform: translateY(1px);
+}
+
+.ts-filter-dropdown-portal.period-dropdown {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.375rem;
+  background: var(--bg-primary);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  min-width: 150px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.period-option {
+  display: block;
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.period-option:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.period-option.active {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent);
 }
 .data-table td {
   padding: 0.75rem 1rem;
@@ -525,5 +713,16 @@ onMounted(load)
   color: var(--text-tertiary);
   font-size: 0.875rem;
   margin: 0;
+}
+
+:root.light-mode .ts-filter-dropdown-portal.period-dropdown,
+body.light-mode .ts-filter-dropdown-portal.period-dropdown {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+:root.light-mode .period-option.active,
+body.light-mode .period-option.active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #0284c7;
 }
 </style>

@@ -98,6 +98,158 @@ const FILTER_POSITION_ADMIN = '__filter_admin__'
 const filterPosition = ref<string>('all')
 const filterModality = ref<'all' | 'office' | 'wfh'>('all')
 
+/* Table header filters (same UX as TimesheetView: chevron + teleported menu) */
+const showModalityFilterDropdown = ref(false)
+const showStatusFilterDropdown = ref(false)
+const showPositionFilterDropdown = ref(false)
+const modalityFilterTriggerRef = ref<HTMLElement | null>(null)
+const statusFilterTriggerRef = ref<HTMLElement | null>(null)
+const positionFilterTriggerRef = ref<HTMLElement | null>(null)
+const modalityDropdownStyle = ref<Record<string, string>>({})
+const statusDropdownStyle = ref<Record<string, string>>({})
+const positionDropdownStyle = ref<Record<string, string>>({})
+
+const modalityFilterLabel = computed(() => {
+  switch (filterModality.value) {
+    case 'all':
+      return 'All'
+    case 'office':
+      return 'Office'
+    case 'wfh':
+      return 'WFH'
+    default:
+      return 'All'
+  }
+})
+
+const statusFilterLabel = computed(() => {
+  switch (filterStatus.value) {
+    case 'all':
+      return 'All'
+    case 'active':
+      return 'Active'
+    case 'not_active':
+      return 'Not active'
+    default:
+      return 'All'
+  }
+})
+
+const positionFilterLabel = computed(() => {
+  if (filterPosition.value === 'all') return 'All'
+  if (filterPosition.value === FILTER_POSITION_ADMIN) return 'Admin'
+  return filterPosition.value
+})
+
+function positionModalityDropdown() {
+  const el = modalityFilterTriggerRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const minW = Math.max(r.width, 140)
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+  modalityDropdownStyle.value = {
+    position: 'fixed',
+    top: `${r.bottom + 6}px`,
+    left: `${left}px`,
+    minWidth: `${minW}px`,
+    zIndex: '300'
+  }
+}
+
+function positionStatusDropdown() {
+  const el = statusFilterTriggerRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const minW = Math.max(r.width, 150)
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+  statusDropdownStyle.value = {
+    position: 'fixed',
+    top: `${r.bottom + 6}px`,
+    left: `${left}px`,
+    minWidth: `${minW}px`,
+    zIndex: '300'
+  }
+}
+
+function positionPositionDropdown() {
+  const el = positionFilterTriggerRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const minW = Math.max(r.width, 180)
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+  positionDropdownStyle.value = {
+    position: 'fixed',
+    top: `${r.bottom + 6}px`,
+    left: `${left}px`,
+    minWidth: `${minW}px`,
+    zIndex: '300'
+  }
+}
+
+function repositionOpenEmpFilterDropdowns() {
+  if (showModalityFilterDropdown.value) positionModalityDropdown()
+  if (showStatusFilterDropdown.value) positionStatusDropdown()
+  if (showPositionFilterDropdown.value) positionPositionDropdown()
+}
+
+function closeAllEmpFilterDropdowns() {
+  showModalityFilterDropdown.value = false
+  showStatusFilterDropdown.value = false
+  showPositionFilterDropdown.value = false
+}
+
+function toggleModalityFilterMenu() {
+  const opening = !showModalityFilterDropdown.value
+  showStatusFilterDropdown.value = false
+  showPositionFilterDropdown.value = false
+  showModalityFilterDropdown.value = opening
+  if (opening) void nextTick(() => positionModalityDropdown())
+}
+
+function toggleStatusFilterMenu() {
+  const opening = !showStatusFilterDropdown.value
+  showModalityFilterDropdown.value = false
+  showPositionFilterDropdown.value = false
+  showStatusFilterDropdown.value = opening
+  if (opening) void nextTick(() => positionStatusDropdown())
+}
+
+function togglePositionFilterMenu() {
+  const opening = !showPositionFilterDropdown.value
+  showModalityFilterDropdown.value = false
+  showStatusFilterDropdown.value = false
+  showPositionFilterDropdown.value = opening
+  if (opening) void nextTick(() => positionPositionDropdown())
+}
+
+function selectModalityFilter(v: 'all' | 'office' | 'wfh') {
+  showModalityFilterDropdown.value = false
+  filterModality.value = v
+}
+
+function selectStatusFilter(v: 'all' | 'active' | 'not_active') {
+  showStatusFilterDropdown.value = false
+  filterStatus.value = v
+}
+
+function selectPositionFilter(v: string) {
+  showPositionFilterDropdown.value = false
+  filterPosition.value = v
+}
+
+function handleEmpFilterClickOutside(event: MouseEvent) {
+  const target = event.target as HTMLElement
+  if (target.closest('.ts-filter-trigger-wrap') || target.closest('.ts-filter-dropdown-portal')) return
+  closeAllEmpFilterDropdowns()
+}
+
+const anyEmpFilterMenuOpen = computed(
+  () =>
+    showModalityFilterDropdown.value ||
+    showStatusFilterDropdown.value ||
+    showPositionFilterDropdown.value
+)
+
 const selectedEmployee = ref<Emp | null>(null)
 const profilePictureUrl = ref<string | null>(null)
 const attendanceHistory = ref<AttendanceRecord[]>([])
@@ -681,6 +833,17 @@ watch(
   }
 )
 
+watch(anyEmpFilterMenuOpen, (open) => {
+  if (open) {
+    void nextTick(() => repositionOpenEmpFilterDropdowns())
+    window.addEventListener('scroll', repositionOpenEmpFilterDropdowns, true)
+    window.addEventListener('resize', repositionOpenEmpFilterDropdowns)
+  } else {
+    window.removeEventListener('scroll', repositionOpenEmpFilterDropdowns, true)
+    window.removeEventListener('resize', repositionOpenEmpFilterDropdowns)
+  }
+})
+
 async function loadPositions() {
   const { data, error: err } = await supabase
     .from('position')
@@ -720,6 +883,7 @@ onMounted(() => {
     void loadAttendanceSnapshot()
     void loadMonthHoursLeader()
   }, 45000)
+  document.addEventListener('click', handleEmpFilterClickOutside)
 })
 
 onUnmounted(() => {
@@ -727,6 +891,9 @@ onUnmounted(() => {
   if (leaveHoverTimer) clearTimeout(leaveHoverTimer)
   stopHoverTick()
   destroyMiniMap()
+  document.removeEventListener('click', handleEmpFilterClickOutside)
+  window.removeEventListener('scroll', repositionOpenEmpFilterDropdowns, true)
+  window.removeEventListener('resize', repositionOpenEmpFilterDropdowns)
 })
 
 function openEmployee(e: Emp) {
@@ -908,26 +1075,114 @@ function formatDate(iso: string | null): string {
                 <th class="th-modality" scope="col" @click.stop>
                   <div class="th-modality-wrap">
                     <span>Modality</span>
-                    <div class="th-modality-filter">
-                      <select v-model="filterModality" class="filter-select filter-select--in-table" aria-label="Filter by modality">
-                        <option value="all">All</option>
-                        <option value="office">Office</option>
-                        <option value="wfh">WFH</option>
-                      </select>
-                      <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                    <div ref="modalityFilterTriggerRef" class="ts-filter-trigger-wrap">
+                      <button
+                        type="button"
+                        class="period-btn ts-filter-period-btn"
+                        aria-haspopup="listbox"
+                        :aria-expanded="showModalityFilterDropdown"
+                        :aria-label="`Modality filter, ${modalityFilterLabel}`"
+                        @click.stop="toggleModalityFilterMenu"
+                      >
+                        <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+                      </button>
+                      <Teleport to="body">
+                        <div
+                          v-if="showModalityFilterDropdown"
+                          class="ts-filter-dropdown-portal period-dropdown"
+                          :style="modalityDropdownStyle"
+                          role="listbox"
+                          @click.stop
+                        >
+                          <button
+                            type="button"
+                            class="period-option"
+                            :class="{ active: filterModality === 'all' }"
+                            role="option"
+                            :aria-selected="filterModality === 'all'"
+                            @click="selectModalityFilter('all')"
+                          >
+                            All
+                          </button>
+                          <button
+                            type="button"
+                            class="period-option"
+                            :class="{ active: filterModality === 'office' }"
+                            role="option"
+                            :aria-selected="filterModality === 'office'"
+                            @click="selectModalityFilter('office')"
+                          >
+                            Office
+                          </button>
+                          <button
+                            type="button"
+                            class="period-option"
+                            :class="{ active: filterModality === 'wfh' }"
+                            role="option"
+                            :aria-selected="filterModality === 'wfh'"
+                            @click="selectModalityFilter('wfh')"
+                          >
+                            WFH
+                          </button>
+                        </div>
+                      </Teleport>
                     </div>
                   </div>
                 </th>
                 <th class="th-status" scope="col" @click.stop>
                   <div class="th-status-wrap">
                     <span>Status</span>
-                    <div class="th-status-filter">
-                      <select v-model="filterStatus" class="filter-select filter-select--in-table" aria-label="Filter by status">
-                        <option value="all">All</option>
-                        <option value="active">Active</option>
-                        <option value="not_active">Not active</option>
-                      </select>
-                      <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                    <div ref="statusFilterTriggerRef" class="ts-filter-trigger-wrap">
+                      <button
+                        type="button"
+                        class="period-btn ts-filter-period-btn"
+                        aria-haspopup="listbox"
+                        :aria-expanded="showStatusFilterDropdown"
+                        :aria-label="`Status filter, ${statusFilterLabel}`"
+                        @click.stop="toggleStatusFilterMenu"
+                      >
+                        <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+                      </button>
+                      <Teleport to="body">
+                        <div
+                          v-if="showStatusFilterDropdown"
+                          class="ts-filter-dropdown-portal period-dropdown"
+                          :style="statusDropdownStyle"
+                          role="listbox"
+                          @click.stop
+                        >
+                          <button
+                            type="button"
+                            class="period-option"
+                            :class="{ active: filterStatus === 'all' }"
+                            role="option"
+                            :aria-selected="filterStatus === 'all'"
+                            @click="selectStatusFilter('all')"
+                          >
+                            All
+                          </button>
+                          <button
+                            type="button"
+                            class="period-option"
+                            :class="{ active: filterStatus === 'active' }"
+                            role="option"
+                            :aria-selected="filterStatus === 'active'"
+                            @click="selectStatusFilter('active')"
+                          >
+                            Active
+                          </button>
+                          <button
+                            type="button"
+                            class="period-option"
+                            :class="{ active: filterStatus === 'not_active' }"
+                            role="option"
+                            :aria-selected="filterStatus === 'not_active'"
+                            @click="selectStatusFilter('not_active')"
+                          >
+                            Not active
+                          </button>
+                        </div>
+                      </Teleport>
                     </div>
                   </div>
                 </th>
@@ -935,13 +1190,59 @@ function formatDate(iso: string | null): string {
                 <th class="th-position" scope="col" @click.stop>
                   <div class="th-position-wrap">
                     <span>Position</span>
-                    <div class="th-position-filter">
-                      <select v-model="filterPosition" class="filter-select filter-select--in-table" aria-label="Filter by position">
-                        <option value="all">All</option>
-                        <option v-for="p in positionRows" :key="p.position_id" :value="p.title">{{ p.title }}</option>
-                        <option :value="FILTER_POSITION_ADMIN">Admin</option>
-                      </select>
-                      <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                    <div ref="positionFilterTriggerRef" class="ts-filter-trigger-wrap">
+                      <button
+                        type="button"
+                        class="period-btn ts-filter-period-btn"
+                        aria-haspopup="listbox"
+                        :aria-expanded="showPositionFilterDropdown"
+                        :aria-label="`Position filter, ${positionFilterLabel}`"
+                        @click.stop="togglePositionFilterMenu"
+                      >
+                        <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+                      </button>
+                      <Teleport to="body">
+                        <div
+                          v-if="showPositionFilterDropdown"
+                          class="ts-filter-dropdown-portal period-dropdown"
+                          :style="positionDropdownStyle"
+                          role="listbox"
+                          @click.stop
+                        >
+                          <button
+                            type="button"
+                            class="period-option"
+                            :class="{ active: filterPosition === 'all' }"
+                            role="option"
+                            :aria-selected="filterPosition === 'all'"
+                            @click="selectPositionFilter('all')"
+                          >
+                            All
+                          </button>
+                          <button
+                            v-for="p in positionRows"
+                            :key="p.position_id"
+                            type="button"
+                            class="period-option"
+                            :class="{ active: filterPosition === p.title }"
+                            role="option"
+                            :aria-selected="filterPosition === p.title"
+                            @click="selectPositionFilter(p.title)"
+                          >
+                            {{ p.title }}
+                          </button>
+                          <button
+                            type="button"
+                            class="period-option"
+                            :class="{ active: filterPosition === FILTER_POSITION_ADMIN }"
+                            role="option"
+                            :aria-selected="filterPosition === FILTER_POSITION_ADMIN"
+                            @click="selectPositionFilter(FILTER_POSITION_ADMIN)"
+                          >
+                            Admin
+                          </button>
+                        </div>
+                      </Teleport>
                     </div>
                   </div>
                 </th>
@@ -1265,36 +1566,6 @@ body.light-mode .kpi-card-hours .kpi-icon {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
-.select-wrap {
-  position: relative;
-  min-width: 140px;
-}
-.filter-select {
-  appearance: none;
-  width: 100%;
-  padding: 0.5rem 2rem 0.5rem 0.875rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-light);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-}
-.filter-select:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-.select-chevron {
-  position: absolute;
-  right: 0.65rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 1rem;
-  height: 1rem;
-  color: var(--text-tertiary);
-  pointer-events: none;
-}
 
 /* Table */
 .table-card {
@@ -1329,12 +1600,7 @@ body.light-mode .kpi-card-hours .kpi-icon {
   align-items: center;
   justify-content: flex-start;
   gap: 0.4rem;
-}
-.th-status-filter {
-  position: relative;
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
+  min-width: 0;
 }
 .th-modality {
   width: 1%;
@@ -1345,12 +1611,7 @@ body.light-mode .kpi-card-hours .kpi-icon {
   align-items: center;
   justify-content: flex-start;
   gap: 0.4rem;
-}
-.th-modality-filter {
-  position: relative;
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
+  min-width: 0;
 }
 .th-position {
   width: 1%;
@@ -1361,28 +1622,111 @@ body.light-mode .kpi-card-hours .kpi-icon {
   align-items: center;
   justify-content: flex-start;
   gap: 0.4rem;
+  min-width: 0;
 }
-.th-position-filter {
+
+.ts-filter-trigger-wrap {
   position: relative;
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
-.filter-select--in-table {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  margin: 0;
-  border-radius: 6px;
-  opacity: 0;
+
+.ts-filter-period-btn.period-btn {
+  width: auto;
+  min-width: 1.75rem;
+  justify-content: center;
+  padding: 0.35rem;
+  font-size: 0.75rem;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ts-filter-period-btn.period-btn:hover,
+.ts-filter-period-btn.period-btn:focus,
+.ts-filter-period-btn.period-btn:focus-visible,
+.ts-filter-period-btn.period-btn:active {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
+.period-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  font-weight: 500;
   cursor: pointer;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
-.select-chevron--in-table {
-  right: 0.35rem;
-  width: 0.95rem;
-  height: 0.95rem;
+
+.period-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+.ts-period-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+}
+
+.period-btn:hover .ts-period-chevron {
+  color: var(--text-primary);
+  transform: translateY(1px);
+}
+
+.ts-filter-dropdown-portal.period-dropdown {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.375rem;
+  background: var(--bg-primary);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  min-width: 150px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.period-option {
+  display: block;
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.period-option:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.period-option.active {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent);
 }
 .data-row {
   cursor: pointer;
@@ -1723,5 +2067,16 @@ body.light-mode .kpi-card-hours .kpi-icon {
 .muted {
   color: var(--text-secondary);
   font-size: 0.875rem;
+}
+
+:root.light-mode .ts-filter-dropdown-portal.period-dropdown,
+body.light-mode .ts-filter-dropdown-portal.period-dropdown {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+:root.light-mode .period-option.active,
+body.light-mode .period-option.active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #0284c7;
 }
 </style>

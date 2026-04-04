@@ -9,6 +9,7 @@ import {
   type AttendanceRow
 } from '../composables/useAttendance'
 import supabase from '../lib/supabaseClient'
+import { ChevronDownIcon } from '@heroicons/vue/24/outline'
 
 const { adminProfile } = useAdminAuth()
 
@@ -76,6 +77,124 @@ const runningMarkers = ref<{ marker: L.Marker; pin: MapPin }[]>([])
 // Filters
 const filterLocationType = ref<'clock_in' | 'clock_out' | 'both'>('both')
 const filterModality = ref<'all' | 'office' | 'wfh'>('all')
+
+/** Map toolbar filters: chevron + teleported menu (Timesheet / Admin employees parity) */
+const showLocationTypeDropdown = ref(false)
+const showMapModalityDropdown = ref(false)
+const locationTypeFilterTriggerRef = ref<HTMLElement | null>(null)
+const mapModalityFilterTriggerRef = ref<HTMLElement | null>(null)
+const locationTypeDropdownStyle = ref<Record<string, string>>({})
+const mapModalityDropdownStyle = ref<Record<string, string>>({})
+
+const locationTypeFilterLabel = computed(() => {
+  switch (filterLocationType.value) {
+    case 'both':
+      return 'All Records'
+    case 'clock_in':
+      return 'Clocked In'
+    case 'clock_out':
+      return 'Clocked Out'
+    default:
+      return 'All Records'
+  }
+})
+
+const mapModalityFilterLabel = computed(() => {
+  switch (filterModality.value) {
+    case 'all':
+      return 'All'
+    case 'office':
+      return 'Office'
+    case 'wfh':
+      return 'WFH'
+    default:
+      return 'All'
+  }
+})
+
+function positionLocationTypeDropdown() {
+  const el = locationTypeFilterTriggerRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const minW = Math.max(r.width, 168)
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+  locationTypeDropdownStyle.value = {
+    position: 'fixed',
+    top: `${r.bottom + 6}px`,
+    left: `${left}px`,
+    minWidth: `${minW}px`,
+    zIndex: '300'
+  }
+}
+
+function positionMapModalityDropdown() {
+  const el = mapModalityFilterTriggerRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const minW = Math.max(r.width, 140)
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+  mapModalityDropdownStyle.value = {
+    position: 'fixed',
+    top: `${r.bottom + 6}px`,
+    left: `${left}px`,
+    minWidth: `${minW}px`,
+    zIndex: '300'
+  }
+}
+
+function toggleLocationTypeFilterMenu() {
+  const opening = !showLocationTypeDropdown.value
+  showMapModalityDropdown.value = false
+  showLocationTypeDropdown.value = opening
+  if (opening) void nextTick(() => positionLocationTypeDropdown())
+}
+
+function toggleMapModalityFilterMenu() {
+  const opening = !showMapModalityDropdown.value
+  showLocationTypeDropdown.value = false
+  showMapModalityDropdown.value = opening
+  if (opening) void nextTick(() => positionMapModalityDropdown())
+}
+
+function selectLocationTypeFilter(v: 'clock_in' | 'clock_out' | 'both') {
+  showLocationTypeDropdown.value = false
+  filterLocationType.value = v
+}
+
+function selectMapModalityFilter(v: 'all' | 'office' | 'wfh') {
+  showMapModalityDropdown.value = false
+  filterModality.value = v
+}
+
+function handleMapFilterClickOutside(event: MouseEvent) {
+  if (!showLocationTypeDropdown.value && !showMapModalityDropdown.value) return
+  const target = event.target as HTMLElement
+  if (target.closest('.ts-filter-trigger-wrap') || target.closest('.ts-filter-dropdown-portal')) return
+  showLocationTypeDropdown.value = false
+  showMapModalityDropdown.value = false
+}
+
+watch(showLocationTypeDropdown, (open) => {
+  if (open) {
+    void nextTick(() => positionLocationTypeDropdown())
+    window.addEventListener('scroll', positionLocationTypeDropdown, true)
+    window.addEventListener('resize', positionLocationTypeDropdown)
+  } else {
+    window.removeEventListener('scroll', positionLocationTypeDropdown, true)
+    window.removeEventListener('resize', positionLocationTypeDropdown)
+  }
+})
+
+watch(showMapModalityDropdown, (open) => {
+  if (open) {
+    void nextTick(() => positionMapModalityDropdown())
+    window.addEventListener('scroll', positionMapModalityDropdown, true)
+    window.addEventListener('resize', positionMapModalityDropdown)
+  } else {
+    window.removeEventListener('scroll', positionMapModalityDropdown, true)
+    window.removeEventListener('resize', positionMapModalityDropdown)
+  }
+})
 
 export type MapPinState = 'not_clocked_in' | 'clocked_in' | 'on_lunch' | 'clocked_out'
 
@@ -485,6 +604,7 @@ watch(mapContainer, (el) => {
 onMounted(async () => {
   fetchKpis()
   await fetchMapData()
+  document.addEventListener('click', handleMapFilterClickOutside)
   tickInterval = setInterval(() => {
     tick.value = Date.now()
     updateRunningTooltips()
@@ -492,6 +612,11 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('click', handleMapFilterClickOutside)
+  window.removeEventListener('scroll', positionLocationTypeDropdown, true)
+  window.removeEventListener('resize', positionLocationTypeDropdown)
+  window.removeEventListener('scroll', positionMapModalityDropdown, true)
+  window.removeEventListener('resize', positionMapModalityDropdown)
   if (tickInterval) clearInterval(tickInterval)
   tickInterval = null
   markers.forEach(m => m.remove())
@@ -547,22 +672,116 @@ onUnmounted(() => {
             <span class="filter-label">Date</span>
             <input v-model="mapDate" type="date" class="hero-map-date" @change="fetchMapData" />
           </label>
-          <label class="filter-group">
+          <div class="filter-group filter-group--map-menu">
             <span class="filter-label">Status</span>
-            <select v-model="filterLocationType" class="filter-select">
-              <option value="both">All Records</option>
-              <option value="clock_in">Clocked In</option>
-              <option value="clock_out">Clocked Out</option>
-            </select>
-          </label>
-          <label class="filter-group">
+            <div ref="locationTypeFilterTriggerRef" class="ts-filter-trigger-wrap">
+              <button
+                type="button"
+                class="period-btn ts-filter-period-btn"
+                aria-haspopup="listbox"
+                :aria-expanded="showLocationTypeDropdown"
+                :aria-label="`Status filter, ${locationTypeFilterLabel}`"
+                @click.stop="toggleLocationTypeFilterMenu"
+              >
+                <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+              </button>
+              <Teleport to="body">
+                <div
+                  v-if="showLocationTypeDropdown"
+                  class="ts-filter-dropdown-portal period-dropdown"
+                  :style="locationTypeDropdownStyle"
+                  role="listbox"
+                  @click.stop
+                >
+                  <button
+                    type="button"
+                    class="period-option"
+                    :class="{ active: filterLocationType === 'both' }"
+                    role="option"
+                    :aria-selected="filterLocationType === 'both'"
+                    @click="selectLocationTypeFilter('both')"
+                  >
+                    All Records
+                  </button>
+                  <button
+                    type="button"
+                    class="period-option"
+                    :class="{ active: filterLocationType === 'clock_in' }"
+                    role="option"
+                    :aria-selected="filterLocationType === 'clock_in'"
+                    @click="selectLocationTypeFilter('clock_in')"
+                  >
+                    Clocked In
+                  </button>
+                  <button
+                    type="button"
+                    class="period-option"
+                    :class="{ active: filterLocationType === 'clock_out' }"
+                    role="option"
+                    :aria-selected="filterLocationType === 'clock_out'"
+                    @click="selectLocationTypeFilter('clock_out')"
+                  >
+                    Clocked Out
+                  </button>
+                </div>
+              </Teleport>
+            </div>
+          </div>
+          <div class="filter-group filter-group--map-menu">
             <span class="filter-label">Modality</span>
-            <select v-model="filterModality" class="filter-select">
-              <option value="all">All</option>
-              <option value="office">Office</option>
-              <option value="wfh">WFH</option>
-            </select>
-          </label>
+            <div ref="mapModalityFilterTriggerRef" class="ts-filter-trigger-wrap">
+              <button
+                type="button"
+                class="period-btn ts-filter-period-btn"
+                aria-haspopup="listbox"
+                :aria-expanded="showMapModalityDropdown"
+                :aria-label="`Modality filter, ${mapModalityFilterLabel}`"
+                @click.stop="toggleMapModalityFilterMenu"
+              >
+                <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+              </button>
+              <Teleport to="body">
+                <div
+                  v-if="showMapModalityDropdown"
+                  class="ts-filter-dropdown-portal period-dropdown"
+                  :style="mapModalityDropdownStyle"
+                  role="listbox"
+                  @click.stop
+                >
+                  <button
+                    type="button"
+                    class="period-option"
+                    :class="{ active: filterModality === 'all' }"
+                    role="option"
+                    :aria-selected="filterModality === 'all'"
+                    @click="selectMapModalityFilter('all')"
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    class="period-option"
+                    :class="{ active: filterModality === 'office' }"
+                    role="option"
+                    :aria-selected="filterModality === 'office'"
+                    @click="selectMapModalityFilter('office')"
+                  >
+                    Office
+                  </button>
+                  <button
+                    type="button"
+                    class="period-option"
+                    :class="{ active: filterModality === 'wfh' }"
+                    role="option"
+                    :aria-selected="filterModality === 'wfh'"
+                    @click="selectMapModalityFilter('wfh')"
+                  >
+                    WFH
+                  </button>
+                </div>
+              </Teleport>
+            </div>
+          </div>
         </div>
       </div>
       <div class="hero-map-wrap">
@@ -627,16 +846,111 @@ onUnmounted(() => {
 }
 .filter-group { display: flex; flex-direction: row; align-items: center; gap: 0.35rem; min-width: 0; }
 .filter-group.filter-check { gap: 0.5rem; }
+.filter-group--map-menu { flex-wrap: nowrap; }
 .filter-label { font-size: 0.8125rem; color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
-.filter-select {
-  padding: 0.35rem 0.5rem;
+
+.ts-filter-trigger-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.ts-filter-period-btn.period-btn {
+  width: auto;
+  min-width: 1.75rem;
+  justify-content: center;
+  padding: 0.35rem;
+  font-size: 0.75rem;
   border-radius: 8px;
-  border: 1px solid var(--border-light);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ts-filter-period-btn.period-btn:hover,
+.ts-filter-period-btn.period-btn:focus,
+.ts-filter-period-btn.period-btn:focus-visible,
+.ts-filter-period-btn.period-btn:active {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
+.period-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: 8px;
   font-size: 0.8125rem;
-  min-width: 7.5rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  position: relative;
+  min-width: 0;
   max-width: 100%;
+  box-sizing: border-box;
+}
+
+.period-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+.ts-period-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+}
+
+.period-btn:hover .ts-period-chevron {
+  color: var(--text-primary);
+  transform: translateY(1px);
+}
+
+.ts-filter-dropdown-portal.period-dropdown {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.375rem;
+  background: var(--bg-primary);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  min-width: 150px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.period-option {
+  display: block;
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.period-option:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.period-option.active {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent);
 }
 
 @media (max-width: 640px) {
@@ -653,11 +967,15 @@ onUnmounted(() => {
     width: 100%;
     gap: 0rem;
   }
-  .filter-select,
   .hero-map-date {
     width: 100%;
     min-width: 0;
     box-sizing: border-box;
+  }
+  .filter-group--map-menu {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
   }
 }
 .filter-checkbox { width: 1rem; height: 1rem; accent-color: #38bdf8; }
@@ -677,6 +995,17 @@ onUnmounted(() => {
 :deep(.admin-map-marker-initial) { font-size: 1.125rem; font-weight: 700; color: #0ea5e9; }
 :deep(.admin-map-tooltip-wrap) { padding: 0; border: none; background: transparent; box-shadow: none; }
 :deep(.admin-map-tooltip) { padding: 8px 12px; background: rgba(15,23,42,0.95); border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); font-size: 0.8125rem; color: #e2e8f0; max-width: 280px; }
+
+:root.light-mode .ts-filter-dropdown-portal.period-dropdown,
+body.light-mode .ts-filter-dropdown-portal.period-dropdown {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+:root.light-mode .period-option.active,
+body.light-mode .period-option.active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #0284c7;
+}
 :deep(.admin-map-tooltip strong) { display: block; margin-bottom: 4px; color: #fff; }
 :deep(.admin-map-tooltip-address) { display: block; margin-top: 6px; color: #94a3b8; font-size: 0.75rem; line-height: 1.3; word-break: break-word; }
 </style>
