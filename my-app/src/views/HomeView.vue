@@ -4,11 +4,51 @@ import { useAuth } from '../composables/useAuth'
 import ThemeToggle from '../components/ThemeToggle.vue'
 const { user, isLoggedIn, signOut } = useAuth()
 const adminGate = ref(false)
+
+/** Mobile: hold “Get started” 3s to reveal admin login / sign up (same as Ctrl+A on desktop). */
+const ADMIN_GATE_LONG_PRESS_MS = 3000
+let getStartedLongPressTimer: ReturnType<typeof setTimeout> | null = null
+const suppressNextSignupNav = ref(false)
+
+function clearGetStartedLongPress() {
+  if (getStartedLongPressTimer) {
+    clearTimeout(getStartedLongPressTimer)
+    getStartedLongPressTimer = null
+  }
+}
+
+function onGetStartedTouchStart() {
+  clearGetStartedLongPress()
+  getStartedLongPressTimer = setTimeout(() => {
+    getStartedLongPressTimer = null
+    adminGate.value = true
+    suppressNextSignupNav.value = true
+  }, ADMIN_GATE_LONG_PRESS_MS)
+}
+
+function onGetStartedTouchEnd() {
+  clearGetStartedLongPress()
+}
+
+/** After a successful long-press, block the synthetic click so we don’t navigate to /signup. */
+function onGetStartedClick(e: Event) {
+  if (suppressNextSignupNav.value) {
+    e.preventDefault()
+    suppressNextSignupNav.value = false
+  }
+}
+
 function onKey(e: KeyboardEvent) {
-  if (e.ctrlKey && e.key === 'a') { e.preventDefault(); adminGate.value = true }
+  if (e.ctrlKey && e.key === 'a') {
+    e.preventDefault()
+    adminGate.value = true
+  }
 }
 onMounted(() => window.addEventListener('keydown', onKey))
-onUnmounted(() => window.removeEventListener('keydown', onKey))
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKey)
+  clearGetStartedLongPress()
+})
 </script>
 <template>
   <div class="landing">
@@ -28,7 +68,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         </template>
         <template v-else>
           <router-link to="/login" class="link">Log in</router-link>
-          <router-link to="/signup" class="btn primary">Get started</router-link>
+          <router-link
+            to="/signup"
+            class="btn primary admin-gate-touch-target"
+            @click="onGetStartedClick"
+            @touchstart.passive="onGetStartedTouchStart"
+            @touchend="onGetStartedTouchEnd"
+            @touchcancel="onGetStartedTouchEnd"
+          >
+            Get started
+          </router-link>
         </template>
       </nav>
     </header>
@@ -258,6 +307,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+/* Long-press “Get started” (3s) to reveal admin links: reduce selection / callout noise */
+.admin-gate-touch-target {
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
 }
 
 .user-email {
