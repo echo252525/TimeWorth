@@ -666,7 +666,73 @@ onMounted(async () => {
           autocomplete="off"
           aria-label="Search employees"
         />
-        <div class="employee-toolbar-btns">
+      </div>
+      <div v-if="loadingEmployees" class="loading-state">Loading employees…</div>
+      <template v-else>
+        <div class="employee-table-wrap">
+          <table class="data-table data-table--compact">
+            <thead>
+              <tr>
+                <th class="th-check" scope="col">
+                  <input
+                    type="checkbox"
+                    :checked="allVisibleOnPageSelected"
+                    :indeterminate.prop="someVisibleOnPageSelected && !allVisibleOnPageSelected"
+                    aria-label="Select all on this page"
+                    @change="toggleSelectPage(($event.target as HTMLInputElement).checked)"
+                  />
+                </th>
+                <th class="th-name" scope="col">Name</th>
+                <th scope="col">Email</th>
+                <th scope="col">Position</th>
+                <th class="th-view" scope="col">View</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="e in pagedEmployees" :key="e.id" class="data-row">
+                <td class="td-check">
+                  <input
+                    type="checkbox"
+                    :checked="!!selectedEmployeeIds[e.id]"
+                    :aria-label="`Select ${e.name}`"
+                    @change="toggleEmployeeSelected(e.id, ($event.target as HTMLInputElement).checked)"
+                  />
+                </td>
+                <td class="cell-name">{{ e.name }}</td>
+                <td class="td-muted">{{ e.email }}</td>
+                <td class="td-muted">{{ e.position_in_company || '—' }}</td>
+                <td class="td-view">
+                  <button type="button" class="icon-btn" :aria-label="`View ${e.name}`" @click.stop="openEmployeeModal(e)">
+                    <EyeIcon class="icon-16" aria-hidden="true" />
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="!pagedEmployees.length && !loadingEmployees" class="empty-hint">No employees match your search.</div>
+          <div v-if="filteredEmployees.length > EMPLOYEES_PER_PAGE" class="pager">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              :disabled="employeePage <= 1"
+              @click="employeePage = Math.max(1, employeePage - 1)"
+            >
+              Previous
+            </button>
+            <span class="pager-info">
+              Page {{ employeePage }} / {{ employeeTotalPages }} · {{ filteredEmployees.length }} total
+            </span>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              :disabled="employeePage >= employeeTotalPages"
+              @click="employeePage = Math.min(employeeTotalPages, employeePage + 1)"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+        <div class="employee-table-actions">
           <button
             type="button"
             class="btn btn-secondary btn-toolbar-refresh"
@@ -684,76 +750,12 @@ onMounted(async () => {
             {{ bulkDownloadBusy ? 'Preparing…' : 'Download Timesheet' }}
           </button>
         </div>
-      </div>
-      <div v-if="loadingEmployees" class="loading-state">Loading employees…</div>
-      <div v-else class="employee-table-wrap">
-        <table class="data-table data-table--compact">
-          <thead>
-            <tr>
-              <th class="th-check" scope="col">
-                <input
-                  type="checkbox"
-                  :checked="allVisibleOnPageSelected"
-                  :indeterminate.prop="someVisibleOnPageSelected && !allVisibleOnPageSelected"
-                  aria-label="Select all on this page"
-                  @change="toggleSelectPage(($event.target as HTMLInputElement).checked)"
-                />
-              </th>
-              <th class="th-name" scope="col">Name</th>
-              <th scope="col">Email</th>
-              <th scope="col">Position</th>
-              <th class="th-view" scope="col">View</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="e in pagedEmployees" :key="e.id" class="data-row">
-              <td class="td-check">
-                <input
-                  type="checkbox"
-                  :checked="!!selectedEmployeeIds[e.id]"
-                  :aria-label="`Select ${e.name}`"
-                  @change="toggleEmployeeSelected(e.id, ($event.target as HTMLInputElement).checked)"
-                />
-              </td>
-              <td class="cell-name">{{ e.name }}</td>
-              <td class="td-muted">{{ e.email }}</td>
-              <td class="td-muted">{{ e.position_in_company || '—' }}</td>
-              <td class="td-view">
-                <button type="button" class="icon-btn" :aria-label="`View ${e.name}`" @click.stop="openEmployeeModal(e)">
-                  <EyeIcon class="icon-16" aria-hidden="true" />
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-if="!pagedEmployees.length && !loadingEmployees" class="empty-hint">No employees match your search.</div>
-        <div v-if="filteredEmployees.length > EMPLOYEES_PER_PAGE" class="pager">
-          <button
-            type="button"
-            class="btn btn-secondary"
-            :disabled="employeePage <= 1"
-            @click="employeePage = Math.max(1, employeePage - 1)"
-          >
-            Previous
-          </button>
-          <span class="pager-info">
-            Page {{ employeePage }} / {{ employeeTotalPages }} · {{ filteredEmployees.length }} total
-          </span>
-          <button
-            type="button"
-            class="btn btn-secondary"
-            :disabled="employeePage >= employeeTotalPages"
-            @click="employeePage = Math.min(employeeTotalPages, employeePage + 1)"
-          >
-            Next
-          </button>
-        </div>
-      </div>
+      </template>
     </section>
 
     <div class="table-card">
       <p class="empty-hint">
-        Tick the row <strong>checkboxes</strong> for who to include, then click <strong>Download Timesheet</strong> above (current month; disabled until someone is selected).
+        Tick the row <strong>checkboxes</strong> for who to include, then click <strong>Download Timesheet</strong> below the table (current month; disabled until someone is selected).
         For <strong>other dates</strong>, click <strong>View</strong>, pick the period, then use <strong>Download Timesheet</strong> at the bottom of the window.
       </p>
     </div>
@@ -921,15 +923,6 @@ onMounted(async () => {
   color: var(--text-primary);
   font-size: 0.875rem;
 }
-.employee-toolbar-btns {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-}
-.bulk-pdf-btn {
-  margin-left: auto;
-}
 .employee-table-wrap {
   overflow-x: auto;
 }
@@ -986,6 +979,16 @@ onMounted(async () => {
 .pager-info {
   font-size: 0.8125rem;
   color: var(--text-secondary);
+}
+.employee-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-color);
 }
 .banner-error {
   margin: 0 0 1rem;
@@ -1298,33 +1301,28 @@ onMounted(async () => {
     font-size: 0.8125rem;
     border-radius: 8px;
   }
-  .employee-toolbar-btns {
-    width: 100%;
-    gap: 0.35rem;
+  .employee-table-actions {
+    gap: 0.45rem;
+    margin-top: 0.45rem;
+    padding-top: 0.45rem;
   }
-  .employee-toolbar-btns .btn,
-  .employee-toolbar-btns .btn-secondary {
+  .employee-table-actions .btn,
+  .employee-table-actions .btn-secondary {
     padding: 0.45rem 0.65rem;
     font-size: 0.75rem;
     border-radius: 999px;
   }
-  .employee-toolbar-btns .btn.btn-primary {
+  .employee-table-actions .btn.btn-primary {
     padding: 0.5rem 1rem;
     font-size: 0.875rem;
     font-weight: 500;
     border-radius: 8px;
   }
-  .employee-toolbar-btns .btn.btn-toolbar-refresh.btn-secondary {
+  .employee-table-actions .btn.btn-toolbar-refresh.btn-secondary {
     padding: 0.5rem 1rem;
     font-size: 0.875rem;
     font-weight: 500;
     border-radius: 8px;
-  }
-  .bulk-pdf-btn {
-    margin-left: 0;
-    flex: 1 1 100%;
-    order: 10;
-    justify-content: center;
   }
   .data-table--compact th,
   .data-table--compact td {

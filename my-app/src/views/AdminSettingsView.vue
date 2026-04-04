@@ -636,6 +636,57 @@ async function updateRole(id: string, roleVal: string) {
 @media (max-width: 640px) {
   .settings-grid {
     grid-template-columns: 1fr;
+    row-gap: 1rem;
+  }
+
+  /* Match SettingsView.vue mobile spacing */
+  .page-header {
+    margin-bottom: 1rem;
+  }
+  .page-header h1 {
+    font-size: 1.375rem;
+  }
+  .page-desc {
+    font-size: 0.875rem;
+  }
+
+  .card {
+    padding: 1rem;
+    border-radius: 12px;
+  }
+
+  .card-title {
+    margin-bottom: 1rem;
+  }
+
+  .profile-card .profile-row {
+    gap: 0.875rem;
+  }
+
+  .personal-summary {
+    gap: 0.75rem;
+  }
+
+  .personal-card__footer,
+  .security-card__footer {
+    margin-top: 1rem;
+    justify-content: stretch;
+  }
+
+  .form-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .form-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .settings-accent-action-btn {
+    width: 100%;
   }
 }
 
