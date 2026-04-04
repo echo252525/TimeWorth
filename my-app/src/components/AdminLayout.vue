@@ -6,6 +6,7 @@ import { useAdminAuth, getSignedAdminProfileUrl } from '../composables/useAdminA
 import {
   HomeIcon,
   UsersIcon,
+  ClockIcon,
   PencilSquareIcon,
   RectangleStackIcon,
   Cog6ToothIcon,
@@ -85,6 +86,7 @@ function go(to: string) {
 const nav = [
   { path: '/admin', label: 'Home', icon: HomeIcon },
   { path: '/admin/employees', label: 'Employees', icon: UsersIcon },
+  { path: '/admin/timesheet', label: 'Timesheet', icon: ClockIcon },
   { path: '/admin/edit-requests', label: 'Edit request', icon: PencilSquareIcon },
   { path: '/admin/system-configuration', label: 'System configuration', icon: RectangleStackIcon },
   { path: '/admin/settings', label: 'Settings', icon: Cog6ToothIcon }
