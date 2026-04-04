@@ -2,8 +2,8 @@
 export const MAX_EMPLOYEE_IDENTIFIER_LENGTH = 100
 
 /**
- * Validates a trimmed employee number or admin employee ID.
- * Allows letters, digits, spaces, and common punctuation (e.g. ADM-001, EMP/12).
+ * Validates employee number / admin employee ID for signup and profile forms.
+ * Only requires a non-empty value after trim and a reasonable max length (any characters allowed).
  * @returns Error message or null if valid.
  */
 export function validateEmployeeIdentifier(
@@ -15,6 +15,5 @@ export function validateEmployeeIdentifier(
   if (s.length > MAX_EMPLOYEE_IDENTIFIER_LENGTH) {
     return `${fieldLabel} must be ${MAX_EMPLOYEE_IDENTIFIER_LENGTH} characters or fewer`
   }
-  if (/[\r\n]/.test(s)) return `${fieldLabel} cannot contain line breaks`
   return null
 }

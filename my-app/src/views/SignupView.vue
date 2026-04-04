@@ -4,7 +4,10 @@ import { useRouter } from 'vue-router'
 import AuthLayout from '../components/AuthLayout.vue'
 import { useAuth } from '../composables/useAuth'
 import supabase from '../lib/supabaseClient'
-import { validateEmployeeIdentifier } from '../lib/employeeIdentifierValidation'
+import {
+  validateEmployeeIdentifier,
+  MAX_EMPLOYEE_IDENTIFIER_LENGTH
+} from '../lib/employeeIdentifierValidation'
 
 const router = useRouter()
 const { signUp, isLoading, error } = useAuth()
@@ -99,11 +102,12 @@ async function onSubmit() {
     error.value = 'First name and last name are required'
     return
   }
-  const emp = form.employee_no.trim()
-  if (!emp || !/^[a-zA-Z0-9]+$/.test(emp)) {
-    error.value = 'Employee number must contain only letters and numbers (no spaces)'
+  const empErr = validateEmployeeIdentifier(form.employee_no, 'Employee number')
+  if (empErr) {
+    error.value = empErr
     return
   }
+  const emp = form.employee_no.trim()
   const phone = form.phone_number.trim()
   if (!phone) {
     error.value = 'Phone number is required'
@@ -182,7 +186,7 @@ async function onSubmit() {
             :disabled="positionsLoading"
           />
         </div>
-        <div class="field"><label for="empno">EMPLOYEE NO.</label><input id="empno" v-model="form.employee_no" type="text" required autocomplete="off" placeholder="ABC-123" :maxlength="20" /></div>
+        <div class="field"><label for="empno">EMPLOYEE NO.</label><input id="empno" v-model="form.employee_no" type="text" required autocomplete="off" placeholder="Your employee number or ID" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
         <div class="field"><label for="phone">PHONE NUMBER</label><input id="phone" v-model="form.phone_number" type="tel" required autocomplete="tel" placeholder="+63 9XX XXX XXXX" /></div>
         <div class="field"><label for="email">COMPANY EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="company.email@pcworth.com" autocomplete="email" /></div>
       </div>
