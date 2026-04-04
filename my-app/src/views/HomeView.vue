@@ -5,37 +5,28 @@ import ThemeToggle from '../components/ThemeToggle.vue'
 const { user, isLoggedIn, signOut } = useAuth()
 const adminGate = ref(false)
 
-/** Mobile: hold “Get started” 3s to reveal admin login / sign up (same as Ctrl+A on desktop). */
+/** Mobile: hold “TimeWorth” (brand text) 3s to reveal admin login / sign up (same as Ctrl+A on desktop). */
 const ADMIN_GATE_LONG_PRESS_MS = 3000
-let getStartedLongPressTimer: ReturnType<typeof setTimeout> | null = null
-const suppressNextSignupNav = ref(false)
+let brandLongPressTimer: ReturnType<typeof setTimeout> | null = null
 
-function clearGetStartedLongPress() {
-  if (getStartedLongPressTimer) {
-    clearTimeout(getStartedLongPressTimer)
-    getStartedLongPressTimer = null
+function clearBrandLongPress() {
+  if (brandLongPressTimer) {
+    clearTimeout(brandLongPressTimer)
+    brandLongPressTimer = null
   }
 }
 
-function onGetStartedTouchStart() {
-  clearGetStartedLongPress()
-  getStartedLongPressTimer = setTimeout(() => {
-    getStartedLongPressTimer = null
-    adminGate.value = true
-    suppressNextSignupNav.value = true
+function onBrandTouchStart() {
+  if (isLoggedIn.value) return
+  clearBrandLongPress()
+  brandLongPressTimer = setTimeout(() => {
+    brandLongPressTimer = null
+    if (!isLoggedIn.value) adminGate.value = true
   }, ADMIN_GATE_LONG_PRESS_MS)
 }
 
-function onGetStartedTouchEnd() {
-  clearGetStartedLongPress()
-}
-
-/** After a successful long-press, block the synthetic click so we don’t navigate to /signup. */
-function onGetStartedClick(e: Event) {
-  if (suppressNextSignupNav.value) {
-    e.preventDefault()
-    suppressNextSignupNav.value = false
-  }
+function onBrandTouchEnd() {
+  clearBrandLongPress()
 }
 
 function onKey(e: KeyboardEvent) {
@@ -47,7 +38,7 @@ function onKey(e: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKey))
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey)
-  clearGetStartedLongPress()
+  clearBrandLongPress()
 })
 </script>
 <template>
@@ -55,7 +46,14 @@ onUnmounted(() => {
     <header class="header">
       <div class="brand">
         <img src="/TimeWorthLogo.png" alt="" class="brand-logo" />
-        <span class="brand-text">TimeWorth</span>
+        <span
+          class="brand-text admin-gate-touch-target"
+          @touchstart.passive="onBrandTouchStart"
+          @touchend="onBrandTouchEnd"
+          @touchcancel="onBrandTouchEnd"
+        >
+          TimeWorth
+        </span>
       </div>
       <nav class="nav">
         <template v-if="adminGate">
@@ -68,16 +66,7 @@ onUnmounted(() => {
         </template>
         <template v-else>
           <router-link to="/login" class="link">Log in</router-link>
-          <router-link
-            to="/signup"
-            class="btn primary admin-gate-touch-target"
-            @click="onGetStartedClick"
-            @touchstart.passive="onGetStartedTouchStart"
-            @touchend="onGetStartedTouchEnd"
-            @touchcancel="onGetStartedTouchEnd"
-          >
-            Get started
-          </router-link>
+          <router-link to="/signup" class="btn primary">Get started</router-link>
         </template>
       </nav>
     </header>
@@ -309,7 +298,7 @@ onUnmounted(() => {
   gap: 0.75rem;
 }
 
-/* Long-press “Get started” (3s) to reveal admin links: reduce selection / callout noise */
+/* Long-press “TimeWorth” brand text (3s) to reveal admin links: reduce selection / callout noise */
 .admin-gate-touch-target {
   user-select: none;
   -webkit-user-select: none;
