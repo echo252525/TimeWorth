@@ -22,15 +22,15 @@ const badgeText = computed(() => 'Secure recovery')
 const title = computed(() => (isAdmin.value ? 'Reset your admin password' : 'Reset your employee password'))
 const subtitle = computed(() => (
   isAdmin.value
-    ? 'Enter the email tied to your admin account and we will send a secure password reset link.'
-    : 'Enter your company email and we will send a secure password reset link.'
+    ? 'Enter the email linked to your admin account. A secure password reset link will be sent to you.'
+    : 'Enter the email you used to sign up for your account below. A secure link to reset your password will be sent to you.'
 ))
 const placeholder = computed(() => (
   isAdmin.value
     ? 'Enter your admin email'
     : 'company.email@pcworth.com'
 ))
-const inputLabel = computed(() => (isAdmin.value ? 'ADMIN EMAIL' : 'COMPANY EMAIL'))
+const inputLabel = computed(() => (isAdmin.value ? 'ADMIN EMAIL' : 'EMAIL'))
 
 async function submit() {
   error.value = null
@@ -98,7 +98,7 @@ async function submit() {
           <div class="auth-actions-row">
             <button type="button" class="btn btn-outline-secondary" @click="router.push(backRoute)">Back</button>
             <button type="submit" class="btn primary" :disabled="isLoading">
-              {{ isLoading ? 'Sending link…' : 'Send reset link' }}
+              {{ isLoading ? 'Sending link…' : 'Send link' }}
             </button>
           </div>
         </form>

@@ -4,6 +4,7 @@ import supabase from '../lib/supabaseClient'
 import { useAdminAuth, getSignedAdminProfileUrl, ADMIN_PROFILE_BUCKET, adminProfile } from '../composables/useAdminAuth'
 import type { AdminRow, AdminRole } from '../composables/useAdminAuth'
 import { useAuth } from '../composables/useAuth'
+import { validateEmployeeIdentifier } from '../lib/employeeIdentifierValidation'
 
 const { user } = useAuth()
 const { isSuperadmin, fetchAdminProfile } = useAdminAuth()
@@ -148,6 +149,11 @@ async function saveProfile() {
   if (!user.value?.id || !showPersonalInfoForm.value) return
   error.value = null
   success.value = false
+  const empIdErr = validateEmployeeIdentifier(employeeid.value, 'Employee ID')
+  if (empIdErr) {
+    error.value = empIdErr
+    return
+  }
   saving.value = true
   try {
     const updates = {
@@ -408,7 +414,8 @@ async function updateRole(id: string, roleVal: string) {
                           v-model="employeeid"
                           type="text"
                           autocomplete="off"
-                          placeholder="Employee ID"
+                          placeholder="e.g. ADM-001"
+                          maxlength="100"
                         />
                       </div>
                     </div>

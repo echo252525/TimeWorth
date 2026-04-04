@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import { useAttendance } from '../composables/useAttendance'
@@ -18,7 +18,52 @@ const reportError = ref<string | null>(null)
 const timeFilter = ref<'all' | 'undertime' | 'on_time' | 'overtime'>('all')
 const isMobile = ref(false)
 const showPeriodDropdown = ref(false)
+const showHoursFilterDropdown = ref(false)
 const showCustomDatePicker = ref(false)
+const reportPeriodSelectorRef = ref<HTMLElement | null>(null)
+const customDatePickerRef = ref<HTMLElement | null>(null)
+/** Open panel upward when there isn’t enough viewport space below the period control. */
+const customDatePickerFlipUp = ref(false)
+
+let customDatePickerPlacementListeners: (() => void) | null = null
+
+function detachCustomDatePickerPlacementListeners() {
+  customDatePickerPlacementListeners?.()
+  customDatePickerPlacementListeners = null
+}
+
+async function updateCustomDatePickerPlacement() {
+  await nextTick()
+  const anchor = reportPeriodSelectorRef.value
+  const panel = customDatePickerRef.value
+  if (!anchor) return
+  const margin = 12
+  const anchorRect = anchor.getBoundingClientRect()
+  const panelHeight = panel?.offsetHeight ?? 300
+  const spaceBelow = window.innerHeight - anchorRect.bottom - margin
+  const spaceAbove = anchorRect.top - margin
+  const need = panelHeight + margin
+  if (spaceBelow >= need) {
+    customDatePickerFlipUp.value = false
+  } else if (spaceAbove >= need) {
+    customDatePickerFlipUp.value = true
+  } else {
+    customDatePickerFlipUp.value = spaceAbove > spaceBelow
+  }
+}
+
+function attachCustomDatePickerPlacementListeners() {
+  detachCustomDatePickerPlacementListeners()
+  const bump = () => {
+    void updateCustomDatePickerPlacement()
+  }
+  window.addEventListener('resize', bump)
+  window.addEventListener('scroll', bump, true)
+  customDatePickerPlacementListeners = () => {
+    window.removeEventListener('resize', bump)
+    window.removeEventListener('scroll', bump, true)
+  }
+}
 const customStartDate = ref<string>('')
 const customEndDate = ref<string>('')
 const kpiRecords = ref<AttendanceRow[]>([])
@@ -248,17 +293,28 @@ function formatComparison(diff: number, unit: 'Hrs' | 'days' | 'paid' = 'Hrs'): 
   }
 }
 
+/** Parse `<input type="date">` value (YYYY-MM-DD) as a local calendar day (not UTC midnight). */
+function dateKeyToLocalDate(ymd: string): Date {
+  const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return new Date(ymd)
+}
+
+function localDayRangeIsoFromInputs(startYmd: string, endYmd: string): { start: string; end: string } {
+  const customStart = dateKeyToLocalDate(startYmd)
+  customStart.setHours(0, 0, 0, 0)
+  const customEnd = dateKeyToLocalDate(endYmd)
+  customEnd.setHours(23, 59, 59, 999)
+  return { start: customStart.toISOString(), end: customEnd.toISOString() }
+}
+
 function getReportRange() {
   const end = new Date()
   end.setHours(23, 59, 59, 999)
   const start = new Date(end)
   
   if (reportPeriod.value === 'custom' && customStartDate.value && customEndDate.value) {
-    const customStart = new Date(customStartDate.value)
-    customStart.setHours(0, 0, 0, 0)
-    const customEnd = new Date(customEndDate.value)
-    customEnd.setHours(23, 59, 59, 999)
-    return { start: customStart.toISOString(), end: customEnd.toISOString() }
+    return localDayRangeIsoFromInputs(customStartDate.value, customEndDate.value)
   } else if (reportPeriod.value === 'thisWeek') {
     // Get Monday of current week
     const day = start.getDay()
@@ -320,7 +376,10 @@ const allDatesInPeriod = computed(() => {
   // For custom range, divide into 5 equal periods
   if (reportPeriod.value === 'custom') {
     const periods: { start: Date; end: Date; label: string }[] = []
-    const totalDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+    const totalDays = Math.max(
+      1,
+      Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+    )
     const daysPerPeriod = Math.ceil(totalDays / 5)
     
     for (let i = 0; i < 5; i++) {
@@ -341,43 +400,40 @@ const allDatesInPeriod = computed(() => {
   const current = new Date(startDate)
   
   while (current <= endDate) {
-    list.push({ date: current.toLocaleDateString() })
+    list.push({ date: getLocalDateString(current) })
     current.setDate(current.getDate() + 1)
   }
   
   return list
 })
 
-
 const reportBarData = computed(() => {
   const byDay = reportByDay.value
-  const today = new Date().toLocaleDateString()
+  const today = getLocalDateString(new Date())
   const periods = allDatesInPeriod.value
-  
+
   return periods.map((period, i) => {
     let hours = 0
     let label = ''
-    
+
     if (reportPeriod.value === 'custom' && 'start' in period) {
-      // Sum hours for all days in this period
       const periodStart = period.start
       const periodEnd = period.end
       const current = new Date(periodStart)
-      
+
       while (current <= periodEnd) {
-        const dateStr = current.toLocaleDateString()
+        const dateStr = getLocalDateString(current)
         const rows = byDay[dateStr] ?? []
         hours += rows.reduce((sum, r) => sum + parseHours(r.total_time), 0)
         current.setDate(current.getDate() + 1)
       }
-      
+
       label = period.label
     } else if ('date' in period) {
-      // Daily view for weeks
       const dateStr = period.date
       const rows = byDay[dateStr] ?? []
       hours = rows.reduce((sum, r) => sum + parseHours(r.total_time), 0)
-      const d = new Date(dateStr)
+      const d = dateKeyToLocalDate(dateStr)
       label = !isNaN(d.getTime())
         ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
         : dateStr
@@ -407,13 +463,27 @@ const reportMaxHours = computed(() => Math.max(...reportBarData.value.map(b => b
 
 const chartScaleMax = computed(() => Math.ceil(reportMaxHours.value) || 8)
 
+const timeFilterLabel = computed(() => {
+  const f = timeFilter.value
+  if (f === 'all') return 'All'
+  if (f === 'undertime') return 'Undertime'
+  if (f === 'on_time') return 'On time'
+  return 'Overtime'
+})
+
 const periodLabel = computed(() => {
   if (reportPeriod.value === 'thisWeek') return 'This Week'
   if (reportPeriod.value === 'lastWeek') return 'Last Week'
   if (reportPeriod.value === 'custom') {
     if (customStartDate.value && customEndDate.value) {
-      const start = new Date(customStartDate.value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-      const end = new Date(customEndDate.value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      const start = dateKeyToLocalDate(customStartDate.value).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric'
+      })
+      const end = dateKeyToLocalDate(customEndDate.value).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric'
+      })
       return `${start} - ${end}`
     }
     return 'Custom'
@@ -423,14 +493,17 @@ const periodLabel = computed(() => {
 
 function applyCustomDateRange() {
   if (customStartDate.value && customEndDate.value) {
-    const start = new Date(customStartDate.value)
-    const end = new Date(customEndDate.value)
-    if (start <= end) {
+    const start = dateKeyToLocalDate(customStartDate.value)
+    start.setHours(0, 0, 0, 0)
+    const end = dateKeyToLocalDate(customEndDate.value)
+    end.setHours(0, 0, 0, 0)
+    if (start.getTime() <= end.getTime()) {
+      reportError.value = null
       reportPeriod.value = 'custom'
       showCustomDatePicker.value = false
       fetchReport()
     } else {
-      reportError.value = 'Start date must be before end date'
+      reportError.value = 'Start date must be before or equal to end date'
     }
   } else {
     reportError.value = 'Please select both start and end dates'
@@ -438,15 +511,15 @@ function applyCustomDateRange() {
 }
 
 function openCustomDatePicker() {
-  // Set default dates if not already set
   if (!customStartDate.value || !customEndDate.value) {
     const end = new Date()
     const start = new Date()
-    start.setDate(start.getDate() - 30) // Default to last 30 days
-    const endStr = end.toISOString().split('T')[0]
-    const startStr = start.toISOString().split('T')[0]
-    if (endStr) customEndDate.value = endStr
-    if (startStr) customStartDate.value = startStr
+    start.setDate(start.getDate() - 30)
+    customEndDate.value = getLocalDateString(end)
+    customStartDate.value = getLocalDateString(start)
+  }
+  if (reportPeriod.value !== 'custom') {
+    reportPeriod.value = 'custom'
   }
   showCustomDatePicker.value = true
 }
@@ -495,10 +568,16 @@ function handleClockIn() {
 
 function handleClickOutside(event: MouseEvent) {
   const target = event.target as HTMLElement
-  if (!target.closest('.report-period-selector') && !target.closest('.custom-date-picker')) {
+  if (
+    !target.closest('.report-period-selector') &&
+    !target.closest('.hours-filter-selector')
+  ) {
     showPeriodDropdown.value = false
-    showCustomDatePicker.value = false
+    showHoursFilterDropdown.value = false
   }
+  // Do not close `.custom-date-picker` here: native `<input type="date">` calendars render
+  // outside this subtree, so picking a day would fire "outside" and dismiss before a date is chosen.
+  // Close via × / Cancel / Apply, or when switching to This week / Last week.
 }
 
 onMounted(() => {
@@ -513,8 +592,20 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', checkMobile)
   document.removeEventListener('click', handleClickOutside)
+  detachCustomDatePickerPlacementListeners()
 })
 watch(reportPeriod, () => fetchReport())
+
+watch(showCustomDatePicker, async (open) => {
+  if (open) {
+    await updateCustomDatePickerPlacement()
+    await nextTick()
+    await updateCustomDatePickerPlacement()
+    attachCustomDatePickerPlacementListeners()
+  } else {
+    detachCustomDatePickerPlacementListeners()
+  }
+})
 </script>
 <template>
   <div class="page">
@@ -598,39 +689,106 @@ watch(reportPeriod, () => fetchReport())
         <h2 class="report-title">Timesheet ({{ formatHoursSimple(reportTotalHours) }})</h2>
         <div class="report-header-right">
           <div class="hours-filter">
-            <label class="hours-filter-label" for="hoursFilter">Filter</label>
-            <select id="hoursFilter" v-model="timeFilter" class="hours-filter-select">
-              <option value="all">All</option>
-              <option value="undertime">Undertime (&lt; 8h)</option>
-              <option value="on_time">On time (= 8h)</option>
-              <option value="overtime">Overtime (&gt; 8h)</option>
-            </select>
+            <div class="hours-filter-selector">
+              <button
+                type="button"
+                class="period-btn"
+                aria-haspopup="listbox"
+                :aria-expanded="showHoursFilterDropdown"
+                aria-label="Filter timesheet by hours"
+                @click="showPeriodDropdown = false; showHoursFilterDropdown = !showHoursFilterDropdown"
+              >
+                <span class="period-btn-label">{{ timeFilterLabel }}</span>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <div v-if="showHoursFilterDropdown" class="period-dropdown" role="listbox">
+                <button
+                  type="button"
+                  class="period-option"
+                  :class="{ active: timeFilter === 'all' }"
+                  role="option"
+                  :aria-selected="timeFilter === 'all'"
+                  @click="timeFilter = 'all'; showHoursFilterDropdown = false"
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  class="period-option"
+                  :class="{ active: timeFilter === 'undertime' }"
+                  role="option"
+                  :aria-selected="timeFilter === 'undertime'"
+                  @click="timeFilter = 'undertime'; showHoursFilterDropdown = false"
+                >
+                  Undertime
+                </button>
+                <button
+                  type="button"
+                  class="period-option"
+                  :class="{ active: timeFilter === 'on_time' }"
+                  role="option"
+                  :aria-selected="timeFilter === 'on_time'"
+                  @click="timeFilter = 'on_time'; showHoursFilterDropdown = false"
+                >
+                  On time
+                </button>
+                <button
+                  type="button"
+                  class="period-option"
+                  :class="{ active: timeFilter === 'overtime' }"
+                  role="option"
+                  :aria-selected="timeFilter === 'overtime'"
+                  @click="timeFilter = 'overtime'; showHoursFilterDropdown = false"
+                >
+                  Overtime
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="report-period-selector">
-            <button type="button" class="period-btn" @click="showPeriodDropdown = !showPeriodDropdown">
-              {{ periodLabel }}
+          <div ref="reportPeriodSelectorRef" class="report-period-selector">
+            <button type="button" class="period-btn" @click="showHoursFilterDropdown = false; showPeriodDropdown = !showPeriodDropdown">
+              <span class="period-btn-label">{{ periodLabel }}</span>
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </button>
             <div v-if="showPeriodDropdown" class="period-dropdown">
-              <button type="button" class="period-option" :class="{ active: reportPeriod === 'thisWeek' }" @click="reportPeriod = 'thisWeek'; showPeriodDropdown = false; fetchReport()">This Week</button>
-              <button type="button" class="period-option" :class="{ active: reportPeriod === 'lastWeek' }" @click="reportPeriod = 'lastWeek'; showPeriodDropdown = false; fetchReport()">Last Week</button>
+              <button type="button" class="period-option" :class="{ active: reportPeriod === 'thisWeek' }" @click="reportPeriod = 'thisWeek'; showPeriodDropdown = false; showCustomDatePicker = false; fetchReport()">This Week</button>
+              <button type="button" class="period-option" :class="{ active: reportPeriod === 'lastWeek' }" @click="reportPeriod = 'lastWeek'; showPeriodDropdown = false; showCustomDatePicker = false; fetchReport()">Last Week</button>
               <button type="button" class="period-option" :class="{ active: reportPeriod === 'custom' }" @click="showPeriodDropdown = false; openCustomDatePicker()">Custom</button>
             </div>
-            <div v-if="showCustomDatePicker" class="custom-date-picker">
+            <div
+              v-if="showCustomDatePicker"
+              ref="customDatePickerRef"
+              class="custom-date-picker"
+              :class="{ 'custom-date-picker--flip-up': customDatePickerFlipUp }"
+              @click.stop
+            >
               <div class="custom-date-header">
-                <h3>Select Date Range</h3>
-                <button type="button" class="close-btn" @click="showCustomDatePicker = false">×</button>
+                <h3>Custom range</h3>
+                <button type="button" class="close-btn" aria-label="Close" @click="showCustomDatePicker = false">×</button>
               </div>
+              <p class="custom-date-hint">Pick a start date and an end date, then Apply.</p>
               <div class="custom-date-inputs">
                 <div class="date-input-group">
-                  <label>Start Date</label>
-                  <input type="date" v-model="customStartDate" />
+                  <label for="dashboard-custom-start">Start date</label>
+                  <input
+                    id="dashboard-custom-start"
+                    type="date"
+                    v-model="customStartDate"
+                    :max="customEndDate || undefined"
+                  />
                 </div>
                 <div class="date-input-group">
-                  <label>End Date</label>
-                  <input type="date" v-model="customEndDate" />
+                  <label for="dashboard-custom-end">End date</label>
+                  <input
+                    id="dashboard-custom-end"
+                    type="date"
+                    v-model="customEndDate"
+                    :min="customStartDate || undefined"
+                  />
                 </div>
               </div>
               <div class="custom-date-actions">
@@ -708,7 +866,13 @@ watch(reportPeriod, () => fetchReport())
   </div>
 </template>
 <style scoped>
-.page { width: 100%; max-width: 100%; }
+.page {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
 .left { min-width: 0; display: flex; flex-direction: column; gap: 1.5rem; width: 100%; }
 .hero-report-row { display: grid; grid-template-columns: 1fr; gap: 1.5rem; width: 100%; }
 
@@ -792,13 +956,28 @@ watch(reportPeriod, () => fetchReport())
 }
 
 .kpi-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-.kpi-card { position: relative; padding: 1.25rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 12px; }
+.kpi-card {
+  position: relative;
+  padding: 1.25rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  min-width: 0;
+}
 .kpi-icon { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 0.75rem; }
 .kpi-icon-green { background: rgba(34,197,94,0.15); color: #22c55e; }
 .kpi-icon-blue { background: rgba(59,130,246,0.15); color: #3b82f6; }
 .kpi-icon-orange { background: rgba(249,115,22,0.15); color: #f97316; }
 .kpi-icon-purple { background: rgba(168,85,247,0.15); color: #a855f7; border-radius: 12px; }
-.kpi-comparison { font-size: 0.75rem; color: #22c55e; margin-bottom: 0.5rem; font-weight: 500; }
+.kpi-comparison {
+  font-size: 0.75rem;
+  color: #22c55e;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  line-height: 1.35;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
 .kpi-comparison-positive { color: #22c55e; }
 .kpi-comparison-negative { color: #f87171; }
 .kpi-value { font-size: 2rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.25rem; font-variant-numeric: tabular-nums; line-height: 1.2; }
@@ -832,8 +1011,11 @@ watch(reportPeriod, () => fetchReport())
 .report-header-right {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.75rem;
   margin-left: auto;
+  min-width: 0;
+  justify-content: flex-end;
 }
 
 .hours-filter {
@@ -842,23 +1024,8 @@ watch(reportPeriod, () => fetchReport())
   gap: 0.35rem;
 }
 
-.hours-filter-label {
-  font-size: 0.75rem;
-  color: #94a3b8;
-}
-
-.hours-filter-select {
-  padding: 0.35rem 0.6rem;
-  border-radius: 8px;
-  border: 1px solid rgba(148,163,184,0.4);
-  background: rgba(15,23,42,0.8);
-  color: #e2e8f0;
-  font-size: 0.8125rem;
-}
-
-.hours-filter-select:focus {
-  outline: none;
-  border-color: #38bdf8;
+.hours-filter-selector {
+  position: relative;
 }
 
 .report-title { 
@@ -911,20 +1078,22 @@ watch(reportPeriod, () => fetchReport())
   position: relative; 
 }
 
-.period-btn { 
-  display: flex; 
-  align-items: center; 
-  gap: 0.5rem; 
-  padding: 0.5rem 0.875rem; 
-  border-radius: 8px; 
-  font-size: 0.8125rem; 
-  font-weight: 500; 
-  cursor: pointer; 
-  border: 1px solid var(--border-color); 
-  background: var(--bg-secondary); 
-  color: var(--text-secondary); 
-  transition: all 0.2s ease; 
+.period-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
   position: relative;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .period-btn:hover { 
@@ -933,8 +1102,17 @@ watch(reportPeriod, () => fetchReport())
   border-color: var(--border-light);
 }
 
-.period-btn svg { 
-  flex-shrink: 0; 
+.period-btn-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.period-btn svg {
+  flex-shrink: 0;
   width: 10px;
   height: 10px;
   transition: transform 0.2s ease;
@@ -944,18 +1122,19 @@ watch(reportPeriod, () => fetchReport())
   transform: translateY(1px);
 }
 
-.period-dropdown { 
-  position: absolute; 
-  top: calc(100% + 0.5rem); 
-  left: 0; 
-  background: var(--bg-primary); 
+.period-dropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  left: auto;
+  background: var(--bg-primary);
   backdrop-filter: blur(12px);
-  border: 1px solid var(--border-color); 
-  border-radius: 10px; 
-  padding: 0.375rem; 
-  min-width: 150px; 
-  z-index: 10; 
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4); 
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 0.375rem;
+  min-width: 150px;
+  z-index: 10;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
 .period-option { 
@@ -1260,25 +1439,37 @@ watch(reportPeriod, () => fetchReport())
     padding: 0.4375rem 0.75rem;
     font-size: 0.75rem;
   }
-  
+
   .period-dropdown {
     min-width: 140px;
-    left: 0;
+    right: 0;
+    left: auto;
   }
 }
 
-/* Custom Date Picker */
+/* Custom Date Picker — right-aligned; vertical flip via .custom-date-picker--flip-up (see script) */
 .custom-date-picker {
   position: absolute;
   top: calc(100% + 0.5rem);
-  left: 0;
+  bottom: auto;
+  right: 0;
+  left: auto;
+  width: min(300px, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  max-height: min(85dvh, calc(100vh - 2rem));
+  overflow-y: auto;
+  box-sizing: border-box;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 12px;
   padding: 1.25rem;
-  min-width: 280px;
   z-index: 20;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.custom-date-picker.custom-date-picker--flip-up {
+  top: auto;
+  bottom: calc(100% + 0.5rem);
 }
 
 .custom-date-header {
@@ -1293,6 +1484,13 @@ watch(reportPeriod, () => fetchReport())
   font-size: 1rem;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.custom-date-hint {
+  margin: 0 0 0.875rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
 }
 
 .close-btn {
@@ -1336,6 +1534,9 @@ watch(reportPeriod, () => fetchReport())
 }
 
 .date-input-group input[type="date"] {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 2.5rem;
   padding: 0.5rem 0.75rem;
   border-radius: 8px;
   border: 1px solid var(--border-color);
@@ -1383,14 +1584,64 @@ watch(reportPeriod, () => fetchReport())
 }
 
 @media (max-width: 767px) {
-  .report-header { flex-wrap: wrap; gap: 0.75rem; }
-  .report-period-selector { width: 100%; justify-content: flex-end; }
-  
-  .custom-date-picker {
+  .report-header {
+    gap: 0.75rem;
+  }
+
+  .report-title {
+    width: 100%;
+    min-width: 0;
+    padding-right: 0;
+  }
+
+  /* One row: hours filter | period — equal columns */
+  .report-header-right {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto;
+    gap: 0.5rem;
+    width: 100%;
+    margin-left: 0;
+    align-items: stretch;
+  }
+
+  .hours-filter,
+  .hours-filter-selector,
+  .report-period-selector {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .report-period-selector {
+    justify-content: stretch;
+  }
+
+  .hours-filter .period-btn,
+  .report-period-selector > .period-btn {
+    width: 100%;
+    min-width: 0;
+    justify-content: space-between;
+    overflow: hidden;
+  }
+
+  .hours-filter .period-btn {
+    text-align: left;
+  }
+
+  /* Centered overlay: avoids clipping and `100vw` horizontal scroll next to scrollbars */
+  .custom-date-picker,
+  .custom-date-picker.custom-date-picker--flip-up {
+    position: fixed;
+    left: 50%;
     right: auto;
-    left: 0;
-    min-width: calc(100vw - 2rem);
+    top: 50%;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+    width: min(320px, calc(100vw - 2rem));
     max-width: calc(100vw - 2rem);
+    z-index: 120;
+    max-height: min(85dvh, calc(100vh - 4rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)));
   }
 }
 .muted { color: var(--text-tertiary); }

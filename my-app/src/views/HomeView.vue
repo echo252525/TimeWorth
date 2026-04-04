@@ -112,7 +112,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <h2 id="about-pc-worth-heading" class="section-title text-center">About PC Worth</h2>
         <div class="about-grid">
           <article class="about-card">
-            <h3>About the Company</h3>
             <p>
               PC Worth is a Philippine-based technology retail company specializing in computer hardware, custom PC
               builds, and IT solutions. The company provides affordable and high-performance computer products for
@@ -189,7 +188,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
     <footer class="footer">
       <p>© 2026 PC Worth. All Rights Reserved.</p>
-      <p>Developed by TUP Students.</p>
+      <p>Developed by TUP BET-CpEt Students. Batch 2026.</p>
     </footer>
 
     <div class="floating-theme-toggle">

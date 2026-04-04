@@ -121,7 +121,7 @@ export function useAdminAuth() {
     const { error: insertErr } = await supabase.from('admin').insert({
       id: authData.user.id,
       name: p.name,
-      employeeid: p.employeeid,
+      employeeid: p.employeeid.trim(),
       position_in_company: p.position_in_company,
       email: p.email,
       role: 'pending'

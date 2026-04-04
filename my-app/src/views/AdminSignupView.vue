@@ -3,6 +3,7 @@ import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AuthLayout from '../components/AuthLayout.vue'
 import { useAdminAuth } from '../composables/useAdminAuth'
+import { validateEmployeeIdentifier } from '../lib/employeeIdentifierValidation'
 
 const router = useRouter()
 const { signUpAdmin } = useAdminAuth()
@@ -79,6 +80,11 @@ async function onSubmit() {
     error.value = 'Passwords do not match'
     return
   }
+  const empIdErr = validateEmployeeIdentifier(form.employeeid, 'Employee ID')
+  if (empIdErr) {
+    error.value = empIdErr
+    return
+  }
   isLoading.value = true
   error.value = null
   const r = await signUpAdmin({
@@ -144,7 +150,7 @@ async function onSubmit() {
         </div>
       </div>
       <div ref="step2Panel" v-show="signupStep === 2" class="signup-step-panel">
-        <div class="field"><label for="employeeid">Employee ID</label><input id="employeeid" v-model="form.employeeid" type="text" required placeholder="ADM-001" autocomplete="off" /></div>
+        <div class="field"><label for="employeeid">Employee ID</label><input id="employeeid" v-model="form.employeeid" type="text" required placeholder="e.g. ADM-001" autocomplete="off" maxlength="100" /></div>
         <div class="field"><label for="position">Position</label><input id="position" v-model="form.position_in_company" type="text" required placeholder="e.g. Admin" autocomplete="organization-title" /></div>
         <div class="field"><label for="email">Email</label><input id="email" v-model="form.email" type="email" required placeholder="admin@company.com" autocomplete="email" /></div>
       </div>

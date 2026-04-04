@@ -293,12 +293,35 @@ function isActive(path: string) {
   .sidebar.mobile-open { transform: translateX(0); }
   .sidebar.collapsed { width: 260px; }
   .collapse-btn { display: none; }
-  .main { margin-left: 0; padding-top: 52px; }
+  .main {
+    margin-left: 0;
+    padding-top: 52px;
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
   .main-header { padding-top: 0.5rem; flex-direction: column; align-items: flex-start; gap: 0.75rem; }
-  .header-title-section { width: 100%; }
-  .header-logo { height: 30px; }
+  .header-title-section {
+    width: 100%;
+    min-width: 0;
+    align-items: flex-start;
+  }
+  .header-logo { height: 30px; flex-shrink: 0; }
+  .header-title-copy { min-width: 0; }
   .app-title { font-size: 1.125rem; }
-  .app-tagline { font-size: 0.75rem; }
+  .app-tagline {
+    font-size: 0.75rem;
+    line-height: 1.35;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+  .main-content {
+    padding: 1rem max(1rem, env(safe-area-inset-right)) 1rem max(1rem, env(safe-area-inset-left));
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
 }
 .overlay-enter-active, .overlay-leave-active { transition: opacity 0.25s ease; }
 .overlay-enter-from, .overlay-leave-to { opacity: 0; }

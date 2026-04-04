@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import supabase from '../lib/supabaseClient'
+import { validateEmployeeIdentifier } from '../lib/employeeIdentifierValidation'
 import { useAuth } from '../composables/useAuth'
 
 const BUCKET = 'employee_profile'
@@ -664,8 +665,9 @@ async function save() {
     error.value = 'Position is required'
     return
   }
-  if (!trimmedEmp || !/^[a-zA-Z0-9]+$/.test(trimmedEmp)) {
-    error.value = 'Employee number must contain only letters and numbers'
+  const empErr = validateEmployeeIdentifier(String(employeeNo.value ?? ''))
+  if (empErr) {
+    error.value = empErr
     return
   }
   if (!trimmedPhone) {
@@ -798,9 +800,8 @@ async function save() {
                         v-model="employeeNo"
                         type="text"
                         autocomplete="off"
-                        placeholder="e.g. A1001"
-                        pattern="[A-Za-z0-9]+"
-                        title="Letters and numbers only"
+                        placeholder="e.g. A-1001, EMP/01"
+                        maxlength="100"
                       />
                     </div>
                   </div>

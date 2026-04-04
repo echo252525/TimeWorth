@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import AuthLayout from '../components/AuthLayout.vue'
 import { useAuth } from '../composables/useAuth'
 import supabase from '../lib/supabaseClient'
+import { validateEmployeeIdentifier } from '../lib/employeeIdentifierValidation'
 
 const router = useRouter()
 const { signUp, isLoading, error } = useAuth()
@@ -154,9 +155,9 @@ async function onSubmit() {
       </ol>
       <form class="auth-form signup-form-steps" @submit.prevent="onSubmit">
       <div ref="step1Panel" v-show="signupStep === 1" class="signup-step-panel">
-        <div class="field"><label for="first_name">FIRST NAME</label><input id="first_name" v-model="form.first_name" type="text" required placeholder="First name" autocomplete="given-name" /></div>
-        <div class="field"><label for="last_name">LAST NAME</label><input id="last_name" v-model="form.last_name" type="text" required placeholder="Last name" autocomplete="family-name" /></div>
-        <div class="field"><label for="middle_initial">MIDDLE INITIAL</label><input id="middle_initial" v-model="form.middle_initial" type="text" maxlength="8" placeholder="Optional" autocomplete="additional-name" /></div>
+        <div class="field"><label for="first_name">FIRST NAME*</label><input id="first_name" v-model="form.first_name" type="text" required placeholder="First name" autocomplete="given-name" /></div>
+        <div class="field"><label for="middle_initial">MIDDLE INITIAL (Optional)</label><input id="middle_initial" v-model="form.middle_initial" type="text" maxlength="8" placeholder="M.I." autocomplete="additional-name" /></div>
+        <div class="field"><label for="last_name">LAST NAME*</label><input id="last_name" v-model="form.last_name" type="text" required placeholder="Last name" autocomplete="family-name" /></div>
       </div>
       <div ref="step2Panel" v-show="signupStep === 2" class="signup-step-panel">
         <div class="field">
@@ -181,7 +182,7 @@ async function onSubmit() {
             :disabled="positionsLoading"
           />
         </div>
-        <div class="field"><label for="empno">EMPLOYEE NO.</label><input id="empno" v-model="form.employee_no" type="text" required autocomplete="off" placeholder="Letters and numbers only" pattern="[A-Za-z0-9]+" title="Letters and numbers only" /></div>
+        <div class="field"><label for="empno">EMPLOYEE NO.</label><input id="empno" v-model="form.employee_no" type="text" required autocomplete="off" placeholder="ABC-123" :maxlength="20" /></div>
         <div class="field"><label for="phone">PHONE NUMBER</label><input id="phone" v-model="form.phone_number" type="tel" required autocomplete="tel" placeholder="+63 9XX XXX XXXX" /></div>
         <div class="field"><label for="email">COMPANY EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="company.email@pcworth.com" autocomplete="email" /></div>
       </div>
