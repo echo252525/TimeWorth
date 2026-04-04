@@ -5,7 +5,14 @@ import autoTable from 'jspdf-autotable'
 import supabase from '../lib/supabaseClient'
 import { user } from '../composables/useAuth'
 import { isTravelFlagged, getBranch, parseLocation, getLocalDateString, storedToRealInstant, type AttendanceRow, type WorkModality } from '../composables/useAttendance'
-import { ClockIcon, PencilSquareIcon, CheckCircleIcon, XMarkIcon, PhotoIcon } from '@heroicons/vue/24/outline'
+import {
+  ClockIcon,
+  PencilSquareIcon,
+  CheckCircleIcon,
+  XMarkIcon,
+  PhotoIcon,
+  ChevronDownIcon
+} from '@heroicons/vue/24/outline'
 
 const ATTENDANCE_SELECT =
   'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,created_at,updated_at,work_modality,facial_verifications_id,wfh_pic_url'
@@ -36,10 +43,9 @@ const showCustomDateModal = ref(false)
 // Modality filter
 const modalityFilter = ref<'all' | 'office' | 'wfh'>('all')
 
-// View toggles (Times, Breaks, Insights)
+// View toggles (clock columns & breaks; date/modality/time filters live in table headers)
 const showTimes = ref(true)
 const showBreaks = ref(true)
-const showInsights = ref(true)
 
 // Expanded row state for multiple entries
 const expandedRow = ref<string | null>(null)
@@ -768,6 +774,22 @@ interface DayRow {
   hasWfhPhoto: boolean
   firstWfhPhotoPath: string | null
 }
+
+/** Same bands as the Time column filter (8h target day). */
+function timeComplianceLabel(row: DayRow): string {
+  if (row.totalSeconds <= 0) return '—'
+  const hours = row.totalSeconds / 3600
+  if (hours < 8) return 'Undertime'
+  if (hours >= 7.9 && hours <= 8.1) return 'On time'
+  if (hours > 8.1) return 'Overtime'
+  return '—'
+}
+
+/** Colspan for expanded detail row (all columns after Date). */
+const timesheetExpandedColspan = computed(
+  () => (showTimes.value ? 4 : 0) + (showBreaks.value ? 1 : 0) + 3
+)
+
 // Get all unique dates from filtered rows (local date for correct grouping)
 const allDates = computed(() => {
   const dateSet = new Set<string>()
@@ -1249,70 +1271,66 @@ async function confirmEditRequest() {
 
 <template>
   <div class="page">
-    <section class="controls" aria-label="Timesheet filters">
-      <div class="controls-row">
-        <label class="control">
-          <span class="control-label">Date</span>
-          <select v-model="dateFilter" class="control-input" aria-label="Date filter">
-            <option value="today">Today</option>
-            <option value="yesterday">Yesterday</option>
-            <option value="last7Days">Last 7 Days</option>
-            <option value="lastMonth">Last Month</option>
-            <option value="custom">Custom Range</option>
-          </select>
-        </label>
-        <span v-if="dateFilter === 'custom' && formatDateRange()" class="custom-range-display">
-          {{ formatDateRange() }}
-        </span>
-        <label class="control">
-          <span class="control-label">Time</span>
-          <select v-model="timeFilter" class="control-input" aria-label="Time filter">
-            <option value="all">All</option>
-            <option value="undertime">Undertime</option>
-            <option value="enough">In Time</option>
-            <option value="overtime">Overtime</option>
-          </select>
-        </label>
-        <label class="control">
-          <span class="control-label">Modality</span>
-          <select v-model="modalityFilter" class="control-input" aria-label="Modality filter">
-            <option value="all">All</option>
-            <option value="office">Office</option>
-            <option value="wfh">WFH</option>
-          </select>
-        </label>
-      </div>
-      <div class="controls-row controls-row-toggles">
-        <label class="filter-check">
-          <input v-model="showTimes" type="checkbox" class="filter-check-input" />
-          <span class="filter-check-box"></span>
-          <span class="filter-check-label">Show time columns</span>
-        </label>
-        <label class="filter-check">
-          <input v-model="showBreaks" type="checkbox" class="filter-check-input" />
-          <span class="filter-check-box"></span>
-          <span class="filter-check-label">Show breaks</span>
-        </label>
-      </div>
-    </section>
-
     <p v-if="error" class="banner-error">{{ error }}</p>
     <div v-if="isLoading" class="loading-state">Loading…</div>
 
     <div v-else class="card-wrap">
       <div class="table-card">
+        <p v-if="dateFilter === 'custom' && formatDateRange()" class="custom-range-banner">
+          {{ formatDateRange() }}
+        </p>
         <div class="table-scroll">
         <table class="data-table ts-table">
           <thead>
             <tr>
-              <th>Date</th>
-              <th v-if="showTimes">Clock In</th>
-              <th v-if="showTimes">Clock Out</th>
-              <th v-if="showTimes">Total Hours</th>
-              <th v-if="showBreaks">Planned Breaks</th>
-              <th>Location</th>
-              <th v-if="showInsights">Modality</th>
-              <th>Edit</th>
+              <th class="th-in-table-filter" scope="col" @click.stop>
+                <div class="th-filter-wrap">
+                  <span>Date</span>
+                  <div class="th-filter-hit">
+                    <select v-model="dateFilter" class="filter-select filter-select--in-table" aria-label="Date filter">
+                      <option value="today">Today</option>
+                      <option value="yesterday">Yesterday</option>
+                      <option value="last7Days">Last 7 Days</option>
+                      <option value="lastMonth">Last Month</option>
+                      <option value="custom">Custom Range</option>
+                    </select>
+                    <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                  </div>
+                </div>
+              </th>
+              <th v-if="showTimes" scope="col">Clock In</th>
+              <th v-if="showTimes" scope="col">Clock Out</th>
+              <th v-if="showTimes" scope="col">Total Hours</th>
+              <th v-if="showTimes" class="th-in-table-filter" scope="col" @click.stop>
+                <div class="th-filter-wrap">
+                  <span>Time</span>
+                  <div class="th-filter-hit">
+                    <select v-model="timeFilter" class="filter-select filter-select--in-table" aria-label="Time filter">
+                      <option value="all">All</option>
+                      <option value="undertime">Undertime</option>
+                      <option value="enough">On time</option>
+                      <option value="overtime">Overtime</option>
+                    </select>
+                    <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                  </div>
+                </div>
+              </th>
+              <th v-if="showBreaks" scope="col">Planned Breaks</th>
+              <th scope="col">Location</th>
+              <th class="th-in-table-filter" scope="col" @click.stop>
+                <div class="th-filter-wrap">
+                  <span>Modality</span>
+                  <div class="th-filter-hit">
+                    <select v-model="modalityFilter" class="filter-select filter-select--in-table" aria-label="Modality filter">
+                      <option value="all">All</option>
+                      <option value="office">Office</option>
+                      <option value="wfh">WFH</option>
+                    </select>
+                    <ChevronDownIcon class="select-chevron select-chevron--in-table" aria-hidden="true" />
+                  </div>
+                </div>
+              </th>
+              <th scope="col">Edit</th>
             </tr>
           </thead>
           <tbody>
@@ -1332,6 +1350,7 @@ async function confirmEditRequest() {
                 <td v-if="showTimes" class="ts-cell">{{ row.clockIn }}</td>
                 <td v-if="showTimes" class="ts-cell">{{ row.clockOut }}</td>
                 <td v-if="showTimes" class="ts-cell ts-total">{{ row.total }}</td>
+                <td v-if="showTimes" class="ts-cell ts-time-compliance">{{ timeComplianceLabel(row) }}</td>
                 <td v-if="showBreaks" class="ts-cell">{{ row.plannedBreaks }}</td>
                 <td class="ts-cell">
                   <span v-if="row.hasMultipleEntries && row.citySummary.includes('locations')" class="location-summary">{{ row.citySummary }}</span>
@@ -1347,7 +1366,7 @@ async function confirmEditRequest() {
                     <PhotoIcon class="wfh-photo-icon" />
                   </button>
                 </td>
-                <td v-if="showInsights" class="ts-cell">
+                <td class="ts-cell td-muted">
                   <span>{{ row.modality }}</span>
                 </td>
                 <td class="ts-cell ts-edit-cell">
@@ -1381,7 +1400,7 @@ async function confirmEditRequest() {
                   :key="`expanded-${row.dateKey}`"
                   class="ts-row-expanded"
                 >
-                  <td :colspan="(showTimes ? 3 : 0) + (showBreaks ? 1 : 0) + (showInsights ? 1 : 0) + 2" class="ts-expanded-content">
+                  <td :colspan="timesheetExpandedColspan" class="ts-expanded-content">
                     <div class="ts-expanded-header">All Clock Entries ({{ row.entryCount }})</div>
                     <div class="ts-expanded-entries">
                       <div v-for="(entry, idx) in row.entries" :key="idx" class="ts-entry-item">
@@ -1430,8 +1449,20 @@ async function confirmEditRequest() {
       </div>
       <p v-if="!tableRows.length" class="empty-hint">No attendance records found.</p>
     </div>
-
-    <div class="table-toolbar">
+    
+    <div class="table-toolbar" aria-label="Timesheet actions">
+      <div class="table-toolbar-toggles" role="group" aria-label="Table column visibility">
+        <label class="filter-check">
+          <input v-model="showTimes" type="checkbox" class="filter-check-input" />
+          <span class="filter-check-box"></span>
+          <span class="filter-check-label">Show time columns</span>
+        </label>
+        <label class="filter-check">
+          <input v-model="showBreaks" type="checkbox" class="filter-check-input" />
+          <span class="filter-check-box"></span>
+          <span class="filter-check-label">Show breaks</span>
+        </label>
+      </div>
       <button type="button" class="btn btn-primary" :disabled="!dayGroups.length" @click="downloadPDF">
         Download Timesheet
       </button>
@@ -1557,6 +1588,11 @@ async function confirmEditRequest() {
   border-top: 1px solid var(--border-color);
   align-items: center;
 }
+.controls--toggles-only .controls-row-toggles {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
 .control {
   display: flex;
   flex-direction: column;
@@ -1601,6 +1637,15 @@ async function confirmEditRequest() {
   background: var(--bg-secondary);
   overflow: hidden;
 }
+.custom-range-banner {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+}
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -1617,6 +1662,58 @@ async function confirmEditRequest() {
   font-weight: 600;
   border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
+}
+.th-in-table-filter {
+  vertical-align: middle;
+}
+.th-filter-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+}
+.th-filter-hit {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+.filter-select {
+  appearance: none;
+  width: 100%;
+  padding: 0.5rem 2rem 0.5rem 0.875rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.filter-select:focus {
+  outline: none;
+  border-color: var(--accent, #0d9488);
+}
+.filter-select--in-table {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border-radius: 6px;
+  opacity: 0;
+  cursor: pointer;
+}
+.th-filter-hit .select-chevron {
+  position: absolute;
+  right: 0.35rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--text-tertiary);
+  pointer-events: none;
 }
 .data-table td {
   padding: 0.7rem 1rem;
@@ -1638,9 +1735,16 @@ async function confirmEditRequest() {
 .table-toolbar {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
   margin-top: 0.75rem;
+}
+.table-toolbar-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
 }
 
 .filter-check {
@@ -1691,13 +1795,14 @@ async function confirmEditRequest() {
 
 /* Mobile: allow horizontal scroll for wide tables */
 @media (max-width: 767px) {
-  .controls-row .control {
-    min-width: 0;
-    flex: 1 1 100%;
+  .table-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
-  .custom-range-display {
-    width: 100%;
-    box-sizing: border-box;
+  .table-toolbar-toggles {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.65rem;
   }
   .card-wrap {
     margin-bottom: 0.5rem;
@@ -1742,6 +1847,13 @@ async function confirmEditRequest() {
 
 .ts-cell { white-space: nowrap; }
 .ts-total { font-weight: 500; }
+.ts-time-compliance {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.data-table td.td-muted {
+  color: var(--text-secondary);
+}
 .ts-row-multiple {
   background: rgba(59, 130, 246, 0.05);
   border-left: 3px solid rgba(59, 130, 246, 0.5);
@@ -1939,17 +2051,6 @@ async function confirmEditRequest() {
 }
 .btn-primary:hover:not(:disabled) {
   opacity: 0.92;
-}
-
-.custom-range-display {
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
-  font-weight: 600;
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-tertiary);
-  border-radius: 10px;
-  border: 1px solid var(--border-light);
-  align-self: flex-end;
 }
 
 .wfh-photo-btn {
