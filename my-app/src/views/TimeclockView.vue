@@ -73,7 +73,11 @@ let circle: L.Circle | null = null
 let userMarker: L.Marker | null = null
 let userLabelMarker: L.Marker | null = null
 let centerMarker: L.Marker | null = null
-let liveWatchId: number | null = null
+let userMarkerAnimRaf: number | null = null
+let userMarkerLastIconSig = ''
+const USER_MARKER_MOVE_MS = 400
+let liveLocationIntervalId: number | null = null
+let livePollInFlight = false
 
 /** Office geofence from `geolocation` where `geolocation_status` is true (admin System configuration). */
 interface OfficeGeofenceRow {
@@ -155,9 +159,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   closeLivenessRealtime()
-  if (liveWatchId !== null && navigator.geolocation && 'clearWatch' in navigator.geolocation) {
-    navigator.geolocation.clearWatch(liveWatchId)
-    liveWatchId = null
+  cancelUserMarkerMoveAnimation()
+  if (liveLocationIntervalId !== null) {
+    clearInterval(liveLocationIntervalId)
+    liveLocationIntervalId = null
   }
   centerMarker?.remove()
   userMarker?.remove()
@@ -193,22 +198,46 @@ const mapCenter = computed(() => {
 
 const userLoc = computed(() => liveLocation.value ?? locationIn.value ?? locationOut.value ?? null)
 
+/** Prefer live GPS so geofence + Continue react in real time while moving. */
+const officeGeofenceCheckPos = computed(() => {
+  if (workModality.value !== 'office' || step.value !== 'choose_modality') return null
+  return userLoc.value ?? locationIn.value ?? null
+})
+
 const isOutsideOfficeRadius = computed(() => {
   if (workModality.value !== 'office' || step.value !== 'choose_modality') return false
-  if (!officeGeofence.value || !locationIn.value) return false
+  if (!officeGeofence.value) return false
+  const pos = officeGeofenceCheckPos.value
+  if (!pos) return false
   const g = officeGeofence.value
-  return distanceMeters(locationIn.value, { lat: g.latitude, lng: g.longitude }) > g.radius_meters
+  return distanceMeters(pos, { lat: g.latitude, lng: g.longitude }) > g.radius_meters
 })
 
 const chooseModalityContinueDisabled = computed(() => {
   if (isLoading.value) return true
-  if ((officeFetchingLocation.value || wfhFetchingLocation.value) && !locationIn.value) return true
+  const pos = userLoc.value ?? locationIn.value
+  if ((officeFetchingLocation.value || wfhFetchingLocation.value) && !pos) return true
   if (workModality.value !== 'office') return false
   if (officeGeofenceLoading.value) return true
   if (!officeGeofence.value) return true
-  if (!locationIn.value) return false
+  if (!pos) return true
   return isOutsideOfficeRadius.value
 })
+
+watch(
+  () => [isOutsideOfficeRadius.value, step.value, workModality.value] as const,
+  () => {
+    if (
+      step.value === 'choose_modality' &&
+      workModality.value === 'office' &&
+      !isOutsideOfficeRadius.value &&
+      locationError.value &&
+      (locationError.value.includes('geofence') || locationError.value.includes('Move closer'))
+    ) {
+      locationError.value = null
+    }
+  }
+)
 
 async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
   try {
@@ -272,27 +301,107 @@ function createUserMarkerIcon(): L.DivIcon {
   })
 }
 
-function updateUserMarker() {
-  if (!map) return
-  userMarker?.remove()
-  userLabelMarker?.remove()
+function cancelUserMarkerMoveAnimation() {
+  if (userMarkerAnimRaf != null) {
+    cancelAnimationFrame(userMarkerAnimRaf)
+    userMarkerAnimRaf = null
+  }
+}
+
+function bindUserMarkerTooltip(mark: L.Marker) {
   const loc = userLoc.value
-  if (loc) {
-    const icon = createUserMarkerIcon()
-    userMarker = L.marker([loc.lat, loc.lng], { icon }).addTo(map!)
-    const fullAddress = workModality.value === 'wfh' && wfhAddress.value
-      ? wfhAddress.value
-      : (workModality.value === 'office' && officeUserAddress.value)
-        ? officeUserAddress.value
-        : `${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`
-    userMarker.bindTooltip(
-      `<div class="map-tooltip-inner map-tooltip-you"><strong></strong><span class="map-tooltip-address" title="${escapeHtml(fullAddress)}">${escapeHtml(fullAddress)}</span></div>`,
-      { permanent: false, direction: 'top', offset: [0, -USER_MARKER_SIZE - 8], className: 'map-bound-tooltip map-bound-tooltip-user', sticky: true }
-    )
-  } else {
+  if (!loc) return
+  const fullAddress = workModality.value === 'wfh' && wfhAddress.value
+    ? wfhAddress.value
+    : (workModality.value === 'office' && officeUserAddress.value)
+      ? officeUserAddress.value
+      : `${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`
+  mark.bindTooltip(
+    `<div class="map-tooltip-inner map-tooltip-you"><strong></strong><span class="map-tooltip-address" title="${escapeHtml(fullAddress)}">${escapeHtml(fullAddress)}</span></div>`,
+    { permanent: false, direction: 'top', offset: [0, -USER_MARKER_SIZE - 8], className: 'map-bound-tooltip map-bound-tooltip-user', sticky: true }
+  )
+}
+
+function animateUserMarkerTo(targetLat: number, targetLng: number, onDone?: () => void) {
+  if (!userMarker || !map) {
+    onDone?.()
+    return
+  }
+  const start = userMarker.getLatLng()
+  const startLat = start.lat
+  const startLng = start.lng
+  const jumpM = distanceMeters({ lat: startLat, lng: startLng }, { lat: targetLat, lng: targetLng })
+  if (jumpM < 0.5) {
+    onDone?.()
+    return
+  }
+  if (jumpM > 50_000) {
+    cancelUserMarkerMoveAnimation()
+    userMarker.setLatLng([targetLat, targetLng])
+    onDone?.()
+    return
+  }
+  cancelUserMarkerMoveAnimation()
+  const t0 = performance.now()
+  const easeInOutQuad = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2)
+  const frame = (now: number) => {
+    if (!userMarker) {
+      userMarkerAnimRaf = null
+      onDone?.()
+      return
+    }
+    const u = Math.min(1, (now - t0) / USER_MARKER_MOVE_MS)
+    const eased = easeInOutQuad(u)
+    const lat = startLat + (targetLat - startLat) * eased
+    const lng = startLng + (targetLng - startLng) * eased
+    userMarker.setLatLng([lat, lng])
+    if (u < 1) {
+      userMarkerAnimRaf = requestAnimationFrame(frame)
+    } else {
+      userMarkerAnimRaf = null
+      onDone?.()
+    }
+  }
+  userMarkerAnimRaf = requestAnimationFrame(frame)
+}
+
+function updateUserMarker(animateMove = false) {
+  if (!map) return
+  const loc = userLoc.value
+  const iconSig = `${userProfileUrl.value ?? ''}|${userInitial.value}`
+  if (!loc) {
+    cancelUserMarkerMoveAnimation()
+    userMarker?.remove()
+    userLabelMarker?.remove()
     userMarker = null
     userLabelMarker = null
+    userMarkerLastIconSig = ''
+    return
   }
+  if (!userMarker) {
+    cancelUserMarkerMoveAnimation()
+    const icon = createUserMarkerIcon()
+    userMarker = L.marker([loc.lat, loc.lng], { icon }).addTo(map!)
+    userMarkerLastIconSig = iconSig
+    bindUserMarkerTooltip(userMarker)
+    return
+  }
+  if (iconSig !== userMarkerLastIconSig) {
+    cancelUserMarkerMoveAnimation()
+    userMarker.remove()
+    const icon = createUserMarkerIcon()
+    userMarker = L.marker([loc.lat, loc.lng], { icon }).addTo(map!)
+    userMarkerLastIconSig = iconSig
+    bindUserMarkerTooltip(userMarker)
+    return
+  }
+  if (animateMove) {
+    animateUserMarkerTo(loc.lat, loc.lng, () => bindUserMarkerTooltip(userMarker!))
+    return
+  }
+  cancelUserMarkerMoveAnimation()
+  userMarker.setLatLng([loc.lat, loc.lng])
+  bindUserMarkerTooltip(userMarker)
 }
 
 const DEFAULT_MAP_VIEW = { lat: 14.5995, lng: 120.9842, zoom: 13 }
@@ -372,26 +481,34 @@ function updateEdgeIndicators() {
   }
 }
 
-function updateMapView() {
+/**
+ * @param preserveViewport When true (e.g. live GPS poll), update layers/markers only — do not setView/fitBounds so user zoom/pan is kept.
+ * @param animateUserMove When true with preserveViewport, ease the user marker between positions (live GPS).
+ */
+function updateMapView(preserveViewport = false, animateUserMove = false) {
   if (!map) return
   if (step.value === 'idle') {
     circle?.remove()
     centerMarker?.remove()
     const live = userLoc.value
-    if (live) {
-      map.setView([live.lat, live.lng], 17)
-    } else {
-      map.setView([DEFAULT_MAP_VIEW.lat, DEFAULT_MAP_VIEW.lng], DEFAULT_MAP_VIEW.zoom)
+    if (!preserveViewport) {
+      if (live) {
+        map.setView([live.lat, live.lng], 17)
+      } else {
+        map.setView([DEFAULT_MAP_VIEW.lat, DEFAULT_MAP_VIEW.lng], DEFAULT_MAP_VIEW.zoom)
+      }
     }
-    updateUserMarker()
+    updateUserMarker(animateUserMove)
     return
   }
   if (workModality.value === 'wfh') {
     circle?.remove()
     updateCenterMarker()
-    updateUserMarker()
-    const c = mapCenter.value
-    map.setView([c.lat, c.lng], 16)
+    updateUserMarker(animateUserMove)
+    if (!preserveViewport) {
+      const c = mapCenter.value
+      map.setView([c.lat, c.lng], 16)
+    }
     nextTick(() => updateEdgeIndicators())
     return
   }
@@ -405,20 +522,22 @@ function updateMapView() {
   circle.setRadius(radius)
   if (!map.hasLayer(circle)) circle.addTo(map!)
   updateCenterMarker()
-  updateUserMarker()
+  updateUserMarker(animateUserMove)
   const loc = userLoc.value
-  if (loc) {
-    const branchPoint = L.latLng(c.lat, c.lng)
-    const userPoint = L.latLng(loc.lat, loc.lng)
-    const bounds = L.latLngBounds([branchPoint, userPoint]).pad(0.15)
-    map.fitBounds(bounds, { maxZoom: 17, padding: [24, 24] })
-  } else {
-    map.setView([c.lat, c.lng], 16)
+  if (!preserveViewport) {
+    if (loc) {
+      const branchPoint = L.latLng(c.lat, c.lng)
+      const userPoint = L.latLng(loc.lat, loc.lng)
+      const bounds = L.latLngBounds([branchPoint, userPoint]).pad(0.15)
+      map.fitBounds(bounds, { maxZoom: 17, padding: [24, 24] })
+    } else {
+      map.setView([c.lat, c.lng], 16)
+    }
   }
   nextTick(() => updateEdgeIndicators())
 }
 
-watch([mapCenter, userLoc, workModality, activeBranch, step, locationIn, wfhAddress, officeUserAddress, userProfileUrl, officeGeofence], () => {
+watch([mapCenter, workModality, activeBranch, step, locationIn, locationOut, wfhAddress, officeUserAddress, userProfileUrl, officeGeofence], () => {
   updateMapView()
   nextTick(() => updateEdgeIndicators())
 }, { flush: 'post' })
@@ -546,33 +665,52 @@ watch(mapContainer, (el) => {
   if (el && !map) initMap()
 })
 
-/** Prefer fresh fixes; high accuracy uses more power but matches GPS / fused location better. */
-const GEO_LIVE_OPTIONS: PositionOptions = {
+/** Map preview: poll often with short timeout so the marker tracks movement without stacking requests. */
+const LIVE_LOCATION_POLL_MS = 1000
+const GEO_LIVE_POLL_OPTIONS: PositionOptions = {
   enableHighAccuracy: true,
   maximumAge: 0,
-  timeout: 30000
+  timeout: 2500
 }
 
 function startLiveLocationWatch() {
   if (!navigator.geolocation) return
-  try {
-    liveWatchId = navigator.geolocation.watchPosition(
+  if (liveLocationIntervalId !== null) {
+    clearInterval(liveLocationIntervalId)
+    liveLocationIntervalId = null
+  }
+  const tick = () => {
+    if (livePollInFlight) return
+    livePollInFlight = true
+    navigator.geolocation.getCurrentPosition(
       (pos) => {
+        livePollInFlight = false
         liveLocation.value = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude
         }
+        console.log('[Timeclock] live GPS update', {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracyM: pos.coords.accuracy
+        })
         nextTick(() => {
-          updateMapView()
+          updateMapView(true, true)
+          nextTick(() => updateEdgeIndicators())
         })
       },
-      () => {
-        // ignore errors for live preview; user may deny permission
+      (err) => {
+        livePollInFlight = false
+        console.warn('[Timeclock] live GPS error', err.code, err.message)
       },
-      GEO_LIVE_OPTIONS
+      GEO_LIVE_POLL_OPTIONS
     )
+  }
+  tick()
+  try {
+    liveLocationIntervalId = window.setInterval(tick, LIVE_LOCATION_POLL_MS)
   } catch {
-    liveWatchId = null
+    liveLocationIntervalId = null
   }
 }
 
@@ -768,7 +906,7 @@ async function selectModalityAndStart(mod: WorkModality) {
   }
   step.value = 'getting_location'
   try {
-    const loc = locationIn.value ?? await getLocation()
+    const loc = userLoc.value ?? locationIn.value ?? await getLocation()
     if (!loc) return
     locationIn.value = loc
     nextTick(() => updateMapView())
