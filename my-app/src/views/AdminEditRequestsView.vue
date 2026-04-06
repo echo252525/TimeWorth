@@ -137,6 +137,21 @@ function shortRange(inIso: string | null, outIso: string | null): string {
   return `${a} → ${b}`
 }
 
+/** Normalize any incoming timestamp into app's local wall-time "Z" storage format. */
+function normalizeToStoredWallTimeZ(isoOrNull: string | null): string | null {
+  if (!isoOrNull) return null
+  const ms = storedToRealInstant(isoOrNull)
+  const d = new Date(ms)
+  if (Number.isNaN(d.getTime())) return null
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const hours = String(d.getHours()).padStart(2, '0')
+  const mins = String(d.getMinutes()).padStart(2, '0')
+  const secs = String(d.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hours}:${mins}:${secs}.000Z`
+}
+
 async function getReviewerEmployeeId(): Promise<string | null> {
   const uid = user.value?.id
   if (!uid) return null
@@ -193,10 +208,10 @@ async function approve(row: EditRequestRow) {
     return
   }
   const a = att as AttendanceRow
-  const clock_in = row.new_clock_in ?? a.clock_in
-  const clock_out = row.new_clock_out ?? a.clock_out
-  const lunch_break_start = row.new_lunch_break_start ?? a.lunch_break_start
-  const lunch_break_end = row.new_lunch_break_end ?? a.lunch_break_end
+  const clock_in = normalizeToStoredWallTimeZ(row.new_clock_in) ?? a.clock_in
+  const clock_out = normalizeToStoredWallTimeZ(row.new_clock_out) ?? a.clock_out
+  const lunch_break_start = normalizeToStoredWallTimeZ(row.new_lunch_break_start) ?? a.lunch_break_start
+  const lunch_break_end = normalizeToStoredWallTimeZ(row.new_lunch_break_end) ?? a.lunch_break_end
   const location_in = row.new_location_in ?? a.location_in
   const location_out = row.new_location_out ?? a.location_out
   const work_modality = row.new_work_modality ?? a.work_modality

@@ -1312,6 +1312,18 @@ function toLocalDateTimeInput(isoOrNull: string | null): string {
   return `${year}-${month}-${day}T${hours}:${mins}`
 }
 
+/** Keep local wall-time exactly as entered in datetime-local inputs (no UTC shift). */
+function localInputToStoredWallTimeZ(val: string): string | null {
+  if (!val) return null
+  const m = val.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/)
+  if (!m) return null
+  const datePart = m[1]
+  const hh = m[2]
+  const mm = m[3]
+  const ss = m[4] ?? '00'
+  return `${datePart}T${hh}:${mm}:${ss}.000Z`
+}
+
 function openEditModalForDay(row: DayRow) {
   if (!row.entries.length) return
   const target = row.entries[0]
@@ -1346,8 +1358,7 @@ async function confirmEditRequest() {
     const target = editTargetEntry.value
     if (!target.attendance_id) return
 
-    const toIsoOrNull = (val: string): string | null =>
-      val ? new Date(val).toISOString() : null
+    const toIsoOrNull = (val: string): string | null => localInputToStoredWallTimeZ(val)
 
     const nowIso = new Date().toISOString()
     const payload = {

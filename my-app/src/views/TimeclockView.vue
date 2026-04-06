@@ -30,7 +30,9 @@ const {
   clockIn,
   clockOut,
   startLunchBreak,
-  endLunchBreak
+  endLunchBreak,
+  elapsedDisplay,
+  lunchElapsedDisplay
 } = useAttendance()
 const { user, getSignedProfileUrl } = useAuth()
 const userProfileUrl = ref<string | null>(null)
@@ -49,8 +51,6 @@ const wfhPhotoFile = ref<File | null>(null)
 const wfhPhotoPreviewUrl = ref<string | null>(null)
 const wfhPhotoError = ref<string | null>(null)
 const wfhPhotoUploading = ref(false)
-const nowTick = ref(Date.now())
-let timerInterval: number | null = null
 // Liveness verification state
 const livenessVerificationId = ref<string | null>(null)
 const facialScanSuccess = ref(false)
@@ -112,11 +112,6 @@ function resumeLivenessRow(row: { id: string }) {
 }
 
 onMounted(() => {
-  // ✅ START TIMER (THIS IS THE FIX)
-  timerInterval = window.setInterval(() => {
-    nowTick.value = Date.now()
-  }, 1000)
-
   fetchToday()
   loadUserProfile()
   nextTick(() => { if (mapContainer.value) initMap() })
@@ -146,10 +141,6 @@ onUnmounted(() => {
     URL.revokeObjectURL(wfhPhotoPreviewUrl.value)
     wfhPhotoPreviewUrl.value = null
   }
-  if (timerInterval) {
-  clearInterval(timerInterval)
-  timerInterval = null
-}
 })
 
 const activeBranch = computed(() => {
@@ -486,7 +477,7 @@ watch(step, async (s, prev) => {
             facialScanSuccess.value = false
             step.value = 'idle'
             locationOut.value = null
-            fetchToday()
+            void fetchToday()
           }, 1800)
         }
       )
@@ -758,6 +749,7 @@ async function onFacialClockInVerified() {
   // Match WFH: enter clocked-in state immediately so the live timer is visible (not hidden under step==='facial').
   step.value = 'clocked_in'
   closeLivenessRealtime()
+  await fetchToday()
   setTimeout(() => {
     facialScanSuccess.value = false
     locationIn.value = null
@@ -824,57 +816,6 @@ function cancelClockOutConfirm() {
   clockOutConfirm.value = null
   locationOut.value = null
 }
-
-function formatElapsedMs(ms: number) {
-  const safe = Math.max(0, Math.floor(ms / 1000))
-  const h = Math.floor(safe / 3600)
-  const m = Math.floor((safe % 3600) / 60)
-  const s = safe % 60
-  return `${h}h ${m}m ${s}s`
-}
-
-const liveElapsedDisplay = computed(() => {
-  const r = todayRecord.value
-  const now = nowTick.value
-  if (!r?.clock_in || r.clock_out) return '0h 0m 0s'
-
-  const start = storedToRealInstant(r.clock_in)
-  let lunchMs = 0
-  if (r.lunch_break_start) {
-    const lunchEnd = r.lunch_break_end ? storedToRealInstant(r.lunch_break_end) : now
-    lunchMs = Math.max(0, lunchEnd - storedToRealInstant(r.lunch_break_start))
-  }
-
-  return formatElapsedMs(now - start - lunchMs)
-})
-
-const liveLunchElapsedDisplay = computed(() => {
-  const r = todayRecord.value
-  const now = nowTick.value
-  if (!r?.lunch_break_start || r.lunch_break_end) return '0h 0m 0s'
-  return formatElapsedMs(now - storedToRealInstant(r.lunch_break_start))
-})
-
-watch(
-  () => ({
-    in: isClockedIn.value,
-    el: liveElapsedDisplay.value,
-    lunch: liveLunchElapsedDisplay.value,
-    id: todayRecord.value?.attendance_id,
-    tick: nowTick.value
-  }),
-  (v) => {
-    if (v.in && v.id) {
-      console.log('[Timeclock] timer tick', {
-        attendanceId: v.id,
-        elapsedDisplay: v.el,
-        lunchElapsedDisplay: v.lunch,
-        tick: v.tick,
-        step: step.value
-      })
-    }
-  }
-)
 
 function fmtStored(t: string | null) {
   return t ? new Date(storedToRealInstant(t)).toLocaleTimeString() : '—'
@@ -963,12 +904,12 @@ async function handleCancelFacial() {
                 <div class="clocked-hero-left">
                   <template v-if="isOnLunch">
                     <p class="timer-label">Lunch break</p>
-                    <div class="timer lunch-timer timer-hero-main">{{ liveLunchElapsedDisplay }}</div>
-                    <p class="muted sub">Work: {{ liveElapsedDisplay }}</p>
+                    <div class="timer lunch-timer timer-hero-main">{{ lunchElapsedDisplay }}</div>
+                    <p class="muted sub">Work: {{ elapsedDisplay }}</p>
                   </template>
                   <template v-else>
                     <p class="muted hero-sub clocked-hero-label">Working · {{ formatWorkModalityLabel(todayRecord.work_modality) }}</p>
-                    <div class="timer timer-hero-main" aria-live="polite">{{ liveElapsedDisplay }}</div>
+                    <div class="timer timer-hero-main" aria-live="polite">{{ elapsedDisplay }}</div>
                     <p class="muted clocked-hero-meta">In at {{ fmtStored(todayRecord.clock_in) }}</p>
                   </template>
                 </div>

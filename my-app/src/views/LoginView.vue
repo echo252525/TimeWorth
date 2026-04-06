@@ -3,6 +3,7 @@ import { reactive, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AuthLayout from '../components/AuthLayout.vue'
 import { useAuth } from '../composables/useAuth'
+import supabase from '../lib/supabaseClient'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,9 +19,23 @@ onMounted(() => {
   const nextQuery = { ...route.query }
   let shouldReplaceQuery = false
 
-  if (route.query.email_confirmed === '1') {
+  const isSignupEmailCallback =
+    route.query.email_confirmed === '1'
+    || route.query.type === 'signup'
+    || typeof route.query.token_hash === 'string'
+    || typeof route.query.code === 'string'
+    || route.hash.includes('type=signup')
+    || route.hash.includes('access_token=')
+    || route.hash.includes('refresh_token=')
+
+  if (isSignupEmailCallback) {
+    // Keep users on login after email confirmation instead of jumping to dashboard.
+    void supabase.auth.signOut()
     showEmailConfirmedBanner.value = true
     delete nextQuery.email_confirmed
+    delete nextQuery.type
+    delete nextQuery.token_hash
+    delete nextQuery.code
     shouldReplaceQuery = true
   }
   if (route.query.password_reset === '1') {
@@ -29,7 +44,7 @@ onMounted(() => {
     shouldReplaceQuery = true
   }
 
-  if (shouldReplaceQuery) router.replace({ path: route.path, query: nextQuery })
+  if (shouldReplaceQuery) router.replace({ path: route.path, query: nextQuery, hash: '' })
 })
 
 function goBack() {

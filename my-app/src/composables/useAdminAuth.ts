@@ -35,7 +35,7 @@ export interface AdminRow {
 const adminProfile = ref<AdminRow | null>(null)
 
 export type AdminSignInResult =
-  | { ok: true }
+  | { ok: true; role: 'admin' | 'superadmin'; userId: string }
   | { error: string }
   | { pendingReview: true }
 
@@ -63,30 +63,65 @@ export function useAdminAuth() {
   }
 
   async function signIn(email: string, password: string): Promise<AdminSignInResult> {
+    console.log('[AdminAuth] signIn start', { email: email.trim().toLowerCase() })
     const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({ email, password })
-    if (authErr) return { error: authErr.message }
+    if (authErr) {
+      console.log('[AdminAuth] auth signInWithPassword failed', { message: authErr.message })
+      return { error: authErr.message }
+    }
 
     const uid = authData.user.id
+    console.log('[AdminAuth] auth signInWithPassword success', { uid })
     const { data: row, error: rowErr } = await supabase.from('admin').select('*').eq('id', uid).maybeSingle()
     if (rowErr) {
+      console.log('[AdminAuth] admin row query error', { uid, message: rowErr.message })
       await supabase.auth.signOut()
       user.value = null
       adminProfile.value = null
       return { error: rowErr.message ?? 'Sign in failed' }
     }
     if (!row) {
+      console.log('[AdminAuth] admin row not found for uid', { uid })
+      // RLS can hide admin rows when ids are mismatched. Distinguish employee accounts:
+      // - if this uid has an employee row -> not an admin account ("No account found")
+      // - otherwise -> treat as pending review (likely admin row exists but not yet linked to this uid)
+      const { data: employeeRow, error: employeeErr } = await supabase
+        .from('employee')
+        .select('id')
+        .eq('id', uid)
+        .maybeSingle()
+      if (employeeErr) {
+        console.log('[AdminAuth] employee fallback query failed', { uid, message: employeeErr.message })
+      } else {
+        console.log('[AdminAuth] employee fallback query result', { uid, isEmployee: !!employeeRow })
+      }
+      if (!employeeRow) {
+        await supabase.auth.signOut()
+        user.value = null
+        adminProfile.value = null
+        return { pendingReview: true }
+      }
       await supabase.auth.signOut()
       user.value = null
       adminProfile.value = null
       return { error: 'No account found.' }
     }
-    if (row.role === 'pending') {
+    console.log('[AdminAuth] admin row fetched', {
+      uid,
+      roleRaw: (row as { role?: string | null }).role ?? null,
+      emailRaw: (row as { email?: string | null }).email ?? null
+    })
+    const roleNormalized = String((row as { role?: string | null }).role ?? '').trim().toLowerCase()
+    console.log('[AdminAuth] normalized role', { uid, roleNormalized })
+    if (roleNormalized === 'pending') {
+      console.log('[AdminAuth] pending role path', { uid })
       await supabase.auth.signOut()
       user.value = null
       adminProfile.value = null
       return { pendingReview: true }
     }
-    if (row.role !== 'admin' && row.role !== 'superadmin') {
+    if (roleNormalized !== 'admin' && roleNormalized !== 'superadmin') {
+      console.log('[AdminAuth] unsupported role path', { uid, roleNormalized })
       await supabase.auth.signOut()
       user.value = null
       adminProfile.value = null
@@ -95,7 +130,8 @@ export function useAdminAuth() {
 
     user.value = authData.user
     adminProfile.value = row as AdminRow
-    return { ok: true }
+    console.log('[AdminAuth] admin signIn success', { uid, roleNormalized })
+    return { ok: true, role: roleNormalized as 'admin' | 'superadmin', userId: uid }
   }
 
   async function signUpAdmin(p: {

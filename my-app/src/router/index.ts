@@ -65,6 +65,7 @@ const router = createRouter({
         { path: '', name: 'AdminHome', component: () => import('../views/AdminHomeView.vue') },
         { path: 'employees', name: 'AdminEmployees', component: () => import('../views/AdminEmployeesView.vue') },
         { path: 'timesheet', name: 'AdminTimesheet', component: () => import('../views/AdminTimesheetView.vue') },
+        { path: 'admins', name: 'AdminAdmins', component: () => import('../views/AdminAdminsView.vue') },
         { path: 'edit-requests', name: 'AdminEditRequests', component: () => import('../views/AdminEditRequestsView.vue') },
         { path: 'system-configuration', name: 'AdminSystemConfiguration', component: () => import('../views/AdminSystemConfiguration.vue') },
         { path: 'settings', name: 'AdminSettings', component: () => import('../views/AdminSettingsView.vue') }
@@ -79,6 +80,16 @@ router.beforeEach(async (to) => {
   const requiresEmployee = to.matched.some((r) => r.meta.requiresAuth === 'employee')
   const requiresAdmin = to.matched.some((r) => r.meta.requiresAuth === 'admin')
   const guestOnly = to.matched.some((r) => r.meta.guestOnly === true)
+  const isSignupEmailCallbackToLogin =
+    to.path === '/login' && (
+      to.query.email_confirmed === '1'
+      || to.query.type === 'signup'
+      || typeof to.query.token_hash === 'string'
+      || typeof to.query.code === 'string'
+      || to.hash.includes('type=signup')
+      || to.hash.includes('access_token=')
+      || to.hash.includes('refresh_token=')
+    )
 
   if (to.path === '/') {
     if (authKind === 'admin') return { name: 'AdminHome', replace: true }
@@ -94,7 +105,7 @@ router.beforeEach(async (to) => {
     return { name: 'AdminLogin', replace: true }
   }
 
-  if (guestOnly && authKind === 'employee') {
+  if (guestOnly && authKind === 'employee' && !isSignupEmailCallbackToLogin) {
     return { name: 'Dashboard', replace: true }
   }
 

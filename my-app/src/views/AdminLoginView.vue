@@ -10,14 +10,16 @@ const { signIn } = useAdminAuth()
 const form = reactive({ email: '', password: '' })
 const isLoading = ref(false)
 const error = ref<string | null>(null)
-const showPendingReview = ref(false)
+const accountModal = ref<null | 'pending' | 'welcome'>(null)
 const showPassword = ref(false)
 const showPasswordResetBanner = ref(false)
+const pendingWelcomeAdminId = ref<string | null>(null)
+const ADMIN_WELCOME_KEY_PREFIX = 'admin_welcome_seen:'
 
 watch(
   () => route.query.pending,
   (p) => {
-    if (p === '1') showPendingReview.value = true
+    if (p === '1') accountModal.value = 'pending'
     if (route.query.password_reset === '1') {
       showPasswordResetBanner.value = true
       router.replace({
@@ -29,8 +31,19 @@ watch(
   { immediate: true }
 )
 
-function dismissPendingReview() {
-  showPendingReview.value = false
+function dismissAccountModal() {
+  const variant = accountModal.value
+  accountModal.value = null
+  if (variant === 'welcome' && pendingWelcomeAdminId.value) {
+    try {
+      localStorage.setItem(`${ADMIN_WELCOME_KEY_PREFIX}${pendingWelcomeAdminId.value}`, '1')
+    } catch {
+      // ignore storage errors
+    }
+    pendingWelcomeAdminId.value = null
+    router.push({ name: 'AdminHome' })
+    return
+  }
   if (route.query.pending) router.replace({ path: '/admin/login', query: {} })
 }
 
@@ -45,43 +58,65 @@ function togglePassword() {
 async function onSubmit() {
   isLoading.value = true
   error.value = null
-  showPendingReview.value = false
+  accountModal.value = null
   const r = await signIn(form.email, form.password)
+  console.log('[AdminLogin] signIn result', r)
   isLoading.value = false
   if ('error' in r) {
     error.value = r.error
     return
   }
   if ('pendingReview' in r && r.pendingReview) {
-    showPendingReview.value = true
+    accountModal.value = 'pending'
     return
   }
-  if ('ok' in r && r.ok) router.push({ name: 'AdminHome' })
+  if ('ok' in r && r.ok) {
+    if (r.role === 'admin') {
+      const key = `${ADMIN_WELCOME_KEY_PREFIX}${r.userId}`
+      let seen = false
+      try {
+        seen = localStorage.getItem(key) === '1'
+      } catch {
+        seen = false
+      }
+      if (!seen) {
+        pendingWelcomeAdminId.value = r.userId
+        accountModal.value = 'welcome'
+        return
+      }
+    }
+    router.push({ name: 'AdminHome' })
+  }
 }
 </script>
 <template>
   <div class="login-view">
     <AuthLayout>
-      <template v-if="showPendingReview">
-        <div
-          class="auth-success-banner"
-          role="status"
-          aria-live="polite"
-        >
-          <p class="auth-success-banner__title">Account under review</p>
-          <p class="auth-success-banner__text">
-            Your account is being reviewed by a superadmin. You will be able to sign in once your role has been approved.
+      <div
+        v-if="accountModal"
+        class="auth-modal-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-live="polite"
+      >
+        <div class="auth-modal-card">
+          <div class="auth-modal-badge">
+            {{ accountModal === 'welcome' ? 'Welcome to TimeWorth' : 'Account update' }}
+          </div>
+          <h3 class="auth-modal-title">
+            {{ accountModal === 'pending' ? 'Account under review' : 'Welcome admin' }}
+          </h3>
+          <p class="auth-modal-text">
+            {{
+              accountModal === 'pending'
+                ? 'Your account is being reviewed by a superadmin. You will be able to sign in once your role has been approved.'
+                : 'Welcome to the admin portal. Click okay to continue.'
+            }}
           </p>
-          <button
-            type="button"
-            class="btn primary auth-success-banner__cta"
-            @click="dismissPendingReview"
-          >
-            Okay
-          </button>
+          <button type="button" class="btn primary auth-modal-cta" @click="dismissAccountModal">Okay</button>
         </div>
-      </template>
-      <template v-else>
+      </div>
+      <template v-if="!accountModal">
         <div
           v-if="showPasswordResetBanner"
           class="auth-success-banner auth-success-banner--spaced"
@@ -198,5 +233,70 @@ body.dark-mode .login-view .auth-page {
 
 .login-view .auth-success-banner--spaced {
   margin-bottom: 1rem;
+}
+
+.login-view .auth-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(6px);
+}
+
+.login-view .auth-modal-card {
+  width: min(100%, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.35rem;
+  border-radius: 18px;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.82)),
+    rgba(14, 165, 233, 0.08);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+}
+
+body.dark-mode .login-view .auth-modal-card {
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.9)),
+    rgba(14, 165, 233, 0.1);
+}
+
+.login-view .auth-modal-badge {
+  align-self: center;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  color: var(--accent-light);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.login-view .auth-modal-title {
+  margin: 0;
+  text-align: center;
+  font-size: 1.2rem;
+  color: var(--text-primary);
+}
+
+.login-view .auth-modal-text {
+  margin: 0;
+  text-align: center;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  font-size: 0.94rem;
+}
+
+.login-view .auth-modal-cta {
+  align-self: center;
+  min-width: 140px;
 }
 </style>
