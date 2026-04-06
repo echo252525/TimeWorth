@@ -10,6 +10,7 @@ import {
   getBranch,
   parseLocation,
   isOutsideWfhRadius,
+  distanceMeters,
   storedToRealInstant,
   type WorkModality,
   type Branch
@@ -74,6 +75,32 @@ let userLabelMarker: L.Marker | null = null
 let centerMarker: L.Marker | null = null
 let liveWatchId: number | null = null
 
+/** Office geofence from `geolocation` where `geolocation_status` is true (admin System configuration). */
+interface OfficeGeofenceRow {
+  id: string
+  name: string
+  latitude: number
+  longitude: number
+  radius_meters: number
+}
+const officeGeofence = ref<OfficeGeofenceRow | null>(null)
+const officeGeofenceLoading = ref(true)
+
+async function loadOfficeGeofence() {
+  officeGeofenceLoading.value = true
+  const { data, error } = await supabase
+    .from('geolocation')
+    .select('id, name, latitude, longitude, radius_meters')
+    .eq('geolocation_status', true)
+    .maybeSingle()
+  officeGeofenceLoading.value = false
+  if (error) {
+    officeGeofence.value = null
+    return
+  }
+  officeGeofence.value = (data as OfficeGeofenceRow | null) ?? null
+}
+
 const centerIcon = L.divIcon({
   className: 'map-center-icon',
   html: '<span class="center-pin" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#0ea5e9" width="28" height="28"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></span>',
@@ -113,6 +140,7 @@ function resumeLivenessRow(row: { id: string }) {
 
 onMounted(() => {
   fetchToday()
+  void loadOfficeGeofence()
   loadUserProfile()
   nextTick(() => { if (mapContainer.value) initMap() })
   startLiveLocationWatch()
@@ -149,7 +177,11 @@ const activeBranch = computed(() => {
   return br ?? selectedBranch.value ?? BRANCHES[0]
 })
 
+/** Map / geofence circle center for office mode uses admin-configured geofence when present. */
 const mapCenter = computed(() => {
+  if (workModality.value === 'office' && officeGeofence.value) {
+    return { lat: officeGeofence.value.latitude, lng: officeGeofence.value.longitude }
+  }
   if (workModality.value === 'office') {
     const b = activeBranch.value
     return { lat: b.lat, lng: b.lng }
@@ -162,15 +194,20 @@ const mapCenter = computed(() => {
 const userLoc = computed(() => liveLocation.value ?? locationIn.value ?? locationOut.value ?? null)
 
 const isOutsideOfficeRadius = computed(() => {
-  // TEMPORARILY DISABLED FOR TESTING FACIAL RECOGNITION
-  // TODO: Re-enable location check after testing
-  return false
-  // Original code:
-  // return workModality.value === 'office' &&
-  //   step.value === 'choose_modality' &&
-  //   !!locationIn.value &&
-  //   !!selectedBranch.value &&
-  //   isOutsideBranch(locationIn.value, selectedBranch.value.id)
+  if (workModality.value !== 'office' || step.value !== 'choose_modality') return false
+  if (!officeGeofence.value || !locationIn.value) return false
+  const g = officeGeofence.value
+  return distanceMeters(locationIn.value, { lat: g.latitude, lng: g.longitude }) > g.radius_meters
+})
+
+const chooseModalityContinueDisabled = computed(() => {
+  if (isLoading.value) return true
+  if ((officeFetchingLocation.value || wfhFetchingLocation.value) && !locationIn.value) return true
+  if (workModality.value !== 'office') return false
+  if (officeGeofenceLoading.value) return true
+  if (!officeGeofence.value) return true
+  if (!locationIn.value) return false
+  return isOutsideOfficeRadius.value
 })
 
 async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
@@ -202,10 +239,14 @@ function updateCenterMarker() {
   centerMarker?.remove()
   if (workModality.value === 'office' && step.value !== 'idle') {
     const c = mapCenter.value
-    const branch = activeBranch.value
+    const label = officeGeofence.value?.name?.trim() || activeBranch.value.name
+    const radiusLabel =
+      officeGeofence.value != null
+        ? Math.round(officeGeofence.value.radius_meters)
+        : RADIUS_M
     centerMarker = L.marker([c.lat, c.lng], { icon: centerIcon }).addTo(map!)
     centerMarker.bindTooltip(
-      `<div class="map-tooltip-inner"><strong>${branch.name}</strong><span>${RADIUS_M}m radius</span></div>`,
+      `<div class="map-tooltip-inner"><strong>${escapeHtml(label)}</strong><span>${radiusLabel}m radius</span></div>`,
       { permanent: true, direction: 'top', offset: [0, -12], className: 'map-bound-tooltip map-bound-tooltip-branch' }
     ).openTooltip()
   } else centerMarker = null
@@ -356,8 +397,12 @@ function updateMapView() {
   }
   if (!circle) return
   const c = mapCenter.value
+  const radius =
+    workModality.value === 'office' && officeGeofence.value
+      ? Math.max(1, officeGeofence.value.radius_meters)
+      : RADIUS_M
   circle.setLatLng([c.lat, c.lng])
-  circle.setRadius(RADIUS_M)
+  circle.setRadius(radius)
   if (!map.hasLayer(circle)) circle.addTo(map!)
   updateCenterMarker()
   updateUserMarker()
@@ -373,7 +418,7 @@ function updateMapView() {
   nextTick(() => updateEdgeIndicators())
 }
 
-watch([mapCenter, userLoc, workModality, activeBranch, step, locationIn, wfhAddress, officeUserAddress, userProfileUrl], () => {
+watch([mapCenter, userLoc, workModality, activeBranch, step, locationIn, wfhAddress, officeUserAddress, userProfileUrl, officeGeofence], () => {
   updateMapView()
   nextTick(() => updateEdgeIndicators())
 }, { flush: 'post' })
@@ -501,6 +546,13 @@ watch(mapContainer, (el) => {
   if (el && !map) initMap()
 })
 
+/** Prefer fresh fixes; high accuracy uses more power but matches GPS / fused location better. */
+const GEO_LIVE_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  maximumAge: 0,
+  timeout: 30000
+}
+
 function startLiveLocationWatch() {
   if (!navigator.geolocation) return
   try {
@@ -517,7 +569,7 @@ function startLiveLocationWatch() {
       () => {
         // ignore errors for live preview; user may deny permission
       },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+      GEO_LIVE_OPTIONS
     )
   } catch {
     liveWatchId = null
@@ -529,16 +581,82 @@ function locationString(loc: { lat: number; lng: number } | null) {
   return `${loc.lat.toFixed(6)},${loc.lng.toFixed(6)}`
 }
 
+/**
+ * Best available fix: high accuracy, no stale cache, sample until accuracy is good or timeout,
+ * then use the reading with the smallest reported accuracy (meters).
+ */
 function getLocation(): Promise<{ lat: number; lng: number }> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error('Geolocation not supported'))
       return
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      (err) => reject(err),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    const sampleOpts: PositionOptions = {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 30000
+    }
+    /** Early exit when horizontal accuracy is at or below this (meters). */
+    const GOOD_ENOUGH_ACCURACY_M = 50
+    const MAX_SAMPLE_MS = 30000
+
+    let best: GeolocationPosition | null = null
+    let watchId: number | null = null
+    let settled = false
+
+    const cleanup = () => {
+      if (watchId != null) {
+        navigator.geolocation.clearWatch(watchId)
+        watchId = null
+      }
+    }
+
+    const resolveFrom = (pos: GeolocationPosition) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      clearTimeout(timer)
+      resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+    }
+
+    const consider = (pos: GeolocationPosition) => {
+      const acc = pos.coords.accuracy
+      if (
+        !best ||
+        !Number.isFinite(best.coords.accuracy) ||
+        (Number.isFinite(acc) && acc < best.coords.accuracy)
+      ) {
+        best = pos
+      }
+      if (Number.isFinite(acc) && acc > 0 && acc <= GOOD_ENOUGH_ACCURACY_M) {
+        resolveFrom(pos)
+      }
+    }
+
+    const timer = window.setTimeout(() => {
+      if (settled) return
+      cleanup()
+      if (best) {
+        resolveFrom(best)
+        return
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolveFrom(pos),
+        (err) => reject(err),
+        sampleOpts
+      )
+    }, MAX_SAMPLE_MS)
+
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => consider(pos),
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          clearTimeout(timer)
+          cleanup()
+          if (!settled) reject(err)
+        }
+      },
+      sampleOpts
     )
   })
 }
@@ -640,6 +758,14 @@ async function selectModalityAndStart(mod: WorkModality) {
     step.value = 'wfh_photo'
     return
   }
+  if (mod === 'office') {
+    if (officeGeofenceLoading.value) return
+    if (!officeGeofence.value) {
+      locationError.value =
+        'Office location is not configured yet. Please contact your administrator.'
+      return
+    }
+  }
   step.value = 'getting_location'
   try {
     const loc = locationIn.value ?? await getLocation()
@@ -650,6 +776,15 @@ async function selectModalityAndStart(mod: WorkModality) {
     locationError.value = e instanceof Error ? e.message : 'Location failed'
     step.value = 'choose_modality'
     return
+  }
+  if (mod === 'office' && officeGeofence.value) {
+    const g = officeGeofence.value
+    if (distanceMeters(locationIn.value!, { lat: g.latitude, lng: g.longitude }) > g.radius_meters) {
+      locationError.value =
+        'You must be within the office geofence to clock in. Move closer and try again.'
+      step.value = 'choose_modality'
+      return
+    }
   }
   if (workModality.value === 'office' && branch) {
     await startLivenessVerification()
@@ -744,8 +879,16 @@ async function onFacialClockInVerified() {
       return
     }
   }
-  const branchId = workModality.value === 'office' ? selectedBranch.value?.id : undefined
-  await clockIn(workModality.value, { locationIn: locStr, facialStatus: 'verified', branchLocation: branchId, facialVerificationId: livenessVerificationId.value ?? undefined })
+  const branchLocation =
+    workModality.value === 'office'
+      ? (officeGeofence.value?.name?.trim() || selectedBranch.value?.id)
+      : undefined
+  await clockIn(workModality.value, {
+    locationIn: locStr,
+    facialStatus: 'verified',
+    branchLocation,
+    facialVerificationId: livenessVerificationId.value ?? undefined
+  })
   // Match WFH: enter clocked-in state immediately so the live timer is visible (not hidden under step==='facial').
   step.value = 'clocked_in'
   closeLivenessRealtime()
@@ -976,16 +1119,28 @@ async function handleCancelFacial() {
             <p v-if="(officeFetchingLocation || wfhFetchingLocation) && !locationIn" class="muted">
               Getting location…
             </p>
-            <p v-if="isOutsideOfficeRadius" class="block-msg">You are outside the location of the branch so you cannot continue.</p>
+            <p v-if="workModality === 'office' && officeGeofenceLoading" class="muted">
+              Loading office location…
+            </p>
+            <p
+              v-if="workModality === 'office' && !officeGeofenceLoading && !officeGeofence"
+              class="block-msg"
+            >
+              Office location is not set up yet. Please contact your administrator.
+            </p>
+            <p v-if="isOutsideOfficeRadius" class="block-msg">
+              You are outside the office geofence. Move closer to clock in.
+            </p>
             <div class="actions">
               <button
                 type="button"
                 class="btn primary"
-                :disabled="isLoading || ((officeFetchingLocation || wfhFetchingLocation) && !locationIn)"
+                :disabled="chooseModalityContinueDisabled"
                 @click="selectModalityAndStart(workModality)"
               >
                 <span v-if="isLoading">Continuing…</span>
                 <span v-else-if="(officeFetchingLocation || wfhFetchingLocation) && !locationIn">Getting location…</span>
+                <span v-else-if="workModality === 'office' && officeGeofenceLoading">Loading…</span>
                 <span v-else>Continue</span>
               </button>
               <button type="button" class="btn secondary" @click="step = 'idle'">Cancel</button>
@@ -1066,7 +1221,21 @@ async function handleCancelFacial() {
         <p class="map-caption muted">
           <span v-if="userLoc" class="you-are-here">Your current location</span>
           <template v-if="userLoc"> · </template>
-          {{ workModality === 'office' && activeBranch ? activeBranch.address : (workModality === 'wfh' && wfhAddress ? wfhAddress : 'Location') }}{{ workModality === 'office' ? ` · ${RADIUS_M}m radius` : '' }}
+          {{
+            workModality === 'office' && officeGeofence
+              ? officeGeofence.name
+              : workModality === 'office' && activeBranch
+                ? activeBranch.address
+                : workModality === 'wfh' && wfhAddress
+                  ? wfhAddress
+                  : 'Location'
+          }}{{
+            workModality === 'office'
+              ? officeGeofence
+                ? ` · ${Math.round(officeGeofence.radius_meters)}m radius`
+                : ` · ${RADIUS_M}m radius`
+              : ''
+          }}
         </p>
       </aside>
     </div>
