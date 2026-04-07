@@ -19,6 +19,8 @@ export interface AttendanceRow {
   work_modality: WorkModality | null
   facial_verifications_id: string | null
   wfh_pic_url: string | null
+  /** Shift output / accomplishments (stored on clock-out). */
+  output?: string | null
   created_at: string
   updated_at: string
 }
@@ -401,7 +403,7 @@ export function useAttendance() {
     if (idx >= 0) todayRecords.value[idx] = data as AttendanceRow
   }
 
-  async function clockOut(locationOut?: string) {
+  async function clockOut(locationOut?: string, output?: string | null) {
     if (!todayRecord.value?.attendance_id) return
     isLoading.value = true
     error.value = null
@@ -422,6 +424,7 @@ export function useAttendance() {
         total_time: totalTimeInterval,
         location_out: locationOut ?? null,
         branch_location: todayRecord.value.branch_location ?? null,
+        output: output ?? null,
         updated_at: now
       })
       .eq('attendance_id', todayRecord.value.attendance_id)

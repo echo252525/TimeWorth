@@ -15,7 +15,7 @@ import {
 } from '@heroicons/vue/24/outline'
 
 const ATTENDANCE_SELECT =
-  'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,created_at,updated_at,work_modality,facial_verifications_id,wfh_pic_url'
+  'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,created_at,updated_at,work_modality,facial_verifications_id,wfh_pic_url,output'
 
 const list = ref<AttendanceRow[]>([])
 const isLoading = ref(true)
@@ -666,6 +666,7 @@ function buildPdfTableBodyFromRows(rows: AttendanceRow[]): string[][] {
       total: string
       modality: string
       travel: string
+      output: string
     }>
   > = {}
 
@@ -680,11 +681,12 @@ function buildPdfTableBodyFromRows(rows: AttendanceRow[]): string[][] {
       lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
       total: formatTotalTimeCompact(r.total_time),
       modality: r.work_modality ? String(r.work_modality).toLowerCase() : '—',
-      travel: attendanceActivityLabel(r)
+      travel: attendanceActivityLabel(r),
+      output: (r.output && String(r.output).trim()) || '—'
     })
   }
 
-  const flat: Array<[string, string, string, string, string, string, string, string]> = []
+  const flat: Array<[string, string, string, string, string, string, string, string, string]> = []
   for (const [dateKey, groupRows] of Object.entries(map).sort(([a], [b]) =>
     a === '—' ? 1 : b === '—' ? -1 : new Date(b).getTime() - new Date(a).getTime()
   )) {
@@ -697,12 +699,13 @@ function buildPdfTableBodyFromRows(rows: AttendanceRow[]): string[][] {
         r.lunchOut,
         r.total,
         r.modality,
-        r.travel
+        r.travel,
+        r.output
       ])
     }
   }
 
-  return flat.map(([date, clockIn, clockOut, lunchIn, lunchOut, total, modality, travel]) => [
+  return flat.map(([date, clockIn, clockOut, lunchIn, lunchOut, total, modality, travel, output]) => [
     date,
     clockIn,
     clockOut,
@@ -710,7 +713,8 @@ function buildPdfTableBodyFromRows(rows: AttendanceRow[]): string[][] {
     lunchOut,
     total,
     modality,
-    travel
+    travel,
+    output
   ])
 }
 
@@ -784,7 +788,7 @@ function createTimesheetPdfDocument(
 
   autoTable(doc, {
     head: [
-      ['Date', 'Clock in', 'Clock out', 'Lunch In', 'Lunch Out', 'Total Hours', 'Modality', 'Activity']
+      ['Date', 'Clock in', 'Clock out', 'Lunch In', 'Lunch Out', 'Total Hours', 'Modality', 'Activity', 'Output']
     ],
     body: tableBody,
     startY: tableStartY,
@@ -965,7 +969,7 @@ function timeComplianceLabel(row: DayRow): string {
 
 /** Colspan for expanded detail row (all columns after Date). */
 const timesheetExpandedColspan = computed(
-  () => (showTimes.value ? 4 : 0) + (showBreaks.value ? 1 : 0) + 3
+  () => (showTimes.value ? 4 : 0) + (showBreaks.value ? 1 : 0) + 4
 )
 
 // Get all unique dates from filtered rows (local date for correct grouping)
@@ -1689,6 +1693,7 @@ async function confirmEditRequest() {
                   </div>
                 </div>
               </th>
+              <th scope="col">Output</th>
               <th scope="col">Edit</th>
             </tr>
           </thead>
@@ -1727,6 +1732,14 @@ async function confirmEditRequest() {
                 </td>
                 <td class="ts-cell td-muted">
                   <span>{{ row.modality }}</span>
+                </td>
+                <td class="ts-cell ts-output-cell td-muted">
+                  <template v-if="row.hasMultipleEntries">
+                    <span class="ts-output-hint">Per session below</span>
+                  </template>
+                  <template v-else>
+                    <span class="ts-output-text">{{ row.entries[0]?.output?.trim() || '—' }}</span>
+                  </template>
                 </td>
                 <td class="ts-cell ts-edit-cell">
                   <div v-if="!row.hasMultipleEntries && row.entries[0]" class="ts-edit-cell-inner">
@@ -1830,6 +1843,12 @@ async function confirmEditRequest() {
                               <span>View</span>
                             </button>
                             <span v-else class="ts-entry-value">—</span>
+                          </div>
+                          <div class="ts-entry-output-block">
+                            <span class="ts-entry-label">Output</span>
+                            <p class="ts-entry-output-text">
+                              {{ entry.output?.trim() || '—' }}
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -2458,6 +2477,50 @@ async function confirmEditRequest() {
   font-size: 0.8125rem;
   color: var(--accent, #0d9488);
   font-weight: 500;
+}
+
+.ts-output-cell {
+  max-width: 16rem;
+  vertical-align: top;
+}
+
+.ts-output-text {
+  display: block;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ts-output-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #64748b);
+  font-style: italic;
+}
+
+.ts-entry-output-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color, #e2e8f0);
+}
+
+.ts-entry-output-block .ts-entry-label {
+  min-width: 0;
+}
+
+.ts-entry-output-text {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-primary, #1e293b);
+  white-space: pre-wrap;
+  word-break: break-word;
+  width: 100%;
 }
 
 .ts-edit-cell {

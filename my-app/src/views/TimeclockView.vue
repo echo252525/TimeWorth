@@ -47,6 +47,9 @@ const locationIn = ref<{ lat: number; lng: number } | null>(null)
 const locationOut = ref<{ lat: number; lng: number } | null>(null)
 const locationError = ref<string | null>(null)
 const clockOutConfirm = ref<{ outsideOffice?: boolean; outsideWfh?: boolean } | null>(null)
+const showClockOutOutputPanel = ref(false)
+const clockOutOutputDraft = ref('')
+const clockOutOutputToSave = ref<string | null>(null)
 const WFH_PICTURE_BUCKET = 'wfh_employee_picture'
 /** Face enrollment images; presence determines `employee.isregistered` (synced in this view). */
 const REGISTERED_FACE_BUCKET = 'registered_user_face'
@@ -54,6 +57,10 @@ const wfhPhotoFile = ref<File | null>(null)
 const wfhPhotoPreviewUrl = ref<string | null>(null)
 const wfhPhotoError = ref<string | null>(null)
 const wfhPhotoUploading = ref(false)
+const wfhVideoRef = ref<HTMLVideoElement | null>(null)
+const wfhCameraStream = ref<MediaStream | null>(null)
+const wfhCameraStarting = ref(false)
+const wfhVideoMetaReady = ref(false)
 // Liveness verification state
 const livenessVerificationId = ref<string | null>(null)
 const facialScanSuccess = ref(false)
@@ -202,6 +209,122 @@ function resumeLivenessRow(row: { id: string }) {
     .subscribe()
 }
 
+function stopWfhCamera() {
+  wfhVideoMetaReady.value = false
+  if (wfhCameraStream.value) {
+    for (const t of wfhCameraStream.value.getTracks()) t.stop()
+    wfhCameraStream.value = null
+  }
+  const el = wfhVideoRef.value
+  if (el) el.srcObject = null
+}
+
+async function startWfhCamera() {
+  wfhPhotoError.value = null
+  wfhVideoMetaReady.value = false
+  stopWfhCamera()
+  if (!navigator.mediaDevices?.getUserMedia) {
+    wfhPhotoError.value = 'Camera is not supported in this browser.'
+    return
+  }
+  wfhCameraStarting.value = true
+  try {
+    const constraintsList: MediaStreamConstraints[] = [
+      { video: { facingMode: { ideal: 'environment' } }, audio: false },
+      { video: { facingMode: 'user' }, audio: false },
+      { video: true, audio: false }
+    ]
+    let stream: MediaStream | null = null
+    for (const c of constraintsList) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(c)
+        break
+      } catch {
+        /* try next */
+      }
+    }
+    if (!stream) throw new Error('Could not access camera.')
+    wfhCameraStream.value = stream
+    await nextTick()
+    const el = wfhVideoRef.value
+    if (el) {
+      el.srcObject = stream
+      await el.play().catch(() => {})
+    }
+  } catch (e) {
+    wfhPhotoError.value =
+      e instanceof Error
+        ? e.message
+        : 'Could not access camera. Allow camera permission and try again.'
+  } finally {
+    wfhCameraStarting.value = false
+  }
+}
+
+function retakeWfhPhoto() {
+  if (wfhPhotoPreviewUrl.value) {
+    URL.revokeObjectURL(wfhPhotoPreviewUrl.value)
+    wfhPhotoPreviewUrl.value = null
+  }
+  wfhPhotoFile.value = null
+  wfhPhotoError.value = null
+  void startWfhCamera()
+}
+
+function captureWfhPhotoFromCamera() {
+  const el = wfhVideoRef.value
+  if (!el || !el.videoWidth) {
+    wfhPhotoError.value = 'Camera is not ready yet.'
+    return
+  }
+  const vw = el.videoWidth
+  const vh = el.videoHeight
+  const maxW = 1600
+  const scale = Math.min(1, maxW / vw)
+  const cw = Math.round(vw * scale)
+  const ch = Math.round(vh * scale)
+  const canvas = document.createElement('canvas')
+  canvas.width = cw
+  canvas.height = ch
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    wfhPhotoError.value = 'Could not capture image.'
+    return
+  }
+  ctx.drawImage(el, 0, 0, vw, vh, 0, 0, cw, ch)
+  canvas.toBlob(
+    (blob) => {
+      if (!blob) {
+        wfhPhotoError.value = 'Could not capture image.'
+        return
+      }
+      if (blob.size > 8 * 1024 * 1024) {
+        wfhPhotoError.value = 'Photo must be 8MB or smaller. Try again.'
+        return
+      }
+      if (wfhPhotoPreviewUrl.value) URL.revokeObjectURL(wfhPhotoPreviewUrl.value)
+      const name = `wfh-${Date.now()}.jpg`
+      wfhPhotoFile.value = new File([blob], name, { type: 'image/jpeg' })
+      wfhPhotoPreviewUrl.value = URL.createObjectURL(blob)
+      wfhPhotoError.value = null
+      stopWfhCamera()
+    },
+    'image/jpeg',
+    0.88
+  )
+}
+
+watch(
+  () => step.value,
+  (s, prev) => {
+    if (s === 'wfh_photo') {
+      nextTick(() => void startWfhCamera())
+    } else if (prev === 'wfh_photo') {
+      stopWfhCamera()
+    }
+  }
+)
+
 onMounted(() => {
   fetchToday()
   void loadOfficeGeofence()
@@ -235,6 +358,7 @@ onUnmounted(() => {
     URL.revokeObjectURL(wfhPhotoPreviewUrl.value)
     wfhPhotoPreviewUrl.value = null
   }
+  stopWfhCamera()
 })
 
 const activeBranch = computed(() => {
@@ -910,14 +1034,15 @@ watch(step, async (s, prev) => {
         async (payload: { new: { facial_clock_out?: boolean } }) => {
           if (payload.new?.facial_clock_out !== true) return
           facialScanSuccess.value = true
+          const out = clockOutOutputToSave.value
           try {
             const loc = await getLocation()
             locationOut.value = loc
             const locStr = locationString(loc)
-            if (locStr) await clockOut(locStr)
-            else await clockOut()
+            if (locStr) await clockOut(locStr, out)
+            else await clockOut(undefined, out)
           } catch {
-            await clockOut()
+            await clockOut(undefined, out)
           }
           setTimeout(() => {
             closeLivenessRealtime()
@@ -925,6 +1050,8 @@ watch(step, async (s, prev) => {
             facialScanSuccess.value = false
             step.value = 'idle'
             locationOut.value = null
+            clockOutOutputToSave.value = null
+            clockOutOutputDraft.value = ''
             void fetchToday()
           }, 1800)
         }
@@ -1127,32 +1254,12 @@ function getLocation(): Promise<{ lat: number; lng: number }> {
 }
 
 function clearWfhPhotoSelection() {
+  stopWfhCamera()
   if (wfhPhotoPreviewUrl.value) {
     URL.revokeObjectURL(wfhPhotoPreviewUrl.value)
     wfhPhotoPreviewUrl.value = null
   }
   wfhPhotoFile.value = null
-  wfhPhotoError.value = null
-}
-
-function onWfhPhotoSelected(event: Event) {
-  const input = event.target as HTMLInputElement | null
-  const file = input?.files?.[0] ?? null
-  if (!file) {
-    clearWfhPhotoSelection()
-    return
-  }
-  if (!file.type.startsWith('image/')) {
-    wfhPhotoError.value = 'Please select an image file.'
-    return
-  }
-  if (file.size > 8 * 1024 * 1024) {
-    wfhPhotoError.value = 'Photo must be 8MB or smaller.'
-    return
-  }
-  if (wfhPhotoPreviewUrl.value) URL.revokeObjectURL(wfhPhotoPreviewUrl.value)
-  wfhPhotoFile.value = file
-  wfhPhotoPreviewUrl.value = URL.createObjectURL(file)
   wfhPhotoError.value = null
 }
 
@@ -1175,7 +1282,7 @@ async function uploadWfhPhoto(): Promise<string> {
 
 async function submitWfhClockIn() {
   if (!wfhPhotoFile.value) {
-    wfhPhotoError.value = 'Attach a photo before clocking in.'
+    wfhPhotoError.value = 'Take a photo before clocking in.'
     return
   }
   wfhPhotoUploading.value = true
@@ -1390,36 +1497,70 @@ async function cancelFacialModal() {
           /* still return to clocked-in UI */
         }
       }
+      clockOutOutputToSave.value = null
+      clockOutOutputDraft.value = ''
+      showClockOutOutputPanel.value = false
     }
     step.value = 'clocked_in'
     closeLivenessRealtime()
   }
 }
 
-async function doClockOut() {
+function clearClockOutOutputState() {
+  clockOutOutputToSave.value = null
+  clockOutOutputDraft.value = ''
+  showClockOutOutputPanel.value = false
+}
+
+function openClockOutOutputPanel() {
   if (clockOutDisabledByGeofence.value) return
+  clockOutOutputDraft.value = ''
+  showClockOutOutputPanel.value = true
+}
+
+function cancelClockOutOutputPanel() {
+  showClockOutOutputPanel.value = false
+  clockOutOutputDraft.value = ''
+}
+
+async function submitClockOutOutput() {
+  if (clockOutDisabledByGeofence.value) return
+  const out = clockOutOutputDraft.value.trim() || null
+  clockOutOutputToSave.value = out
+  showClockOutOutputPanel.value = false
+  const mod = todayRecord.value?.work_modality
+  if (mod === 'office') {
+    clockOutLoading.value = true
+    try {
+      step.value = 'facial_out'
+    } finally {
+      clockOutLoading.value = false
+    }
+    return
+  }
+  await executeWfhClockOut()
+}
+
+async function executeWfhClockOut() {
   clockOutLoading.value = true
   locationError.value = null
   locationOut.value = null
   try {
-    const mod = todayRecord.value?.work_modality
-    if (mod === 'office') {
-      step.value = 'facial_out'
-      return
-    }
     const loc = await getLocation()
     locationOut.value = loc
     const locStr = locationString(loc)!
-    if (mod === 'wfh' && todayRecord.value?.location_in && isOutsideWfhRadius(loc, todayRecord.value.location_in)) {
+    if (todayRecord.value?.location_in && isOutsideWfhRadius(loc, todayRecord.value.location_in)) {
       clockOutConfirm.value = { outsideWfh: true }
       return
     }
-    await clockOut(locStr)
+    await clockOut(locStr, clockOutOutputToSave.value)
     step.value = 'idle'
     locationOut.value = null
+    clearClockOutOutputState()
   } catch {
-    await clockOut()
+    await clockOut(undefined, clockOutOutputToSave.value)
     step.value = 'idle'
+    clearClockOutOutputState()
   } finally {
     clockOutLoading.value = false
   }
@@ -1428,16 +1569,18 @@ async function doClockOut() {
 function confirmClockOutOutside() {
   const loc = locationString(locationOut.value)
   if (!loc) return
-  clockOut(loc).then(() => {
+  clockOut(loc, clockOutOutputToSave.value).then(() => {
     step.value = 'idle'
     clockOutConfirm.value = null
     locationOut.value = null
+    clearClockOutOutputState()
   })
 }
 
 function cancelClockOutConfirm() {
   clockOutConfirm.value = null
   locationOut.value = null
+  clockOutOutputToSave.value = null
 }
 
 function fmtStored(t: string | null) {
@@ -1515,7 +1658,29 @@ async function handleCancelFacial() {
         <template v-else>
           <!-- Active session -->
           <div v-if="todayRecord && !todayRecord.clock_out" class="hero-card hero-idle">
-            <div v-if="step === 'facial_out'" class="confirm-wrap facial-out-wrap">
+            <div v-if="showClockOutOutputPanel" class="confirm-wrap clock-out-output-wrap">
+              <p class="muted clock-out-output-label">What did you accomplish during this shift?</p>
+              <textarea
+                v-model="clockOutOutputDraft"
+                class="clock-out-output-textarea"
+                rows="5"
+                placeholder="Describe the output you accomplished for this clock-in…"
+                aria-label="Work output for this shift"
+              />
+              <div class="actions">
+                <button type="button" class="btn primary" :disabled="clockOutLoading" @click="submitClockOutOutput">
+                  <span v-if="clockOutLoading" class="btn-loading-wrap">
+                    <span class="btn-loading-spinner" aria-hidden="true"></span>
+                    <span>Continuing…</span>
+                  </span>
+                  <span v-else>Clock out</span>
+                </button>
+                <button type="button" class="btn secondary" :disabled="clockOutLoading" @click="cancelClockOutOutputPanel">
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div v-else-if="step === 'facial_out'" class="confirm-wrap facial-out-wrap">
               <p class="muted">Face verification in progress… Saving your clock-out…</p>
             </div>
             <div v-else-if="clockOutConfirm" class="confirm-wrap">
@@ -1575,7 +1740,7 @@ async function handleCancelFacial() {
                   type="button"
                   class="btn primary btn-clockout"
                   :disabled="isLoading || clockOutLoading || clockOutDisabledByGeofence"
-                  @click="doClockOut"
+                  @click="openClockOutOutputPanel"
                 >
                   <span v-if="isLoading || clockOutLoading" class="btn-loading-wrap">
                     <span class="btn-loading-spinner" aria-hidden="true"></span>
@@ -1669,21 +1834,34 @@ async function handleCancelFacial() {
             </div>
           </div>
           <div v-else-if="step === 'wfh_photo'" class="hero-card wfh-photo-card">
-            <p class="muted">Attach your WFH photo before clocking in.</p>
-            <div class="wfh-photo-upload">
-              <label class="wfh-photo-upload-label" for="wfh-photo-input">
-                <span>{{ wfhPhotoFile ? 'Replace photo' : 'Attach photo' }}</span>
-              </label>
-              <input
-                id="wfh-photo-input"
-                class="wfh-photo-upload-input"
-                type="file"
-                accept="image/*"
-                @change="onWfhPhotoSelected"
+            <p class="muted">Use your camera to take a proof photo, then submit to clock in.</p>
+            <div class="wfh-photo-camera">
+              <video
+                v-show="!wfhPhotoFile"
+                ref="wfhVideoRef"
+                class="wfh-photo-video"
+                playsinline
+                muted
+                @loadedmetadata="wfhVideoMetaReady = true"
               />
-              <p v-if="wfhPhotoFile" class="muted small wfh-photo-name">{{ wfhPhotoFile.name }}</p>
-              <div v-if="wfhPhotoPreviewUrl" class="wfh-photo-preview-wrap">
+              <div v-if="wfhPhotoPreviewUrl && wfhPhotoFile" class="wfh-photo-preview-wrap">
                 <img :src="wfhPhotoPreviewUrl" alt="WFH proof preview" class="wfh-photo-preview" />
+              </div>
+              <p v-if="wfhCameraStarting" class="muted small wfh-camera-status">Starting camera…</p>
+              <div v-if="!wfhPhotoFile" class="wfh-photo-camera-actions">
+                <button
+                  type="button"
+                  class="btn secondary"
+                  :disabled="wfhCameraStarting || !wfhVideoMetaReady"
+                  @click="captureWfhPhotoFromCamera"
+                >
+                  Capture photo
+                </button>
+              </div>
+              <div v-else class="wfh-photo-camera-actions">
+                <button type="button" class="btn secondary" :disabled="wfhPhotoUploading" @click="retakeWfhPhoto">
+                  Retake
+                </button>
               </div>
               <p v-if="wfhPhotoError" class="error wfh-photo-error">{{ wfhPhotoError }}</p>
             </div>
@@ -1691,7 +1869,7 @@ async function handleCancelFacial() {
               <button
                 type="button"
                 class="btn primary"
-                :disabled="isLoading || wfhPhotoUploading || !wfhPhotoFile"
+                :disabled="isLoading || wfhPhotoUploading || !wfhPhotoFile || wfhCameraStarting"
                 @click="submitWfhClockIn"
               >
                 <span v-if="wfhPhotoUploading">Uploading…</span>
@@ -3057,31 +3235,31 @@ async function handleCancelFacial() {
   gap: 0.85rem;
 }
 
-.wfh-photo-upload {
+.wfh-photo-camera {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.65rem;
 }
 
-.wfh-photo-upload-input {
+.wfh-photo-video {
   display: block;
   width: 100%;
-  padding: 0.5rem;
-  border: 1px dashed var(--border-color);
-  border-radius: 10px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+  max-height: 280px;
+  border-radius: 12px;
+  background: #0f172a;
+  object-fit: cover;
+  aspect-ratio: 4 / 3;
 }
 
-.wfh-photo-upload-label {
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-  font-weight: 600;
+.wfh-photo-camera-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
 }
 
-.wfh-photo-name {
+.wfh-camera-status {
   margin: 0;
-  word-break: break-word;
 }
 
 .wfh-photo-preview-wrap {
@@ -3102,6 +3280,30 @@ async function handleCancelFacial() {
   margin: 0;
   font-size: 0.85rem;
   color: var(--error);
+}
+
+.clock-out-output-wrap .clock-out-output-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.9rem;
+}
+
+.clock-out-output-textarea {
+  width: 100%;
+  min-height: 7rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.45;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.clock-out-output-textarea::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.85;
 }
 
 .liveness-cancel-spinner {

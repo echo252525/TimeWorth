@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 import supabase from '../lib/supabaseClient'
-import { EyeIcon, ChevronDownIcon } from '@heroicons/vue/24/outline'
+import { ChevronDownIcon } from '@heroicons/vue/24/outline'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import JSZip from 'jszip'
@@ -10,12 +12,12 @@ import {
   storedToRealInstant,
   getLocalDateString,
   getBranch,
-  isTravelFlagged,
+  parseLocation,
   type AttendanceRow
 } from '../composables/useAttendance'
 
 const ATTENDANCE_SELECT =
-  'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,created_at,updated_at,work_modality,facial_verifications_id,wfh_pic_url'
+  'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,created_at,updated_at,work_modality,facial_verifications_id,wfh_pic_url,output'
 
 interface EmpLite {
   id: string
@@ -46,9 +48,9 @@ const historyRows = ref<AttendanceRow[]>([])
 const downloadBusy = ref(false)
 const bulkDownloadBusy = ref(false)
 
-type HistoryDateFilter = 'today' | 'yesterday' | 'last7Days' | 'lastMonth' | 'custom'
+type HistoryDateFilter = 'all' | 'today' | 'yesterday' | 'lastWeek' | 'lastMonth' | 'custom'
 
-const historyDateFilter = ref<HistoryDateFilter>('lastMonth')
+const historyDateFilter = ref<HistoryDateFilter>('all')
 const historyCustomStartDate = ref<string>('')
 const historyCustomEndDate = ref<string>('')
 
@@ -61,12 +63,14 @@ const HISTORY_DATE_MENU_Z = '2147483647'
 
 const historyDateFilterLabel = computed(() => {
   switch (historyDateFilter.value) {
+    case 'all':
+      return 'All'
     case 'today':
       return 'Today'
     case 'yesterday':
       return 'Yesterday'
-    case 'last7Days':
-      return 'Last 7 Days'
+    case 'lastWeek':
+      return 'Last Week'
     case 'lastMonth':
       return 'Last Month'
     case 'custom':
@@ -75,7 +79,7 @@ const historyDateFilterLabel = computed(() => {
       }
       return 'Custom Range'
     default:
-      return 'Last Month'
+      return 'All'
   }
 })
 
@@ -126,8 +130,27 @@ watch(showHistoryDateDropdown, (open) => {
   }
 })
 
+const WFH_PHOTO_BUCKET = 'wfh_employee_picture'
+/** 8h target for undertime / on-time / overtime (per session). */
+const TARGET_WORK_SEC = 8 * 3600
+const ON_TIME_TOLERANCE_SEC = 120
+
+function parseIntervalToSeconds(interval: string | null): number {
+  if (!interval) return 0
+  const m = interval.match(/^(\d+):(\d+):(\d+)/)
+  if (m) {
+    const h = Number(m[1])
+    const min = Number(m[2])
+    const s = Number(m[3])
+    return h * 3600 + min * 60 + s
+  }
+  return 0
+}
+
 function formatTotalTime(interval: string | null): string {
   if (!interval) return '—'
+  const sec = parseIntervalToSeconds(interval)
+  if (sec > 0 && sec < 60) return `${sec}s`
   const m = interval.match(/^(\d+):(\d+):(\d+)/)
   if (m) {
     const [, h, min] = m.map(Number)
@@ -136,6 +159,150 @@ function formatTotalTime(interval: string | null): string {
   }
   return interval
 }
+
+type TimeCompliance = 'undertime' | 'enough' | 'overtime'
+
+function timeComplianceCategory(r: AttendanceRow): TimeCompliance {
+  const sec = parseIntervalToSeconds(r.total_time)
+  if (sec < TARGET_WORK_SEC - ON_TIME_TOLERANCE_SEC) return 'undertime'
+  if (sec > TARGET_WORK_SEC + ON_TIME_TOLERANCE_SEC) return 'overtime'
+  return 'enough'
+}
+
+type ModalityFilter = 'all' | 'office' | 'wfh'
+type TimeComplianceFilter = 'all' | TimeCompliance
+
+const modalityFilter = ref<ModalityFilter>('all')
+const timeComplianceFilter = ref<TimeComplianceFilter>('all')
+
+const filteredHistoryRows = computed(() => {
+  let rows = historyRows.value
+  if (modalityFilter.value !== 'all') {
+    rows = rows.filter((r) => r.work_modality === modalityFilter.value)
+  }
+  if (timeComplianceFilter.value !== 'all') {
+    rows = rows.filter((r) => timeComplianceCategory(r) === timeComplianceFilter.value)
+  }
+  return rows
+})
+
+const sortedFilteredHistoryRows = computed(() =>
+  [...filteredHistoryRows.value].sort((a, b) => {
+    const ta = a.clock_in ? storedToRealInstant(a.clock_in) : 0
+    const tb = b.clock_in ? storedToRealInstant(b.clock_in) : 0
+    return tb - ta
+  })
+)
+
+const HISTORY_ENTRIES_PER_PAGE = 10
+const historyDayPage = ref(1)
+
+const historyEntryTotalPages = computed(() =>
+  Math.max(1, Math.ceil(sortedFilteredHistoryRows.value.length / HISTORY_ENTRIES_PER_PAGE))
+)
+
+const paginatedHistoryRows = computed(() => {
+  const list = sortedFilteredHistoryRows.value
+  const start = (historyDayPage.value - 1) * HISTORY_ENTRIES_PER_PAGE
+  return list.slice(start, start + HISTORY_ENTRIES_PER_PAGE)
+})
+
+const detailAttendanceRow = ref<AttendanceRow | null>(null)
+const detailMapEl = ref<HTMLElement | null>(null)
+let detailMapInstance: L.Map | null = null
+
+function destroyDetailMap() {
+  if (detailMapInstance) {
+    detailMapInstance.remove()
+    detailMapInstance = null
+  }
+}
+
+function makeClockLabelIcon(label: string, variant: 'in' | 'out'): L.DivIcon {
+  return L.divIcon({
+    className: 'admin-leaflet-div-marker',
+    html: `<div class="admin-map-pin admin-map-pin--${variant}"><span>${label}</span></div>`,
+    iconSize: [128, 36],
+    iconAnchor: [64, 36]
+  })
+}
+
+function initDetailMap() {
+  destroyDetailMap()
+  const r = detailAttendanceRow.value
+  const el = detailMapEl.value
+  if (!r || !el || !el.isConnected) return
+  if (r.work_modality !== 'office') return
+  const pIn = parseLocation(r.location_in)
+  const pOut = parseLocation(r.location_out)
+  if (!pIn && !pOut) return
+
+  detailMapInstance = L.map(el, { scrollWheelZoom: true })
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19
+  }).addTo(detailMapInstance)
+
+  const bounds = L.latLngBounds([])
+  if (pIn) {
+    L.marker([pIn.lat, pIn.lng], { icon: makeClockLabelIcon('Clock in', 'in') }).addTo(detailMapInstance)
+    bounds.extend([pIn.lat, pIn.lng])
+  }
+  if (pOut) {
+    L.marker([pOut.lat, pOut.lng], { icon: makeClockLabelIcon('Clock out', 'out') }).addTo(detailMapInstance)
+    bounds.extend([pOut.lat, pOut.lng])
+  }
+  if (pIn && pOut) {
+    L.polyline(
+      [
+        [pIn.lat, pIn.lng],
+        [pOut.lat, pOut.lng]
+      ],
+      { color: '#2563eb', weight: 3, opacity: 0.85 }
+    ).addTo(detailMapInstance)
+  }
+  if (bounds.isValid()) {
+    const ne = bounds.getNorthEast()
+    const sw = bounds.getSouthWest()
+    if (ne.lat === sw.lat && ne.lng === sw.lng) {
+      detailMapInstance.setView([ne.lat, ne.lng], 16)
+    } else {
+      detailMapInstance.fitBounds(bounds, { padding: [24, 24], maxZoom: 17 })
+    }
+  }
+  void nextTick(() => detailMapInstance?.invalidateSize())
+}
+
+function openAttendanceDetail(r: AttendanceRow) {
+  detailAttendanceRow.value = r
+}
+
+function closeAttendanceDetail() {
+  destroyDetailMap()
+  detailAttendanceRow.value = null
+}
+
+watch(
+  [detailAttendanceRow, detailMapEl],
+  async () => {
+    await nextTick()
+    initDetailMap()
+  },
+  { flush: 'post' }
+)
+
+function officeLocationLabel(r: AttendanceRow): string {
+  const b = r.branch_location ? getBranch(r.branch_location) : null
+  const parts: string[] = []
+  if (b) parts.push(b.name)
+  const pin = parseLocation(r.location_in)
+  const pout = parseLocation(r.location_out)
+  if (pin) parts.push(`In ${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`)
+  if (pout) parts.push(`Out ${pout.lat.toFixed(5)}, ${pout.lng.toFixed(5)}`)
+  return parts.length ? parts.join(' · ') : '—'
+}
+
+const wfhSignedUrls = ref<Record<string, string | null>>({})
 
 /** 12-hour times for PDF/UI: `H:MM A.M.` / `P.M.` */
 function formatTime12hApm(iso: string | null): string {
@@ -169,6 +336,10 @@ function safeFileSlug(s: string): string {
       .replace(/\s+/g, '-')
       .slice(0, 80) || 'employee'
   )
+}
+
+function employeeListInitial(name: string): string {
+  return (name || '?').trim().slice(0, 1).toUpperCase() || '?'
 }
 
 function publicAssetUrl(file: string): string {
@@ -273,6 +444,14 @@ function getHistoryDateRangeBounds(): HistoryDateBounds | null {
     return { startDay, endDay, label: `${startDay} - ${endDay}` }
   }
 
+  if (historyDateFilter.value === 'all') {
+    const endDay = getLocalDateString(today)
+    const s = new Date(today)
+    s.setFullYear(s.getFullYear() - 3)
+    const startDay = getLocalDateString(s)
+    return { startDay, endDay, label: `${startDay} - ${endDay}` }
+  }
+
   if (historyDateFilter.value === 'today') {
     const d = getLocalDateString(today)
     return { startDay: d, endDay: d, label: `${d} - ${d}` }
@@ -285,7 +464,7 @@ function getHistoryDateRangeBounds(): HistoryDateBounds | null {
     return { startDay: d, endDay: d, label: `${d} - ${d}` }
   }
 
-  if (historyDateFilter.value === 'last7Days') {
+  if (historyDateFilter.value === 'lastWeek') {
     const endDay = getLocalDateString(today)
     const s = new Date(today)
     s.setDate(s.getDate() - 6)
@@ -293,13 +472,17 @@ function getHistoryDateRangeBounds(): HistoryDateBounds | null {
     return { startDay, endDay, label: `${startDay} - ${endDay}` }
   }
 
-  const y = today.getFullYear()
-  const m = today.getMonth()
-  const monthStart = new Date(y, m - 1, 1)
-  const monthEnd = new Date(y, m, 0)
-  const startDay = getLocalDateString(monthStart)
-  const endDay = getLocalDateString(monthEnd)
-  return { startDay, endDay, label: `${startDay} - ${endDay}` }
+  if (historyDateFilter.value === 'lastMonth') {
+    const y = today.getFullYear()
+    const m = today.getMonth()
+    const monthStart = new Date(y, m - 1, 1)
+    const monthEnd = new Date(y, m, 0)
+    const startDay = getLocalDateString(monthStart)
+    const endDay = getLocalDateString(monthEnd)
+    return { startDay, endDay, label: `${startDay} - ${endDay}` }
+  }
+
+  return null
 }
 
 function localDayRangeToMs(startDay: string, endDay: string): { startMs: number; endMs: number } {
@@ -385,16 +568,6 @@ function getCurrentCalendarMonthBounds(): HistoryDateBounds {
   return { startDay, endDay, label: `${startDay} - ${endDay}` }
 }
 
-/** Same labels as the PDF “Activity” column (travel / location flags). */
-function attendanceActivityLabel(r: AttendanceRow): string {
-  const v = isTravelFlagged(r)
-  return v === 'travel'
-    ? 'Suspicious location activity'
-    : v === 'possible_travel'
-      ? 'Possible suspicious location activity'
-      : '—'
-}
-
 function buildAttendanceTableBodyFromRows(rows: AttendanceRow[]): string[][] {
   const map: Record<
     string,
@@ -406,15 +579,13 @@ function buildAttendanceTableBodyFromRows(rows: AttendanceRow[]): string[][] {
       lunchOut: string
       total: string
       modality: string
-      travel: string
-      branch: string
+      output: string
     }>
   > = {}
 
   for (const r of rows) {
     const dateKey = r.clock_in ? getLocalDateString(new Date(storedToRealInstant(r.clock_in))) : '—'
     if (!map[dateKey]) map[dateKey] = []
-    const branch = r.branch_location ? getBranch(r.branch_location) : null
     map[dateKey].push({
       date: dateKey,
       clockIn: formatTime12hApmFromStored(r.clock_in),
@@ -423,32 +594,29 @@ function buildAttendanceTableBodyFromRows(rows: AttendanceRow[]): string[][] {
       lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
       total: formatTotalTime(r.total_time),
       modality: r.work_modality ? String(r.work_modality).toLowerCase() : '—',
-      travel: attendanceActivityLabel(r),
-      branch: branch?.name ?? '—'
+      output: (r.output && String(r.output).trim()) || '—'
     })
   }
 
-  const exportRows: Array<[string, string, string, string, string, string, string, string, string]> = []
+  const exportRows: Array<[string, string, string, string, string, string, string, string]> = []
   for (const [dateKey, groupRows] of Object.entries(map).sort(([a], [b]) =>
     a === '—' ? 1 : b === '—' ? -1 : new Date(b).getTime() - new Date(a).getTime()
   )) {
     for (const r of groupRows) {
-      exportRows.push([dateKey, r.clockIn, r.clockOut, r.lunchIn, r.lunchOut, r.total, r.modality, r.branch, r.travel])
+      exportRows.push([dateKey, r.clockIn, r.clockOut, r.lunchIn, r.lunchOut, r.total, r.modality, r.output])
     }
   }
 
-  return exportRows.map(
-    ([date, clockIn, clockOut, lunchIn, lunchOut, total, modality, _branch, travel]) => [
-      date,
-      clockIn,
-      clockOut,
-      lunchIn,
-      lunchOut,
-      total,
-      modality,
-      travel
-    ]
-  )
+  return exportRows.map(([date, clockIn, clockOut, lunchIn, lunchOut, total, modality, output]) => [
+    date,
+    clockIn,
+    clockOut,
+    lunchIn,
+    lunchOut,
+    total,
+    modality,
+    output
+  ])
 }
 
 /** Letterhead copy for exported PDFs (matches company timesheet template). */
@@ -529,9 +697,7 @@ function createTimesheetPdfDocument(
   const tableStartY = ey + 8
 
   autoTable(doc, {
-    head: [
-      ['Date', 'Clock in', 'Clock out', 'Lunch In', 'Lunch Out', 'Total Hours', 'Modality', 'Activity']
-    ],
+    head: [['Date', 'Clock in', 'Clock out', 'Lunch In', 'Lunch Out', 'Total Hours', 'Modality', 'Output']],
     body: tableBody,
     startY: tableStartY,
     styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', textColor: 0 },
@@ -662,6 +828,16 @@ function toggleEmployeeSelected(id: string, on: boolean) {
   selectedEmployeeIds.value = { ...selectedEmployeeIds.value, [id]: on }
 }
 
+function onSelectPageCheckboxChange(ev: Event) {
+  const t = ev.target as HTMLInputElement
+  toggleSelectPage(t.checked)
+}
+
+function onEmployeeCheckboxChange(id: string, ev: Event) {
+  const t = ev.target as HTMLInputElement
+  toggleEmployeeSelected(id, t.checked)
+}
+
 function toggleSelectPage(on: boolean) {
   const map = { ...selectedEmployeeIds.value }
   for (const e of pagedEmployees.value) map[e.id] = on
@@ -678,9 +854,15 @@ async function openEmployeeModal(emp: EmpLite) {
   error.value = null
   historyRows.value = []
   activeProfileUrl.value = null
-  historyDateFilter.value = 'last7Days'
+  historyDateFilter.value = 'all'
   historyCustomStartDate.value = ''
   historyCustomEndDate.value = ''
+  modalityFilter.value = 'all'
+  timeComplianceFilter.value = 'all'
+  historyDayPage.value = 1
+  wfhSignedUrls.value = {}
+  destroyDetailMap()
+  detailAttendanceRow.value = null
   historyLoading.value = true
   try {
     activeProfileUrl.value = await getSignedProfileUrl(emp.picture)
@@ -692,11 +874,14 @@ async function openEmployeeModal(emp: EmpLite) {
 
 function closeEmployeeModal() {
   showHistoryDateDropdown.value = false
+  destroyDetailMap()
+  detailAttendanceRow.value = null
   activeEmployee.value = null
   activeProfileUrl.value = null
   historyRows.value = []
   historyError.value = null
   downloadBusy.value = false
+  wfhSignedUrls.value = {}
 }
 
 async function loadActiveEmployeeHistory() {
@@ -742,7 +927,7 @@ async function downloadActiveEmployeePdf() {
       loadRoundedLogoDataUrl(publicAssetUrl('TimeWorthLogo.png'))
     ])
 
-    const tableBody = buildAttendanceTableBodyFromRows(historyRows.value)
+    const tableBody = buildAttendanceTableBodyFromRows(filteredHistoryRows.value)
     const doc = createTimesheetPdfDocument(emp, tableBody, boundsPdf.label, pcDataUrl, twDataUrl)
 
     const today = new Date().toISOString().slice(0, 10)
@@ -755,12 +940,38 @@ async function downloadActiveEmployeePdf() {
   }
 }
 
+watch(
+  filteredHistoryRows,
+  async (rows) => {
+    const prev = wfhSignedUrls.value
+    const next: Record<string, string | null> = {}
+    for (const r of rows) {
+      if (r.work_modality !== 'wfh' || !r.wfh_pic_url) continue
+      if (prev[r.attendance_id]) {
+        next[r.attendance_id] = prev[r.attendance_id]
+        continue
+      }
+      const { data, error: err } = await supabase.storage
+        .from(WFH_PHOTO_BUCKET)
+        .createSignedUrl(r.wfh_pic_url, 3600)
+      next[r.attendance_id] = err ? null : data?.signedUrl ?? null
+    }
+    wfhSignedUrls.value = next
+  },
+  { deep: true }
+)
+
+watch([sortedFilteredHistoryRows, modalityFilter, timeComplianceFilter], () => {
+  historyDayPage.value = 1
+})
+
 onMounted(async () => {
   await loadEmployees()
   document.addEventListener('click', handleHistoryDateFilterClickOutside)
 })
 
 onUnmounted(() => {
+  destroyDetailMap()
   document.removeEventListener('click', handleHistoryDateFilterClickOutside)
   window.removeEventListener('scroll', positionHistoryDateDropdown, true)
   window.removeEventListener('resize', positionHistoryDateDropdown)
@@ -768,80 +979,71 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page admin-ts-page">
     <p v-if="error" class="banner-error">{{ error }}</p>
 
-    <section class="employee-panel" aria-label="Employees">
-      <div class="panel-head">
-        <div class="panel-title-row">
-          <h1 class="panel-title">Employees</h1>
-          <time
-            class="panel-month-badge"
-            :datetime="currentMonthIso"
-            title="Calendar month used for Download Timesheet"
-          >
-            {{ currentMonthDisplay }}
-          </time>
-        </div>
-        <p class="panel-hint">
-          Click <strong>Download Timesheet</strong> to download this month’s timesheet for the selected employees. For other date ranges, open an
-          employee using <strong>View</strong> and use <strong>Download Timesheet</strong> there.
-        </p>
-      </div>
-      <div class="employee-toolbar">
-        <input
-          v-model="employeeSearch"
-          type="search"
-          class="employee-search"
-          placeholder="Search name, email, position…"
-          autocomplete="off"
-          aria-label="Search employees"
-        />
-      </div>
-      <div v-if="loadingEmployees" class="loading-state">Loading employees…</div>
-      <template v-else>
-        <div class="employee-table-wrap">
-          <table class="data-table data-table--compact">
-            <thead>
-              <tr>
-                <th class="th-check" scope="col">
-                  <input
-                    type="checkbox"
-                    :checked="allVisibleOnPageSelected"
-                    :indeterminate.prop="someVisibleOnPageSelected && !allVisibleOnPageSelected"
-                    aria-label="Select all on this page"
-                    @change="toggleSelectPage(($event.target as HTMLInputElement).checked)"
-                  />
-                </th>
-                <th class="th-name" scope="col">Name</th>
-                <th scope="col">Email</th>
-                <th scope="col">Position</th>
-                <th class="th-view" scope="col">View</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="e in pagedEmployees" :key="e.id" class="data-row">
-                <td class="td-check">
-                  <input
-                    type="checkbox"
-                    :checked="!!selectedEmployeeIds[e.id]"
-                    :aria-label="`Select ${e.name}`"
-                    @change="toggleEmployeeSelected(e.id, ($event.target as HTMLInputElement).checked)"
-                  />
-                </td>
-                <td class="cell-name">{{ e.name }}</td>
-                <td class="td-muted">{{ e.email }}</td>
-                <td class="td-muted">{{ e.position_in_company || '—' }}</td>
-                <td class="td-view">
-                  <button type="button" class="icon-btn" :aria-label="`View ${e.name}`" @click.stop="openEmployeeModal(e)">
-                    <EyeIcon class="icon-16" aria-hidden="true" />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-if="!pagedEmployees.length && !loadingEmployees" class="empty-hint">No employees match your search.</div>
-          <div v-if="filteredEmployees.length > EMPLOYEES_PER_PAGE" class="pager">
+    <div class="admin-ts-layout">
+      <aside class="admin-ts-sidebar" aria-label="Employee list">
+        <div class="admin-ts-sidebar-card">
+          <div class="admin-ts-sidebar-head">
+            <h1 class="admin-ts-sidebar-title">Employees</h1>
+            <time
+              class="panel-month-badge"
+              :datetime="currentMonthIso"
+              title="Calendar month used for bulk Download Timesheet"
+            >
+              {{ currentMonthDisplay }}
+            </time>
+          </div>
+          <p class="admin-ts-sidebar-hint">
+            Use checkboxes to choose who is included in <strong>Download Timesheet</strong> (current month). Click a name to view their entries on the right.
+          </p>
+          <input
+            v-model="employeeSearch"
+            type="search"
+            class="employee-search"
+            placeholder="Search name, email, position…"
+            autocomplete="off"
+            aria-label="Search employees"
+          />
+          <div class="admin-ts-select-row">
+            <input
+              type="checkbox"
+              :checked="allVisibleOnPageSelected"
+              :indeterminate.prop="someVisibleOnPageSelected && !allVisibleOnPageSelected"
+              aria-label="Select all on this page"
+              @change="onSelectPageCheckboxChange"
+            />
+            <span class="admin-ts-select-label">Select all on page</span>
+          </div>
+
+          <div v-if="loadingEmployees" class="loading-state">Loading employees…</div>
+          <ul v-else class="admin-ts-emp-list" role="list">
+            <li
+              v-for="e in pagedEmployees"
+              :key="e.id"
+              class="admin-ts-emp-item"
+              :class="{ 'is-active': activeEmployee?.id === e.id }"
+              role="listitem"
+              @click="openEmployeeModal(e)"
+            >
+              <input
+                type="checkbox"
+                :checked="!!selectedEmployeeIds[e.id]"
+                :aria-label="`Include ${e.name} in bulk download`"
+                class="admin-ts-emp-check"
+                @click.stop
+                @change="onEmployeeCheckboxChange(e.id, $event)"
+              />
+              <div class="admin-ts-emp-avatar" aria-hidden="true">
+                {{ employeeListInitial(e.name) }}
+              </div>
+              <span class="admin-ts-emp-name">{{ e.name }}</span>
+            </li>
+          </ul>
+          <p v-if="!pagedEmployees.length && !loadingEmployees" class="empty-hint admin-ts-empty">No employees match your search.</p>
+
+          <div v-if="filteredEmployees.length > EMPLOYEES_PER_PAGE" class="pager admin-ts-pager">
             <button
               type="button"
               class="btn btn-secondary"
@@ -851,7 +1053,7 @@ onUnmounted(() => {
               Previous
             </button>
             <span class="pager-info">
-              Page {{ employeePage }} / {{ employeeTotalPages }} · {{ filteredEmployees.length }} total
+              {{ employeePage }} / {{ employeeTotalPages }}
             </span>
             <button
               type="button"
@@ -862,56 +1064,54 @@ onUnmounted(() => {
               Next
             </button>
           </div>
+
+          <div class="admin-ts-sidebar-actions">
+            <button
+              type="button"
+              class="btn btn-secondary btn-toolbar-refresh"
+              :disabled="loadingEmployees || bulkDownloadBusy"
+              @click="loadEmployees"
+            >
+              {{ loadingEmployees ? 'Refreshing…' : 'Refresh' }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary bulk-pdf-btn"
+              :disabled="loadingEmployees || bulkDownloadBusy || !employees.length || !selectedEmployeeCount"
+              @click="downloadBulkCurrentMonthPdf"
+            >
+              {{ bulkDownloadBusy ? 'Preparing…' : 'Download Timesheet' }}
+            </button>
+          </div>
         </div>
-        <div class="employee-table-actions">
-          <button
-            type="button"
-            class="btn btn-secondary btn-toolbar-refresh"
-            :disabled="loadingEmployees || bulkDownloadBusy"
-            @click="loadEmployees"
-          >
-            {{ loadingEmployees ? 'Refreshing…' : 'Refresh' }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-primary bulk-pdf-btn"
-            :disabled="loadingEmployees || bulkDownloadBusy || !employees.length || !selectedEmployeeCount"
-            @click="downloadBulkCurrentMonthPdf"
-          >
-            {{ bulkDownloadBusy ? 'Preparing…' : 'Download Timesheet' }}
-          </button>
+      </aside>
+
+      <main class="admin-ts-main">
+        <div v-if="!activeEmployee" class="admin-ts-placeholder">
+          <p class="admin-ts-placeholder-title">Select an employee</p>
+          <p class="admin-ts-placeholder-text">Choose someone from the list to see their clock entries, dates, and output for the selected period.</p>
         </div>
-      </template>
-    </section>
 
-    <div class="table-card">
-      <p class="empty-hint">
-        Tick the row <strong>checkboxes</strong> for who to include, then click <strong>Download Timesheet</strong> below the table (current month; disabled until someone is selected).
-        For <strong>other dates</strong>, click <strong>View</strong>, pick the period, then use <strong>Download Timesheet</strong> at the bottom of the window.
-      </p>
-    </div>
-
-    <Teleport to="body">
-      <div v-if="activeEmployee" class="modal-overlay" @click.self="closeEmployeeModal">
-        <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Employee timesheet">
-          <button type="button" class="modal-close" aria-label="Close" @click="closeEmployeeModal">&times;</button>
-
-          <div class="modal-head">
-            <div class="modal-avatar">
-              <img v-if="activeProfileUrl" :src="activeProfileUrl" alt="" class="avatar-img" />
-              <span v-else class="avatar-fallback">{{ (activeEmployee.name || '?').slice(0, 1).toUpperCase() }}</span>
+        <div v-else class="admin-ts-detail-card">
+          <div class="admin-ts-detail-head">
+            <div class="modal-head">
+              <div class="modal-avatar">
+                <img v-if="activeProfileUrl" :src="activeProfileUrl" alt="" class="avatar-img" />
+                <span v-else class="avatar-fallback">{{ (activeEmployee.name || '?').slice(0, 1).toUpperCase() }}</span>
+              </div>
+              <div class="modal-head-meta">
+                <h2 class="modal-title">{{ activeEmployee.name }}</h2>
+                <p class="modal-sub">
+                  <span class="pill">ID: {{ activeEmployee.employee_no ?? activeEmployee.id }}</span>
+                  <span class="pill">{{ activeEmployee.email }}</span>
+                  <span class="pill">{{ activeEmployee.position_in_company || '—' }}</span>
+                </p>
+              </div>
             </div>
-            <div class="modal-head-meta">
-              <h2 class="modal-title">{{ activeEmployee.name }}</h2>
-              <p class="modal-sub">
-                <span class="pill">ID: {{ activeEmployee.employee_no ?? activeEmployee.id }}</span>
-                <span class="pill">{{ activeEmployee.email }}</span>
-                <span class="pill">{{ activeEmployee.position_in_company || '—' }}</span>
-              </p>
-            </div>
+            <button type="button" class="admin-ts-clear-btn" @click="closeEmployeeModal">Close</button>
           </div>
 
-          <p v-if="historyError" class="banner-error" style="margin-top:0.75rem">{{ historyError }}</p>
+          <p v-if="historyError" class="banner-error admin-ts-banner-tight">{{ historyError }}</p>
 
           <div class="modal-controls">
             <div class="control control--date-period">
@@ -938,6 +1138,16 @@ onUnmounted(() => {
                     <button
                       type="button"
                       class="period-option"
+                      :class="{ active: historyDateFilter === 'all' }"
+                      role="option"
+                      :aria-selected="historyDateFilter === 'all'"
+                      @click="selectHistoryDateFilter('all')"
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      class="period-option"
                       :class="{ active: historyDateFilter === 'today' }"
                       role="option"
                       :aria-selected="historyDateFilter === 'today'"
@@ -958,12 +1168,12 @@ onUnmounted(() => {
                     <button
                       type="button"
                       class="period-option"
-                      :class="{ active: historyDateFilter === 'last7Days' }"
+                      :class="{ active: historyDateFilter === 'lastWeek' }"
                       role="option"
-                      :aria-selected="historyDateFilter === 'last7Days'"
-                      @click="selectHistoryDateFilter('last7Days')"
+                      :aria-selected="historyDateFilter === 'lastWeek'"
+                      @click="selectHistoryDateFilter('lastWeek')"
                     >
-                      Last 7 Days
+                      Last Week
                     </button>
                     <button
                       type="button"
@@ -1000,55 +1210,185 @@ onUnmounted(() => {
               </label>
             </template>
           </div>
+          <div class="admin-ts-filters-row">
+            <label class="control control--inline">
+              <span class="control-label">Modality</span>
+              <select v-model="modalityFilter" class="control-input admin-ts-filter-select">
+                <option value="all">All</option>
+                <option value="office">Office</option>
+                <option value="wfh">WFH</option>
+              </select>
+            </label>
+            <label class="control control--inline">
+              <span class="control-label">Hours vs 8h</span>
+              <select v-model="timeComplianceFilter" class="control-input admin-ts-filter-select">
+                <option value="all">All</option>
+                <option value="undertime">Undertime</option>
+                <option value="enough">On time</option>
+                <option value="overtime">Overtime</option>
+              </select>
+            </label>
+          </div>
           <p v-if="historyDateFilter === 'custom' && !historyDateRangeValid" class="muted modal-muted">
             Select a valid start and end date.
           </p>
 
-          <div class="history-table-card">
+          <div class="admin-ts-entries-wrap">
             <div v-if="historyLoading" class="loading-state">Loading…</div>
-            <template v-else>
-              <div v-if="historyRows.length" class="table-scroll">
-                <table class="data-table modal-timesheet-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Date Covered</th>
-                      <th scope="col">Clock in</th>
-                      <th scope="col">Clock out</th>
-                      <th scope="col">Lunch In</th>
-                      <th scope="col">Lunch Out</th>
-                      <th scope="col">Total Hours</th>
-                      <th scope="col">Modality</th>
-                      <th scope="col">Activity</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="r in historyRows" :key="r.attendance_id" class="data-row">
-                      <td class="td-muted">{{ formatLocalDateFromStored(r.clock_in) }}</td>
-                      <td class="td-muted">{{ formatTime12hApmFromStored(r.clock_in) }}</td>
-                      <td class="td-muted">{{ formatTime12hApmFromStored(r.clock_out) }}</td>
-                      <td class="td-muted">{{ formatTime12hApmFromStored(r.lunch_break_start) }}</td>
-                      <td class="td-muted">{{ formatTime12hApmFromStored(r.lunch_break_end) }}</td>
-                      <td class="td-muted">{{ formatTotalTime(r.total_time) }}</td>
-                      <td class="td-muted">{{ r.work_modality ? String(r.work_modality).toLowerCase() : '—' }}</td>
-                      <td class="td-muted td-activity">{{ attendanceActivityLabel(r) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
+            <template v-else-if="filteredHistoryRows.length">
+              <div class="admin-ts-entry-table" role="table" aria-label="Attendance sessions">
+                <div class="admin-ts-entry-table-head" role="row">
+                  <span role="columnheader">Date</span>
+                  <span role="columnheader">Clock in</span>
+                  <span role="columnheader">Clock out</span>
+                </div>
+                <button
+                  v-for="r in paginatedHistoryRows"
+                  :key="r.attendance_id"
+                  type="button"
+                  class="admin-ts-entry-row"
+                  role="row"
+                  @click="openAttendanceDetail(r)"
+                >
+                  <span class="admin-ts-entry-cell" role="cell">{{ formatLocalDateFromStored(r.clock_in) }}</span>
+                  <span class="admin-ts-entry-cell" role="cell">{{ formatTime12hApmFromStored(r.clock_in) }}</span>
+                  <span class="admin-ts-entry-cell" role="cell">{{ formatTime12hApmFromStored(r.clock_out) }}</span>
+                </button>
+              </div>
+              <div v-if="historyEntryTotalPages > 1" class="pager admin-ts-history-pager">
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  :disabled="historyDayPage <= 1"
+                  @click="historyDayPage = Math.max(1, historyDayPage - 1)"
+                >
+                  Previous
+                </button>
+                <span class="pager-info">
+                  {{ historyDayPage }} / {{ historyEntryTotalPages }}
+                </span>
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  :disabled="historyDayPage >= historyEntryTotalPages"
+                  @click="historyDayPage = Math.min(historyEntryTotalPages, historyDayPage + 1)"
+                >
+                  Next
+                </button>
               </div>
             </template>
-            <p v-if="!historyLoading && !historyRows.length" class="empty-hint">No attendance records for this period.</p>
-
-            <div class="modal-actions">
-              <button
-                type="button"
-                class="btn btn-primary"
-                :disabled="historyLoading || downloadBusy || bulkDownloadBusy || !historyDateRangeValid"
-                @click="downloadActiveEmployeePdf"
-              >
-                {{ downloadBusy ? 'Preparing…' : 'Download Timesheet' }}
-              </button>
-            </div>
+            <p v-else class="empty-hint">No attendance records for this period.</p>
           </div>
+
+          <div class="admin-ts-detail-actions">
+            <button
+              type="button"
+              class="btn btn-primary"
+              :disabled="historyLoading || downloadBusy || bulkDownloadBusy || !historyDateRangeValid"
+              @click="downloadActiveEmployeePdf"
+            >
+              {{ downloadBusy ? 'Preparing…' : 'Download Timesheet' }}
+            </button>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <Teleport to="body">
+      <div
+        v-if="detailAttendanceRow"
+        class="admin-att-detail-overlay"
+        @click.self="closeAttendanceDetail"
+      >
+        <div
+          class="admin-att-detail-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="admin-att-detail-title"
+          @click.stop
+        >
+          <button
+            type="button"
+            class="admin-att-detail-close"
+            aria-label="Close"
+            @click="closeAttendanceDetail"
+          >
+            ×
+          </button>
+          <h3 id="admin-att-detail-title" class="admin-att-detail-title">Attendance details</h3>
+          <template v-if="detailAttendanceRow">
+            <div
+              v-if="detailAttendanceRow.work_modality === 'wfh' && wfhSignedUrls[detailAttendanceRow.attendance_id]"
+              class="admin-att-detail-wfh"
+            >
+              <img
+                :src="wfhSignedUrls[detailAttendanceRow.attendance_id] || undefined"
+                alt="WFH verification photo"
+                class="admin-wfh-photo"
+              />
+            </div>
+            <div
+              v-if="
+                detailAttendanceRow.work_modality === 'office' &&
+                (parseLocation(detailAttendanceRow.location_in) || parseLocation(detailAttendanceRow.location_out))
+              "
+              class="admin-detail-map-wrap"
+            >
+              <div ref="detailMapEl" class="admin-detail-map" />
+              <p class="admin-detail-map-caption">{{ officeLocationLabel(detailAttendanceRow) }}</p>
+            </div>
+            <div class="admin-entry-grid admin-entry-grid--detail">
+              <div class="admin-entry-field">
+                <span class="admin-entry-lbl">Date</span>
+                <span class="admin-entry-val">{{ formatLocalDateFromStored(detailAttendanceRow.clock_in) }}</span>
+              </div>
+              <div class="admin-entry-field">
+                <span class="admin-entry-lbl">Clock in</span>
+                <span class="admin-entry-val">{{ formatTime12hApmFromStored(detailAttendanceRow.clock_in) }}</span>
+              </div>
+              <div class="admin-entry-field">
+                <span class="admin-entry-lbl">Clock out</span>
+                <span class="admin-entry-val">{{ formatTime12hApmFromStored(detailAttendanceRow.clock_out) }}</span>
+              </div>
+              <div class="admin-entry-field">
+                <span class="admin-entry-lbl">Lunch in</span>
+                <span class="admin-entry-val">{{ formatTime12hApmFromStored(detailAttendanceRow.lunch_break_start) }}</span>
+              </div>
+              <div class="admin-entry-field">
+                <span class="admin-entry-lbl">Lunch out</span>
+                <span class="admin-entry-val">{{ formatTime12hApmFromStored(detailAttendanceRow.lunch_break_end) }}</span>
+              </div>
+              <div class="admin-entry-field">
+                <span class="admin-entry-lbl">Total hours</span>
+                <span class="admin-entry-val">{{ formatTotalTime(detailAttendanceRow.total_time) }}</span>
+              </div>
+              <div class="admin-entry-field">
+                <span class="admin-entry-lbl">Modality</span>
+                <span class="admin-entry-val">{{
+                  detailAttendanceRow.work_modality ? String(detailAttendanceRow.work_modality).toLowerCase() : '—'
+                }}</span>
+              </div>
+              <div class="admin-entry-field">
+                <span class="admin-entry-lbl">Facial status</span>
+                <span class="admin-entry-val">{{ detailAttendanceRow.facial_status?.trim() || '—' }}</span>
+              </div>
+              <div
+                v-if="
+                  detailAttendanceRow.work_modality === 'office' &&
+                  !parseLocation(detailAttendanceRow.location_in) &&
+                  !parseLocation(detailAttendanceRow.location_out)
+                "
+                class="admin-entry-field admin-entry-field--wide"
+              >
+                <span class="admin-entry-lbl">Location</span>
+                <span class="admin-entry-val">{{ officeLocationLabel(detailAttendanceRow) }}</span>
+              </div>
+            </div>
+            <div class="admin-entry-output">
+              <span class="admin-entry-lbl">Output</span>
+              <p class="admin-entry-output-text">{{ detailAttendanceRow.output?.trim() || '—' }}</p>
+            </div>
+          </template>
         </div>
       </div>
     </Teleport>
@@ -1060,6 +1400,491 @@ onUnmounted(() => {
   width: 100%;
   max-width: 100%;
 }
+
+.admin-ts-page {
+  min-height: calc(100vh - 120px);
+}
+
+.admin-ts-layout {
+  display: flex;
+  gap: 1.25rem;
+  align-items: stretch;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.admin-ts-sidebar {
+  flex: 0 0 min(320px, 34vw);
+  min-width: 0;
+}
+
+.admin-ts-sidebar-card {
+  background: var(--bg-secondary, #fff);
+  border: 1px solid var(--border-light, #e2e8f0);
+  border-radius: 14px;
+  padding: 1rem 0.9rem 1rem;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  min-height: 420px;
+}
+
+.admin-ts-sidebar-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.admin-ts-sidebar-title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.admin-ts-sidebar-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.admin-ts-select-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.admin-ts-select-row input {
+  cursor: pointer;
+}
+
+.admin-ts-select-label {
+  user-select: none;
+}
+
+.admin-ts-emp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+}
+
+.admin-ts-emp-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.5rem;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.admin-ts-emp-item:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.admin-ts-emp-item.is-active {
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.admin-ts-emp-check {
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.admin-ts-emp-avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: linear-gradient(145deg, #64748b, #475569);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-ts-emp-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-ts-empty {
+  padding: 0.5rem 0;
+}
+
+.admin-ts-pager {
+  margin-top: 0;
+  padding-top: 0.5rem;
+  border-top: none;
+}
+
+.admin-ts-sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-color, #e2e8f0);
+}
+
+.admin-ts-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-ts-placeholder {
+  background: var(--bg-secondary, #fff);
+  border: 1px dashed var(--border-light, #cbd5e1);
+  border-radius: 14px;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.admin-ts-placeholder-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.admin-ts-placeholder-text {
+  margin: 0;
+  max-width: 28rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.admin-ts-detail-card {
+  background: var(--bg-secondary, #fff);
+  border: 1px solid var(--border-light, #e2e8f0);
+  border-radius: 14px;
+  padding: 1rem 1.1rem 1.25rem;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.admin-ts-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.admin-ts-clear-btn {
+  flex-shrink: 0;
+  padding: 0.4rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.admin-ts-clear-btn:hover {
+  background: rgba(148, 163, 184, 0.15);
+}
+
+.admin-ts-banner-tight {
+  margin: 0.5rem 0 0;
+}
+
+.admin-ts-entries-wrap {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-entry-card {
+  border: 1px solid var(--border-light, #e2e8f0);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  background: var(--bg-tertiary, #f8fafc);
+}
+
+.admin-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.65rem 1rem;
+}
+
+.admin-entry-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.admin-entry-field--wide {
+  grid-column: 1 / -1;
+}
+
+.admin-entry-lbl {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, #64748b);
+}
+
+.admin-entry-val {
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.admin-entry-output {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-light, #e2e8f0);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.admin-entry-output-text {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-ts-filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin-top: 0.75rem;
+  align-items: flex-end;
+}
+
+.admin-ts-filter-select {
+  min-width: 10rem;
+}
+
+.control--inline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.admin-ts-entry-table {
+  border: 1px solid var(--border-light, #e2e8f0);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-secondary, #fff);
+}
+
+.admin-ts-entry-table-head {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-tertiary, #f1f5f9);
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary, #64748b);
+}
+
+.admin-ts-entry-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: none;
+  border-top: 1px solid var(--border-light, #e2e8f0);
+  background: var(--bg-tertiary, #f8fafc);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+  transition: background 0.15s ease;
+}
+
+.admin-ts-entry-row:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.admin-ts-entry-cell {
+  font-size: 0.8125rem;
+  word-break: break-word;
+}
+
+.admin-wfh-photo {
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: 10px;
+  object-fit: contain;
+  border: 1px solid var(--border-light);
+  background: var(--bg-secondary);
+}
+
+.admin-att-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.admin-att-detail-dialog {
+  position: relative;
+  max-width: 36rem;
+  width: 100%;
+  max-height: min(90vh, 720px);
+  overflow-y: auto;
+  background: var(--bg-secondary, #fff);
+  border-radius: 14px;
+  padding: 1.25rem 1.35rem 1.35rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-light, #e2e8f0);
+}
+
+.admin-att-detail-close {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-tertiary, #f1f5f9);
+  color: var(--text-secondary);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-att-detail-close:hover {
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.admin-att-detail-title {
+  margin: 0 0 1rem;
+  padding-right: 2.5rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.admin-att-detail-wfh {
+  margin-bottom: 1rem;
+}
+
+.admin-detail-map-wrap {
+  margin-bottom: 1rem;
+}
+
+.admin-detail-map {
+  height: 220px;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  background: #e2e8f0;
+}
+
+.admin-detail-map :deep(.admin-leaflet-div-marker) {
+  background: transparent;
+  border: none;
+}
+
+.admin-detail-map :deep(.admin-map-pin) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.28rem 0.55rem;
+  border-radius: 8px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.admin-detail-map :deep(.admin-map-pin--in) {
+  background: #16a34a;
+  color: #fff;
+}
+
+.admin-detail-map :deep(.admin-map-pin--out) {
+  background: #dc2626;
+  color: #fff;
+}
+
+.admin-detail-map-caption {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.admin-entry-grid--detail {
+  margin-top: 0;
+}
+
+.admin-ts-history-pager {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-color, #e2e8f0);
+}
+
+.admin-ts-detail-actions {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color, #e2e8f0);
+}
+
+@media (max-width: 960px) {
+  .admin-ts-layout {
+    flex-direction: column;
+  }
+
+  .admin-ts-sidebar {
+    flex: none;
+    width: 100%;
+    max-width: none;
+  }
+
+  .admin-ts-emp-list {
+    max-height: 280px;
+  }
+}
+
 .employee-panel {
   margin-bottom: 1rem;
   background: var(--bg-secondary);
