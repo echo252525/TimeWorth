@@ -285,6 +285,24 @@ const chooseModalityContinueDisabled = computed(() => {
   return isOutsideOfficeRadius.value
 })
 
+/** Office session with admin geofence — used for map colors / clock-out gate while clocked in. */
+function isOfficeClockedInSessionForGeofenceUi(): boolean {
+  const tr = todayRecord.value
+  return !!(tr && !tr.clock_out && tr.work_modality === 'office' && officeGeofence.value)
+}
+
+/** Outside office geofence while clocked in (office), not on lunch; needs live position. */
+function isOfficeClockedInOutsideGeofence(): boolean {
+  if (!isOfficeClockedInSessionForGeofenceUi()) return false
+  if (isOnLunch.value) return false
+  const pos = userLoc.value
+  if (!pos) return false
+  const g = officeGeofence.value!
+  return distanceMeters(pos, { lat: g.latitude, lng: g.longitude }) > g.radius_meters
+}
+
+const clockOutDisabledByGeofence = computed(() => isOfficeClockedInOutsideGeofence())
+
 /** Short label under the map. Full street address appears only on map hover (profile marker or geofence circle tooltips). */
 const mapCaptionShort = computed(() => {
   if (workModality.value === 'office' && officeGeofence.value) {
@@ -300,7 +318,17 @@ const mapCaptionShort = computed(() => {
 })
 
 watch(
-  () => [isOutsideOfficeRadius.value, step.value, workModality.value, officeGeofence.value?.id] as const,
+  () =>
+    [
+      isOutsideOfficeRadius.value,
+      step.value,
+      workModality.value,
+      officeGeofence.value?.id,
+      isOnLunch.value,
+      clockOutDisabledByGeofence.value,
+      userLoc.value?.lat,
+      userLoc.value?.lng
+    ] as const,
   () => {
     if (
       step.value === 'choose_modality' &&
@@ -401,10 +429,18 @@ const GEOFENCE_CIRCLE_STYLE_IN = {
 } as const
 
 function geofenceCircleLeafletStyle(): L.PathOptions {
-  if (workModality.value !== 'office' || step.value !== 'choose_modality' || !officeGeofence.value) {
+  if (workModality.value !== 'office' || !officeGeofence.value) {
     return { ...GEOFENCE_CIRCLE_STYLE_DEFAULT }
   }
-  return isOutsideOfficeRadius.value ? { ...GEOFENCE_CIRCLE_STYLE_OUT } : { ...GEOFENCE_CIRCLE_STYLE_IN }
+  if (step.value === 'choose_modality') {
+    return isOutsideOfficeRadius.value ? { ...GEOFENCE_CIRCLE_STYLE_OUT } : { ...GEOFENCE_CIRCLE_STYLE_IN }
+  }
+  if (isOfficeClockedInSessionForGeofenceUi() && !isOnLunch.value && userLoc.value) {
+    return isOfficeClockedInOutsideGeofence()
+      ? { ...GEOFENCE_CIRCLE_STYLE_OUT }
+      : { ...GEOFENCE_CIRCLE_STYLE_IN }
+  }
+  return { ...GEOFENCE_CIRCLE_STYLE_DEFAULT }
 }
 
 function syncGeofenceCircleStyle() {
@@ -438,12 +474,20 @@ function bindGeofenceCircleTooltip() {
   )
 }
 
-/** Office + choose_modality: red ring outside geofence, green inside; otherwise default blue styling. */
+/** Office: choose_modality or clocked-in (not on lunch) — red outside, green inside; lunch uses default blue. */
 function userMarkerRootGeofenceClass(): string {
-  if (workModality.value !== 'office' || step.value !== 'choose_modality' || !officeGeofence.value) return ''
-  return isOutsideOfficeRadius.value
-    ? 'map-user-marker-root--geofence-out'
-    : 'map-user-marker-root--geofence-in'
+  if (workModality.value !== 'office' || !officeGeofence.value) return ''
+  if (step.value === 'choose_modality') {
+    return isOutsideOfficeRadius.value
+      ? 'map-user-marker-root--geofence-out'
+      : 'map-user-marker-root--geofence-in'
+  }
+  if (isOfficeClockedInSessionForGeofenceUi() && !isOnLunch.value && userLoc.value) {
+    return isOfficeClockedInOutsideGeofence()
+      ? 'map-user-marker-root--geofence-out'
+      : 'map-user-marker-root--geofence-in'
+  }
+  return ''
 }
 
 function createUserMarkerIcon(): L.DivIcon {
@@ -742,7 +786,7 @@ function updateMapView(preserveViewport = false, animateUserMove = false) {
   nextTick(() => updateEdgeIndicators())
 }
 
-watch([mapCenter, workModality, activeBranch, step, locationIn, locationOut, wfhAddress, officeUserAddress, userProfileUrl, officeGeofence], () => {
+watch([mapCenter, workModality, activeBranch, step, locationIn, locationOut, wfhAddress, officeUserAddress, userProfileUrl, officeGeofence, isOnLunch], () => {
   updateMapView()
   nextTick(() => updateEdgeIndicators())
 }, { flush: 'post' })
@@ -1353,6 +1397,7 @@ async function cancelFacialModal() {
 }
 
 async function doClockOut() {
+  if (clockOutDisabledByGeofence.value) return
   clockOutLoading.value = true
   locationError.value = null
   locationOut.value = null
@@ -1525,7 +1570,13 @@ async function handleCancelFacial() {
                     <span v-else>End lunch</span>
                   </button>
                 </template>
-                <button type="button" class="btn primary btn-clockout" :disabled="isLoading || clockOutLoading" @click="doClockOut">
+                <button
+                  v-if="!isOnLunch"
+                  type="button"
+                  class="btn primary btn-clockout"
+                  :disabled="isLoading || clockOutLoading || clockOutDisabledByGeofence"
+                  @click="doClockOut"
+                >
                   <span v-if="isLoading || clockOutLoading" class="btn-loading-wrap">
                     <span class="btn-loading-spinner" aria-hidden="true"></span>
                     <span>Clocking out…</span>
@@ -1686,11 +1737,18 @@ async function handleCancelFacial() {
           </div>
           <div ref="mapContainer" class="map-wrap"></div>
           <div
-            v-if="workModality === 'office' && step === 'choose_modality' && isOutsideOfficeRadius"
+            v-if="
+              (workModality === 'office' && step === 'choose_modality' && isOutsideOfficeRadius)
+                || clockOutDisabledByGeofence
+            "
             class="map-geofence-float"
             role="status"
           >
-            You are outside the office geofence. Move closer to clock in.
+            {{
+              clockOutDisabledByGeofence
+                ? 'You are outside the office geofence. Move back inside to clock out.'
+                : 'You are outside the office geofence. Move closer to clock in.'
+            }}
           </div>
           <button
             type="button"
