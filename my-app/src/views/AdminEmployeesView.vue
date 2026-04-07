@@ -2,7 +2,13 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { MagnifyingGlassIcon, ChevronDownIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/vue/24/outline'
+import {
+  MagnifyingGlassIcon,
+  ChevronDownIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  InboxIcon
+} from '@heroicons/vue/24/outline'
 import supabase from '../lib/supabaseClient'
 import { getSignedProfileUrl } from '../composables/useAuth'
 import {
@@ -997,11 +1003,24 @@ function formatDate(iso: string | null): string {
       <div class="table-card">
         <div class="table-scroll">
           <table class="data-table">
+            <colgroup>
+              <col class="ae-col-name" />
+              <col class="ae-col-empid" />
+              <col class="ae-col-modality" />
+              <col class="ae-col-status" />
+              <col class="ae-col-email" />
+              <col class="ae-col-position" />
+            </colgroup>
             <thead>
               <tr>
                 <th class="th-name" scope="col" @click.stop>
                   <div class="th-name-wrap">
-                    <span>Name</span>
+                    <span class="th-column-label">
+                      Name
+                      <template v-if="filterAccountApproval !== 'all'">
+                        <span class="th-filter-selection"> · {{ nameColumnFilterLabel }}</span>
+                      </template>
+                    </span>
                     <div ref="nameFilterTriggerRef" class="ts-filter-trigger-wrap">
                       <button
                         type="button"
@@ -1062,7 +1081,12 @@ function formatDate(iso: string | null): string {
                 <th scope="col">Employee ID</th>
                 <th class="th-modality" scope="col" @click.stop>
                   <div class="th-modality-wrap">
-                    <span>Modality</span>
+                    <span class="th-column-label">
+                      Modality
+                      <template v-if="filterModality !== 'all'">
+                        <span class="th-filter-selection"> · {{ modalityFilterLabel }}</span>
+                      </template>
+                    </span>
                     <div ref="modalityFilterTriggerRef" class="ts-filter-trigger-wrap">
                       <button
                         type="button"
@@ -1119,7 +1143,12 @@ function formatDate(iso: string | null): string {
                 </th>
                 <th class="th-status" scope="col" @click.stop>
                   <div class="th-status-wrap">
-                    <span>Status</span>
+                    <span class="th-column-label">
+                      Status
+                      <template v-if="filterStatus !== 'all'">
+                        <span class="th-filter-selection"> · {{ statusFilterLabel }}</span>
+                      </template>
+                    </span>
                     <div ref="statusFilterTriggerRef" class="ts-filter-trigger-wrap">
                       <button
                         type="button"
@@ -1177,7 +1206,12 @@ function formatDate(iso: string | null): string {
                 <th scope="col">Email</th>
                 <th class="th-position" scope="col" @click.stop>
                   <div class="th-position-wrap">
-                    <span>Position</span>
+                    <span class="th-column-label th-column-label--grow">
+                      Position
+                      <template v-if="filterPosition !== 'all'">
+                        <span class="th-filter-selection th-filter-selection--position"> · {{ positionFilterLabel }}</span>
+                      </template>
+                    </span>
                     <div ref="positionFilterTriggerRef" class="ts-filter-trigger-wrap">
                       <button
                         type="button"
@@ -1237,48 +1271,57 @@ function formatDate(iso: string | null): string {
               </tr>
             </thead>
             <tbody>
-              <tr
-                v-for="e in filteredList"
-                :key="e.id"
-                class="data-row"
-                @mouseenter="onRowEnter(e, $event)"
-                @mouseleave="onRowLeave"
-                @click="onEmployeeRowClick(e, $event)"
-              >
-                <td class="td-user">
-                  <div class="user-cell">
-                    <div class="avatar">
-                      <img
-                        v-if="avatarUrls[e.id]"
-                        :src="String(avatarUrls[e.id])"
-                        alt=""
-                        width="40"
-                        height="40"
-                      />
-                      <span v-else class="avatar-placeholder">{{ (e.name || '?').slice(0, 1).toUpperCase() }}</span>
+              <template v-if="filteredList.length">
+                <tr
+                  v-for="e in filteredList"
+                  :key="e.id"
+                  class="data-row"
+                  @mouseenter="onRowEnter(e, $event)"
+                  @mouseleave="onRowLeave"
+                  @click="onEmployeeRowClick(e, $event)"
+                >
+                  <td class="td-user">
+                    <div class="user-cell">
+                      <div class="avatar">
+                        <img
+                          v-if="avatarUrls[e.id]"
+                          :src="String(avatarUrls[e.id])"
+                          alt=""
+                          width="40"
+                          height="40"
+                        />
+                        <span v-else class="avatar-placeholder">{{ (e.name || '?').slice(0, 1).toUpperCase() }}</span>
+                      </div>
+                      <span class="user-name">{{ e.name }}</span>
                     </div>
-                    <span class="user-name">{{ e.name }}</span>
+                  </td>
+                  <td class="td-muted">{{ e.employee_no ?? '—' }}</td>
+                  <td class="td-muted">{{ currentWorkModalityLabel(e.id) }}</td>
+                  <td class="td-muted td-status">
+                    <div class="status-cell-wrap">
+                      <span
+                        class="status-pill"
+                        :class="'status-pill--' + presenceForUserId(e.id).kind"
+                      >{{ tableStatusLabel(e.id) }}</span>
+                    </div>
+                  </td>
+                  <td class="td-muted">{{ e.email }}</td>
+                  <td class="td-muted">{{ e.position_in_company || '—' }}</td>
+                </tr>
+              </template>
+              <tr v-else class="data-table-empty-row">
+                <td colspan="6" class="data-table-empty-cell">
+                  <div class="data-table-empty-inner">
+                    <InboxIcon class="data-table-empty-icon" aria-hidden="true" />
+                    <p class="data-table-empty-msg">
+                      {{ list.length ? 'No matches for your filters.' : 'No employees yet.' }}
+                    </p>
                   </div>
                 </td>
-                <td class="td-muted">{{ e.employee_no ?? '—' }}</td>
-                <td class="td-muted">{{ currentWorkModalityLabel(e.id) }}</td>
-                <td class="td-muted td-status">
-                  <div class="status-cell-wrap">
-                    <span
-                      class="status-pill"
-                      :class="'status-pill--' + presenceForUserId(e.id).kind"
-                    >{{ tableStatusLabel(e.id) }}</span>
-                  </div>
-                </td>
-                <td class="td-muted">{{ e.email }}</td>
-                <td class="td-muted">{{ e.position_in_company || '—' }}</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p v-if="!filteredList.length" class="empty-hint">
-          {{ list.length ? 'No matches for your filters.' : 'No employees yet.' }}
-        </p>
       </div>
     </template>
 
@@ -1562,30 +1605,76 @@ body.light-mode .kpi-card-pending .kpi-icon {
 }
 .table-scroll {
   overflow-x: auto;
+  min-height: 220px;
+  scrollbar-gutter: stable;
 }
 .data-table {
   width: 100%;
+  min-width: 720px;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 0.875rem;
 }
+/* Fixed column widths so headers stay aligned with or without data rows (empty colspan row). */
+.ae-col-name {
+  width: 20%;
+}
+.ae-col-empid {
+  width: 11%;
+}
+.ae-col-modality {
+  width: 10%;
+}
+.ae-col-status {
+  width: 14%;
+}
+.ae-col-email {
+  width: 24%;
+}
+.ae-col-position {
+  width: 21%;
+}
 .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   text-align: left;
   padding: 0.75rem 1rem;
   font-weight: 600;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
+  background: var(--bg-secondary);
 }
 .th-name {
-  width: 1%;
   min-width: 0;
 }
 .th-name-wrap {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
   gap: 0.4rem;
   min-width: 0;
+}
+
+.th-column-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.th-column-label--grow {
+  flex: 1 1 auto;
+}
+
+.th-filter-selection {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.th-filter-selection--position {
+  word-break: break-word;
 }
 .th-name-count {
   flex-shrink: 0;
@@ -1599,35 +1688,31 @@ body.light-mode .kpi-card-pending .kpi-icon {
   background: var(--bg-tertiary);
 }
 .th-status {
-  width: 1%;
-  min-width: 9rem;
   white-space: nowrap;
 }
 .th-status-wrap {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
   gap: 0.4rem;
   min-width: 0;
 }
 .th-modality {
-  width: 1%;
   min-width: 0;
 }
 .th-modality-wrap {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
   gap: 0.4rem;
   min-width: 0;
 }
 .th-position {
-  width: 1%;
   min-width: 0;
 }
 .th-position-wrap {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
   gap: 0.4rem;
   min-width: 0;
@@ -1639,10 +1724,12 @@ body.light-mode .kpi-card-pending .kpi-icon {
 }
 
 .ts-filter-period-btn.period-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: auto;
   min-width: 1.75rem;
-  justify-content: center;
-  padding: 0.35rem;
+  padding: 0.3rem 0.35rem;
   font-size: 0.75rem;
   border-radius: 8px;
   border: none;
@@ -1765,9 +1852,43 @@ body.light-mode .kpi-card-pending .kpi-icon {
   padding: 0.65rem 1rem;
   border-bottom: 1px solid var(--border-color);
   vertical-align: middle;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
 }
 .data-table tbody tr:last-child td {
   border-bottom: none;
+}
+.data-table tbody tr.data-table-empty-row:last-child td {
+  border-bottom: none;
+}
+.data-table-empty-cell {
+  padding: 0;
+  border-bottom: none !important;
+  vertical-align: middle;
+}
+.data-table-empty-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-height: 180px;
+  padding: 1.5rem 1rem;
+  text-align: center;
+}
+.data-table-empty-icon {
+  width: 3rem;
+  height: 3rem;
+  color: var(--text-tertiary);
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+.data-table-empty-msg {
+  margin: 0;
+  max-width: 20rem;
+  font-size: 0.875rem;
+  color: var(--text-tertiary);
+  line-height: 1.45;
 }
 .user-cell {
   display: flex;
@@ -1964,14 +2085,6 @@ body.light-mode .kpi-card-pending .kpi-icon {
   font-size: 0.6875rem;
   color: var(--text-tertiary);
 }
-.empty-hint {
-  margin: 0;
-  padding: 1.25rem 1rem;
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 0.875rem;
-}
-
 /* Modal */
 .modal-overlay {
   position: fixed;

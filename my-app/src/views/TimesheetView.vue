@@ -947,8 +947,6 @@ interface DayRow {
   city: string
   citySummary: string
   hasMultipleEntries: boolean
-  hasPendingEdit: boolean
-  editRequestStatus: 'pending' | 'approved' | 'rejected' | null
   entryCount: number
   entries: AttendanceRow[]
   hasWfhPhoto: boolean
@@ -1003,8 +1001,6 @@ const tableRows = computed(() => {
     const hasMultipleEntries = dayRows.length > 1
     const entryCount = dayRows.length
     const sorted = dayRows.length ? [...dayRows].sort((a, b) => storedToRealInstant(a.clock_in!) - storedToRealInstant(b.clock_in!)) : []
-    let hasPendingEdit = false
-    let editRequestStatus: 'pending' | 'approved' | 'rejected' | null = null
     const firstWfhWithPhoto = sorted.find(
       (entry) => entry.work_modality === 'wfh' && !!entry.wfh_pic_url
     ) ?? null
@@ -1042,15 +1038,6 @@ const tableRows = computed(() => {
       }
       const modalityArray = Array.from(modalities)
       modality = modalityArray.length > 0 ? modalityArray.join(', ') : '—'
-
-      const firstAttendanceId = sorted[0].attendance_id
-      if (firstAttendanceId) {
-        const st = editRequestStatusMap.value[firstAttendanceId]
-        if (st) {
-          editRequestStatus = st
-          hasPendingEdit = st === 'pending'
-        }
-      }
     }
     // Extract city/cities for location display
     let city = '—'
@@ -1150,8 +1137,6 @@ const tableRows = computed(() => {
       city,
       citySummary,
       hasMultipleEntries,
-      hasPendingEdit,
-      editRequestStatus,
       entryCount,
       entries: sorted,
       hasWfhPhoto: !!firstWfhWithPhoto?.wfh_pic_url,
@@ -1324,30 +1309,39 @@ function localInputToStoredWallTimeZ(val: string): string | null {
   return `${datePart}T${hh}:${mm}:${ss}.000Z`
 }
 
-function openEditModalForDay(row: DayRow) {
-  if (!row.entries.length) return
-  const target = row.entries[0]
-  if (!target) return
-  editTargetEntry.value = target
-  editTargetDateLabel.value = row.dateKey
-  editNewClockIn.value = toLocalDateTimeInput(target.clock_in)
-  editNewClockOut.value = toLocalDateTimeInput(target.clock_out)
-  editNewLunchStart.value = toLocalDateTimeInput(target.lunch_break_start)
-  editNewLunchEnd.value = toLocalDateTimeInput(target.lunch_break_end)
+function openEditModalForEntry(entry: AttendanceRow, dateLabel: string) {
+  if (!entry.attendance_id) return
+  editTargetEntry.value = entry
+  editTargetDateLabel.value = dateLabel
+  editNewClockIn.value = toLocalDateTimeInput(entry.clock_in)
+  editNewClockOut.value = toLocalDateTimeInput(entry.clock_out)
+  editNewLunchStart.value = toLocalDateTimeInput(entry.lunch_break_start)
+  editNewLunchEnd.value = toLocalDateTimeInput(entry.lunch_break_end)
   editReason.value = ''
   showEditModal.value = true
+}
+
+function editStatusForEntry(entry: AttendanceRow): 'pending' | 'approved' | 'rejected' | null {
+  const id = entry.attendance_id
+  if (!id) return null
+  return editRequestStatusMap.value[id] ?? null
+}
+
+function hasPendingEditForEntry(entry: AttendanceRow): boolean {
+  return editStatusForEntry(entry) === 'pending'
+}
+
+function editButtonTitleForEntry(entry: AttendanceRow, dateKey: string): string {
+  const st = editStatusForEntry(entry)
+  if (st === 'pending') return 'Edit request pending'
+  if (st === 'approved') return 'Request approved — you can submit another edit'
+  if (st === 'rejected') return 'Request declined — you can submit a new edit'
+  return 'Request edit for this session on ' + dateKey
 }
 
 function closeEditModal() {
   showEditModal.value = false
   editTargetEntry.value = null
-}
-
-function editButtonTitle(row: DayRow): string {
-  if (row.hasPendingEdit) return 'Edit request pending'
-  if (row.editRequestStatus === 'approved') return 'Request approved — you can submit another edit'
-  if (row.editRequestStatus === 'rejected') return 'Request declined — you can submit a new edit'
-  return 'Request edit for ' + row.dateKey
 }
 
 async function confirmEditRequest() {
@@ -1476,7 +1470,12 @@ async function confirmEditRequest() {
             <tr>
               <th class="th-in-table-filter" scope="col" @click.stop>
                 <div class="th-filter-wrap">
-                  <span>Date</span>
+                  <span class="th-column-label th-column-label--date">
+                    Date
+                    <template v-if="dateFilter !== 'lastMonth'">
+                      <span class="th-filter-selection th-filter-selection--date"> · {{ dateFilterLabel }}</span>
+                    </template>
+                  </span>
                   <div ref="dateFilterTriggerRef" class="ts-filter-trigger-wrap">
                     <button
                       type="button"
@@ -1556,7 +1555,12 @@ async function confirmEditRequest() {
               <th v-if="showTimes" scope="col">Total Hours</th>
               <th v-if="showTimes" class="th-in-table-filter" scope="col" @click.stop>
                 <div class="th-filter-wrap">
-                  <span>Time</span>
+                  <span class="th-column-label">
+                    Time
+                    <template v-if="timeFilter !== 'all'">
+                      <span class="th-filter-selection"> · {{ timeFilterLabel }}</span>
+                    </template>
+                  </span>
                   <div ref="timeFilterTriggerRef" class="ts-filter-trigger-wrap">
                     <button
                       type="button"
@@ -1625,7 +1629,12 @@ async function confirmEditRequest() {
               <th scope="col">Location</th>
               <th class="th-in-table-filter" scope="col" @click.stop>
                 <div class="th-filter-wrap">
-                  <span>Modality</span>
+                  <span class="th-column-label">
+                    Modality
+                    <template v-if="modalityFilter !== 'all'">
+                      <span class="th-filter-selection"> · {{ modalityFilterLabel }}</span>
+                    </template>
+                  </span>
                   <div ref="modalityFilterTriggerRef" class="ts-filter-trigger-wrap">
                     <button
                       type="button"
@@ -1720,28 +1729,35 @@ async function confirmEditRequest() {
                   <span>{{ row.modality }}</span>
                 </td>
                 <td class="ts-cell ts-edit-cell">
-                  <div class="ts-edit-cell-inner">
+                  <div v-if="!row.hasMultipleEntries && row.entries[0]" class="ts-edit-cell-inner">
                     <CheckCircleIcon
-                      v-if="row.editRequestStatus === 'approved'"
+                      v-if="editStatusForEntry(row.entries[0]) === 'approved'"
                       class="edit-status-icon edit-status-approved"
                       aria-hidden="true"
                     />
                     <XMarkIcon
-                      v-else-if="row.editRequestStatus === 'rejected'"
+                      v-else-if="editStatusForEntry(row.entries[0]) === 'rejected'"
                       class="edit-status-icon edit-status-declined"
                       aria-hidden="true"
                     />
                     <button
                       type="button"
                       class="edit-btn"
-                      :title="editButtonTitle(row)"
-                      :disabled="row.hasPendingEdit"
-                      @click.stop="openEditModalForDay(row)"
+                      :title="editButtonTitleForEntry(row.entries[0], row.dateKey)"
+                      :disabled="hasPendingEditForEntry(row.entries[0])"
+                      @click.stop="openEditModalForEntry(row.entries[0], row.dateKey)"
                     >
-                      <PencilSquareIcon v-if="!row.hasPendingEdit" class="edit-icon" />
+                      <PencilSquareIcon v-if="!hasPendingEditForEntry(row.entries[0])" class="edit-icon" />
                       <ClockIcon v-else class="edit-icon pending-icon" />
                     </button>
                   </div>
+                  <span
+                    v-else-if="row.hasMultipleEntries"
+                    class="ts-edit-expand-hint"
+                    title="Expand this row to edit each clock session separately"
+                  >
+                    Expand
+                  </span>
                 </td>
               </tr>
               <Transition name="expand">
@@ -1753,8 +1769,37 @@ async function confirmEditRequest() {
                   <td :colspan="timesheetExpandedColspan" class="ts-expanded-content">
                     <div class="ts-expanded-header">All Clock Entries ({{ row.entryCount }})</div>
                     <div class="ts-expanded-entries">
-                      <div v-for="(entry, idx) in row.entries" :key="idx" class="ts-entry-item">
+                      <div
+                        v-for="(entry, idx) in row.entries"
+                        :key="entry.attendance_id || idx"
+                        class="ts-entry-item"
+                      >
                         <div class="ts-entry-details">
+                          <div class="ts-entry-row ts-entry-header-row">
+                            <span class="ts-entry-session-label">Session {{ idx + 1 }}</span>
+                            <div class="ts-entry-edit-actions">
+                              <CheckCircleIcon
+                                v-if="editStatusForEntry(entry) === 'approved'"
+                                class="edit-status-icon edit-status-approved"
+                                aria-hidden="true"
+                              />
+                              <XMarkIcon
+                                v-else-if="editStatusForEntry(entry) === 'rejected'"
+                                class="edit-status-icon edit-status-declined"
+                                aria-hidden="true"
+                              />
+                              <button
+                                type="button"
+                                class="edit-btn edit-btn-entry"
+                                :title="editButtonTitleForEntry(entry, row.dateKey)"
+                                :disabled="hasPendingEditForEntry(entry)"
+                                @click.stop="openEditModalForEntry(entry, row.dateKey)"
+                              >
+                                <PencilSquareIcon v-if="!hasPendingEditForEntry(entry)" class="edit-icon" />
+                                <ClockIcon v-else class="edit-icon pending-icon" />
+                              </button>
+                            </div>
+                          </div>
                           <div class="ts-entry-row">
                             <span class="ts-entry-label">Clock In:</span>
                             <span class="ts-entry-value">{{ formatTime12hApmFromStored(entry.clock_in) }}</span>
@@ -2018,10 +2063,30 @@ async function confirmEditRequest() {
 }
 .th-filter-wrap {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
   gap: 0.4rem;
   min-width: 0;
+}
+
+.th-column-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.th-column-label--date {
+  flex: 1 1 auto;
+}
+
+.th-filter-selection {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.th-filter-selection--date {
+  word-break: break-word;
 }
 
 .ts-filter-trigger-wrap {
@@ -2029,12 +2094,14 @@ async function confirmEditRequest() {
   flex: 0 0 auto;
 }
 
-/* Icon-only trigger: no box, border, or fill — chevron only */
+/* Filter trigger: chevron only (selection in column label) */
 .ts-filter-period-btn.period-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: auto;
   min-width: 1.75rem;
-  justify-content: center;
-  padding: 0.35rem;
+  padding: 0.3rem 0.35rem;
   font-size: 0.75rem;
   border-radius: 8px;
   border: none;
@@ -2333,6 +2400,38 @@ async function confirmEditRequest() {
   border-radius: 8px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
+
+.ts-edit-expand-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #64748b);
+  font-weight: 500;
+}
+
+.ts-entry-header-row {
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 0.25rem;
+  flex-wrap: nowrap;
+}
+
+.ts-entry-session-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary, #1e293b);
+}
+
+.ts-entry-edit-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.edit-btn-entry {
+  padding: 0.2rem 0.35rem;
+}
+
 .ts-entry-details {
   display: flex;
   flex-direction: column;
