@@ -97,17 +97,22 @@ const filterStatus = ref<'all' | 'active' | 'not_active'>('all')
 const FILTER_POSITION_ADMIN = '__filter_admin__'
 const filterPosition = ref<string>('all')
 const filterModality = ref<'all' | 'office' | 'wfh'>('all')
+/** Name column: filter by employee `account_status` (All / Approved / Pending). */
+const filterAccountApproval = ref<'all' | 'approved' | 'pending'>('all')
 
 /* Table header filters (same UX as TimesheetView: chevron + teleported menu) */
 const showModalityFilterDropdown = ref(false)
 const showStatusFilterDropdown = ref(false)
 const showPositionFilterDropdown = ref(false)
+const showNameFilterDropdown = ref(false)
 const modalityFilterTriggerRef = ref<HTMLElement | null>(null)
 const statusFilterTriggerRef = ref<HTMLElement | null>(null)
 const positionFilterTriggerRef = ref<HTMLElement | null>(null)
+const nameFilterTriggerRef = ref<HTMLElement | null>(null)
 const modalityDropdownStyle = ref<Record<string, string>>({})
 const statusDropdownStyle = ref<Record<string, string>>({})
 const positionDropdownStyle = ref<Record<string, string>>({})
+const nameDropdownStyle = ref<Record<string, string>>({})
 
 const modalityFilterLabel = computed(() => {
   switch (filterModality.value) {
@@ -139,6 +144,19 @@ const positionFilterLabel = computed(() => {
   if (filterPosition.value === 'all') return 'All'
   if (filterPosition.value === FILTER_POSITION_ADMIN) return 'Admin'
   return filterPosition.value
+})
+
+const nameColumnFilterLabel = computed(() => {
+  switch (filterAccountApproval.value) {
+    case 'all':
+      return 'All'
+    case 'approved':
+      return 'Approved'
+    case 'pending':
+      return 'Pending'
+    default:
+      return 'All'
+  }
 })
 
 function positionModalityDropdown() {
@@ -186,22 +204,40 @@ function positionPositionDropdown() {
   }
 }
 
+function positionNameFilterDropdown() {
+  const el = nameFilterTriggerRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const minW = Math.max(r.width, 160)
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+  nameDropdownStyle.value = {
+    position: 'fixed',
+    top: `${r.bottom + 6}px`,
+    left: `${left}px`,
+    minWidth: `${minW}px`,
+    zIndex: '300'
+  }
+}
+
 function repositionOpenEmpFilterDropdowns() {
   if (showModalityFilterDropdown.value) positionModalityDropdown()
   if (showStatusFilterDropdown.value) positionStatusDropdown()
   if (showPositionFilterDropdown.value) positionPositionDropdown()
+  if (showNameFilterDropdown.value) positionNameFilterDropdown()
 }
 
 function closeAllEmpFilterDropdowns() {
   showModalityFilterDropdown.value = false
   showStatusFilterDropdown.value = false
   showPositionFilterDropdown.value = false
+  showNameFilterDropdown.value = false
 }
 
 function toggleModalityFilterMenu() {
   const opening = !showModalityFilterDropdown.value
   showStatusFilterDropdown.value = false
   showPositionFilterDropdown.value = false
+  showNameFilterDropdown.value = false
   showModalityFilterDropdown.value = opening
   if (opening) void nextTick(() => positionModalityDropdown())
 }
@@ -210,6 +246,7 @@ function toggleStatusFilterMenu() {
   const opening = !showStatusFilterDropdown.value
   showModalityFilterDropdown.value = false
   showPositionFilterDropdown.value = false
+  showNameFilterDropdown.value = false
   showStatusFilterDropdown.value = opening
   if (opening) void nextTick(() => positionStatusDropdown())
 }
@@ -218,8 +255,18 @@ function togglePositionFilterMenu() {
   const opening = !showPositionFilterDropdown.value
   showModalityFilterDropdown.value = false
   showStatusFilterDropdown.value = false
+  showNameFilterDropdown.value = false
   showPositionFilterDropdown.value = opening
   if (opening) void nextTick(() => positionPositionDropdown())
+}
+
+function toggleNameFilterMenu() {
+  const opening = !showNameFilterDropdown.value
+  showModalityFilterDropdown.value = false
+  showStatusFilterDropdown.value = false
+  showPositionFilterDropdown.value = false
+  showNameFilterDropdown.value = opening
+  if (opening) void nextTick(() => positionNameFilterDropdown())
 }
 
 function selectModalityFilter(v: 'all' | 'office' | 'wfh') {
@@ -237,6 +284,11 @@ function selectPositionFilter(v: string) {
   filterPosition.value = v
 }
 
+function selectAccountApprovalFilter(v: 'all' | 'approved' | 'pending') {
+  showNameFilterDropdown.value = false
+  filterAccountApproval.value = v
+}
+
 function handleEmpFilterClickOutside(event: MouseEvent) {
   const target = event.target as HTMLElement
   if (target.closest('.ts-filter-trigger-wrap') || target.closest('.ts-filter-dropdown-portal')) return
@@ -247,7 +299,8 @@ const anyEmpFilterMenuOpen = computed(
   () =>
     showModalityFilterDropdown.value ||
     showStatusFilterDropdown.value ||
-    showPositionFilterDropdown.value
+    showPositionFilterDropdown.value ||
+    showNameFilterDropdown.value
 )
 
 const selectedEmployee = ref<Emp | null>(null)
@@ -282,26 +335,6 @@ let miniMap: L.Map | null = null
 let hoverTickTimer: ReturnType<typeof setInterval> | null = null
 let attendanceRefreshTimer: ReturnType<typeof setInterval> | null = null
 let leaveHoverTimer: ReturnType<typeof setTimeout> | null = null
-
-function parseIntervalToSeconds(interval: string | null | undefined): number {
-  if (!interval) return 0
-  const m = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (m) {
-    const [, h, min, sec] = m.map(Number)
-    return (h || 0) * 3600 + (min || 0) * 60 + (sec || 0)
-  }
-  return 0
-}
-
-/** Display total seconds as e.g. "142h 35m" for KPI. */
-function formatSecondsAsHoursCompact(sec: number): string {
-  const h = Math.floor(sec / 3600)
-  const m = Math.floor((sec % 3600) / 60)
-  if (h === 0 && m === 0) return '0h'
-  if (h === 0) return `${m}m`
-  if (m === 0) return `${h}h`
-  return `${h}h ${m}m`
-}
 
 function formatElapsedMs(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -658,137 +691,21 @@ watch(
 )
 
 
-const topHoursThisMonth = ref<{ name: string; seconds: number } | null>(null)
-const bottomHoursThisMonth = ref<{ name: string; seconds: number } | null>(null)
-const monthHoursLoading = ref(false)
-
-const currentMonthLabelShort = computed(() =>
-  new Date().toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
-)
-
-const topHoursValueDisplay = computed(() => {
-  if (monthHoursLoading.value) return '…'
-  const t = topHoursThisMonth.value
-  if (!t || t.seconds <= 0) return '—'
-  return formatSecondsAsHoursCompact(t.seconds)
-})
-
-const bottomHoursValueDisplay = computed(() => {
-  if (monthHoursLoading.value) return '…'
-  const b = bottomHoursThisMonth.value
-  if (!b) return '—'
-  return formatSecondsAsHoursCompact(b.seconds)
-})
-
-const showLeastHoursThisMonth = computed(
-  () => !monthHoursLoading.value && !!topHoursThisMonth.value && !!bottomHoursThisMonth.value
-)
-
-const mostHoursKpiCardTitle = computed(() => {
-  if (monthHoursLoading.value) return undefined
-  const t = topHoursThisMonth.value
-  if (!t || t.seconds <= 0) return undefined
-  return `${t.name}: ${formatSecondsAsHoursCompact(t.seconds)} logged this month (most)`
-})
-
-const leastHoursKpiCardTitle = computed(() => {
-  if (monthHoursLoading.value) return undefined
-  const b = bottomHoursThisMonth.value
-  if (!b) return undefined
-  return `${b.name}: ${formatSecondsAsHoursCompact(b.seconds)} logged this month (least)`
-})
-
-async function loadMonthHoursLeader() {
-  const ids = list.value.map((e) => e.id)
-  if (!ids.length) {
-    topHoursThisMonth.value = null
-    bottomHoursThisMonth.value = null
-    return
-  }
-  monthHoursLoading.value = true
-  try {
-    const now = new Date()
-    const y = now.getFullYear()
-    const mo = now.getMonth()
-    const monthStart = new Date(y, mo, 1)
-    const monthEnd = new Date(y, mo + 1, 0)
-    const startDay = getLocalDateString(monthStart)
-    const endDay = getLocalDateString(monthEnd)
-    const start = `${startDay}T00:00:00.000Z`
-    const end = `${endDay}T23:59:59.999Z`
-
-    const { data, error: qErr } = await supabase
-      .from('attendance')
-      .select('user_id,total_time')
-      .in('user_id', ids)
-      .gte('clock_in', start)
-      .lte('clock_in', end)
-
-    if (qErr) {
-      console.warn('[AdminEmployees] month hours leader', qErr.message)
-      topHoursThisMonth.value = null
-      bottomHoursThisMonth.value = null
-      return
-    }
-
-    const byUser: Record<string, number> = {}
-    for (const id of ids) byUser[id] = 0
-    for (const row of data ?? []) {
-      const uid = (row as { user_id: string }).user_id
-      const tt = (row as { total_time: string | null }).total_time
-      byUser[uid] = (byUser[uid] ?? 0) + parseIntervalToSeconds(tt)
-    }
-
-    let bestId: string | null = null
-    let bestSec = 0
-    let worstId: string | null = null
-    let worstSec = Infinity
-    for (const id of ids) {
-      const t = byUser[id] ?? 0
-      if (t > bestSec) {
-        bestSec = t
-        bestId = id
-      }
-      if (t < worstSec) {
-        worstSec = t
-        worstId = id
-      }
-    }
-
-    if (!bestId || bestSec <= 0) {
-      topHoursThisMonth.value = null
-      bottomHoursThisMonth.value = null
-      return
-    }
-
-    const emp = list.value.find((e) => e.id === bestId)
-    topHoursThisMonth.value = {
-      name: emp?.name?.trim() || 'Employee',
-      seconds: bestSec
-    }
-
-    if (ids.length < 2 || !worstId || worstId === bestId) {
-      bottomHoursThisMonth.value = null
-    } else {
-      const empLo = list.value.find((e) => e.id === worstId)
-      bottomHoursThisMonth.value = {
-        name: empLo?.name?.trim() || 'Employee',
-        seconds: worstSec
-      }
-    }
-  } finally {
-    monthHoursLoading.value = false
-  }
-}
-
 const totalPeople = computed(() => list.value.length)
+const kpiApprovedAccountsCount = computed(
+  () => list.value.filter((e) => e.account_status === 'approved').length
+)
+const kpiPendingAccountsCount = computed(
+  () => list.value.filter((e) => e.account_status === 'pending').length
+)
 const totalDepartments = computed(() => {
   if (positionRows.value.length) return positionRows.value.length
   const set = new Set(list.value.map((e) => e.position_in_company).filter(Boolean))
   return set.size
 })
 
-const filteredList = computed(() => {
+/** Rows matching search + Modality + Status + Position filters (not Name / account-approval). */
+const employeesAfterNonAccountFilters = computed(() => {
   let rows = list.value
   const q = searchQuery.value.trim().toLowerCase()
   if (q) {
@@ -815,6 +732,26 @@ const filteredList = computed(() => {
   if (filterModality.value !== 'all') {
     const want = filterModality.value
     rows = rows.filter((e) => currentWorkModalityKey(e.id) === want)
+  }
+  return rows
+})
+
+/** Counts for Name column filter options (same basis as other filters, excluding account-approval). */
+const accountApprovalOptionCounts = computed(() => {
+  const base = employeesAfterNonAccountFilters.value
+  return {
+    all: base.length,
+    approved: base.filter((e) => e.account_status === 'approved').length,
+    pending: base.filter((e) => e.account_status === 'pending').length
+  }
+})
+
+const filteredList = computed(() => {
+  let rows = employeesAfterNonAccountFilters.value
+  if (filterAccountApproval.value === 'approved') {
+    rows = rows.filter((e) => e.account_status === 'approved')
+  } else if (filterAccountApproval.value === 'pending') {
+    rows = rows.filter((e) => e.account_status === 'pending')
   }
   return rows
 })
@@ -873,7 +810,6 @@ async function loadEmployees() {
   for (const [id, url] of entries) map[id] = url
   avatarUrls.value = map
   await loadAttendanceSnapshot()
-  await loadMonthHoursLeader()
 }
 
 onMounted(() => {
@@ -881,7 +817,6 @@ onMounted(() => {
   loadEmployees()
   attendanceRefreshTimer = setInterval(() => {
     void loadAttendanceSnapshot()
-    void loadMonthHoursLeader()
   }, 45000)
   document.addEventListener('click', handleEmpFilterClickOutside)
 })
@@ -1018,7 +953,21 @@ function formatDate(iso: string | null): string {
             <span class="material-symbols-outlined kpi-icon">person</span>
           </div>
           <div class="kpi-value">{{ totalPeople }}</div>
-          <div class="kpi-label">Employees</div>
+          <div class="kpi-label">All</div>
+        </div>
+        <div class="kpi-card kpi-card-approved">
+          <div class="kpi-icon-wrap" aria-hidden="true">
+            <span class="material-symbols-outlined kpi-icon">check_circle</span>
+          </div>
+          <div class="kpi-value">{{ kpiApprovedAccountsCount }}</div>
+          <div class="kpi-label">Approved accounts</div>
+        </div>
+        <div class="kpi-card kpi-card-pending">
+          <div class="kpi-icon-wrap" aria-hidden="true">
+            <span class="material-symbols-outlined kpi-icon">hourglass_top</span>
+          </div>
+          <div class="kpi-value">{{ kpiPendingAccountsCount }}</div>
+          <div class="kpi-label">Pending accounts</div>
         </div>
         <div class="kpi-card kpi-card-positions">
           <div class="kpi-icon-wrap" aria-hidden="true">
@@ -1026,26 +975,6 @@ function formatDate(iso: string | null): string {
           </div>
           <div class="kpi-value">{{ totalDepartments }}</div>
           <div class="kpi-label">Positions</div>
-        </div>
-        <div class="kpi-card kpi-card-hours" :title="mostHoursKpiCardTitle">
-          <div class="kpi-icon-wrap" aria-hidden="true">
-            <span class="material-symbols-outlined kpi-icon">schedule</span>
-          </div>
-          <div class="kpi-value">{{ topHoursValueDisplay }}</div>
-          <div class="kpi-label">Most hours ({{ currentMonthLabelShort }})</div>
-          <div v-if="topHoursThisMonth" class="kpi-sub">{{ topHoursThisMonth.name }}</div>
-        </div>
-        <div
-          v-if="showLeastHoursThisMonth"
-          class="kpi-card kpi-card-hours-least"
-          :title="leastHoursKpiCardTitle"
-        >
-          <div class="kpi-icon-wrap" aria-hidden="true">
-            <span class="material-symbols-outlined kpi-icon">timer</span>
-          </div>
-          <div class="kpi-value">{{ bottomHoursValueDisplay }}</div>
-          <div class="kpi-label">Least hours ({{ currentMonthLabelShort }})</div>
-          <div class="kpi-sub">{{ bottomHoursThisMonth?.name }}</div>
         </div>
       </section>
 
@@ -1070,7 +999,66 @@ function formatDate(iso: string | null): string {
           <table class="data-table">
             <thead>
               <tr>
-                <th scope="col">Name</th>
+                <th class="th-name" scope="col" @click.stop>
+                  <div class="th-name-wrap">
+                    <span>Name</span>
+                    <div ref="nameFilterTriggerRef" class="ts-filter-trigger-wrap">
+                      <button
+                        type="button"
+                        class="period-btn ts-filter-period-btn"
+                        aria-haspopup="listbox"
+                        :aria-expanded="showNameFilterDropdown"
+                        :aria-label="`Name column filter, ${nameColumnFilterLabel}`"
+                        @click.stop="toggleNameFilterMenu"
+                      >
+                        <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+                      </button>
+                      <Teleport to="body">
+                        <div
+                          v-if="showNameFilterDropdown"
+                          class="ts-filter-dropdown-portal period-dropdown"
+                          :style="nameDropdownStyle"
+                          role="listbox"
+                          @click.stop
+                        >
+                          <button
+                            type="button"
+                            class="period-option period-option--counted"
+                            :class="{ active: filterAccountApproval === 'all' }"
+                            role="option"
+                            :aria-selected="filterAccountApproval === 'all'"
+                            @click="selectAccountApprovalFilter('all')"
+                          >
+                            <span class="period-option__label">All</span>
+                            <span class="period-option__count">{{ accountApprovalOptionCounts.all }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="period-option period-option--counted"
+                            :class="{ active: filterAccountApproval === 'approved' }"
+                            role="option"
+                            :aria-selected="filterAccountApproval === 'approved'"
+                            @click="selectAccountApprovalFilter('approved')"
+                          >
+                            <span class="period-option__label">Approved</span>
+                            <span class="period-option__count">{{ accountApprovalOptionCounts.approved }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="period-option period-option--counted"
+                            :class="{ active: filterAccountApproval === 'pending' }"
+                            role="option"
+                            :aria-selected="filterAccountApproval === 'pending'"
+                            @click="selectAccountApprovalFilter('pending')"
+                          >
+                            <span class="period-option__label">Pending</span>
+                            <span class="period-option__count">{{ accountApprovalOptionCounts.pending }}</span>
+                          </button>
+                        </div>
+                      </Teleport>
+                    </div>
+                  </div>
+                </th>
                 <th scope="col">Employee ID</th>
                 <th class="th-modality" scope="col" @click.stop>
                   <div class="th-modality-wrap">
@@ -1458,8 +1446,11 @@ body.dark-mode .kpi-card {
 .kpi-card-positions .kpi-icon-wrap {
   background: rgba(147, 51, 234, 0.16);
 }
-.kpi-card-hours .kpi-icon-wrap {
-  background: rgba(249, 115, 22, 0.2);
+.kpi-card-approved .kpi-icon-wrap {
+  background: rgba(34, 197, 94, 0.18);
+}
+.kpi-card-pending .kpi-icon-wrap {
+  background: rgba(234, 179, 8, 0.2);
 }
 body.light-mode .kpi-card-people .kpi-icon-wrap {
   background: rgba(34, 197, 94, 0.14);
@@ -1467,14 +1458,11 @@ body.light-mode .kpi-card-people .kpi-icon-wrap {
 body.light-mode .kpi-card-positions .kpi-icon-wrap {
   background: rgba(147, 51, 234, 0.12);
 }
-body.light-mode .kpi-card-hours .kpi-icon-wrap {
-  background: rgba(249, 115, 22, 0.14);
+body.light-mode .kpi-card-approved .kpi-icon-wrap {
+  background: rgba(34, 197, 94, 0.14);
 }
-.kpi-card-hours-least .kpi-icon-wrap {
-  background: rgba(14, 165, 233, 0.18);
-}
-body.light-mode .kpi-card-hours-least .kpi-icon-wrap {
-  background: rgba(14, 165, 233, 0.12);
+body.light-mode .kpi-card-pending .kpi-icon-wrap {
+  background: rgba(234, 179, 8, 0.14);
 }
 .kpi-icon {
   font-size: 1.375rem;
@@ -1487,8 +1475,11 @@ body.light-mode .kpi-card-hours-least .kpi-icon-wrap {
 .kpi-card-positions .kpi-icon {
   color: #c084fc;
 }
-.kpi-card-hours .kpi-icon {
-  color: #fb923c;
+.kpi-card-approved .kpi-icon {
+  color: #4ade80;
+}
+.kpi-card-pending .kpi-icon {
+  color: #fbbf24;
 }
 body.light-mode .kpi-card-people .kpi-icon {
   color: #15803d;
@@ -1496,8 +1487,11 @@ body.light-mode .kpi-card-people .kpi-icon {
 body.light-mode .kpi-card-positions .kpi-icon {
   color: #7c3aed;
 }
-body.light-mode .kpi-card-hours .kpi-icon {
-  color: #c2410c;
+body.light-mode .kpi-card-approved .kpi-icon {
+  color: #15803d;
+}
+body.light-mode .kpi-card-pending .kpi-icon {
+  color: #b45309;
 }
 .kpi-value {
   font-size: 2rem;
@@ -1512,14 +1506,6 @@ body.light-mode .kpi-card-hours .kpi-icon {
   color: var(--text-tertiary);
   font-weight: 500;
   letter-spacing: 0.01em;
-}
-.kpi-sub {
-  margin-top: 0.35rem;
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
-  font-weight: 600;
-  line-height: 1.35;
-  word-break: break-word;
 }
 
 /* Controls */
@@ -1589,6 +1575,28 @@ body.light-mode .kpi-card-hours .kpi-icon {
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
+}
+.th-name {
+  width: 1%;
+  min-width: 0;
+}
+.th-name-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.th-name-count {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  line-height: 1;
+  padding: 0.15rem 0.4rem;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
 }
 .th-status {
   width: 1%;
@@ -1726,6 +1734,24 @@ body.light-mode .kpi-card-hours .kpi-icon {
 
 .period-option.active {
   background: rgba(56, 189, 248, 0.15);
+  color: var(--accent);
+}
+
+.period-option--counted {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.period-option__count {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+.period-option--counted:hover .period-option__count,
+.period-option--counted.active .period-option__count {
   color: var(--accent);
 }
 .data-row {
