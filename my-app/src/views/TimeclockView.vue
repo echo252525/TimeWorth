@@ -21,7 +21,7 @@ import supabase from '../lib/supabaseClient'
 const route = useRoute()
 const {
   todayRecord,
-  completedToday,
+  todayRecords,
   isClockedIn,
   isOnLunch,
   usedLunchBreak,
@@ -76,8 +76,25 @@ let centerMarker: L.Marker | null = null
 let userMarkerAnimRaf: number | null = null
 let userMarkerLastIconSig = ''
 const USER_MARKER_MOVE_MS = 400
+/** Outer icon box (pulse rings + avatar); inner avatar is 40px in CSS. */
+const USER_MARKER_ICON_PX = 56
 let liveLocationIntervalId: number | null = null
 let livePollInFlight = false
+/** Previous live fix for movement heading (bearing). */
+let lastGpsForHeading: { lat: number; lng: number } | null = null
+/** Degrees clockwise from north; null when not moving meaningfully between samples. */
+const userMovementHeadingDeg = ref<number | null>(null)
+
+function bearingDegrees(from: { lat: number; lng: number }, to: { lat: number; lng: number }): number {
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const φ1 = toRad(from.lat)
+  const φ2 = toRad(to.lat)
+  const Δλ = toRad(to.lng - from.lng)
+  const y = Math.sin(Δλ) * Math.cos(φ2)
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ)
+  const θ = Math.atan2(y, x)
+  return ((θ * 180) / Math.PI + 360) % 360
+}
 
 /** Office geofence from `geolocation` where `geolocation_status` is true (admin System configuration). */
 interface OfficeGeofenceRow {
@@ -107,7 +124,7 @@ async function loadOfficeGeofence() {
 
 const centerIcon = L.divIcon({
   className: 'map-center-icon',
-  html: '<span class="center-pin" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#0ea5e9" width="28" height="28"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></span>',
+  html: '<span class="center-pin" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#4285F4" width="28" height="28"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></span>',
   iconSize: [28, 36],
   iconAnchor: [14, 36]
 })
@@ -224,8 +241,22 @@ const chooseModalityContinueDisabled = computed(() => {
   return isOutsideOfficeRadius.value
 })
 
+/** Short label under the map. Full street address appears only on map hover (profile marker or geofence circle tooltips). */
+const mapCaptionShort = computed(() => {
+  if (workModality.value === 'office' && officeGeofence.value) {
+    return officeGeofence.value.name?.trim() || activeBranch.value.name
+  }
+  if (workModality.value === 'office' && activeBranch.value) {
+    return activeBranch.value.name
+  }
+  if (workModality.value === 'wfh') {
+    return wfhAddress.value ? 'Work from home' : 'Location'
+  }
+  return 'Location'
+})
+
 watch(
-  () => [isOutsideOfficeRadius.value, step.value, workModality.value] as const,
+  () => [isOutsideOfficeRadius.value, step.value, workModality.value, officeGeofence.value?.id] as const,
   () => {
     if (
       step.value === 'choose_modality' &&
@@ -236,6 +267,10 @@ watch(
     ) {
       locationError.value = null
     }
+    nextTick(() => {
+      syncUserMarkerGeofenceBorder()
+      syncGeofenceCircleStyle()
+    })
   }
 )
 
@@ -257,8 +292,18 @@ function initMap() {
   if (!mapContainer.value) return
   map = L.map(mapContainer.value, { zoomControl: false }).setView([mapCenter.value.lat, mapCenter.value.lng], 16)
   L.control.zoom({ position: 'topright' }).addTo(map!)
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '© CARTO', subdomains: 'abcd', maxZoom: 20 }).addTo(map!)
-  circle = L.circle([mapCenter.value.lat, mapCenter.value.lng], { radius: RADIUS_M, color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.08 })
+  /* Carto Voyager: bright cyan water, pale green land use, light grey base — closest free raster to Google Maps default palette; refined via CSS below. */
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 20
+  }).addTo(map!)
+  circle = L.circle([mapCenter.value.lat, mapCenter.value.lng], {
+    radius: RADIUS_M,
+    ...geofenceCircleLeafletStyle()
+  }).addTo(map!)
+  syncGeofenceCircleStyle()
+  bindGeofenceCircleTooltip()
   map.on('moveend zoomend', updateEdgeIndicators)
   updateMapView()
 }
@@ -268,7 +313,12 @@ function updateCenterMarker() {
   centerMarker?.remove()
   if (workModality.value === 'office' && step.value !== 'idle') {
     const c = mapCenter.value
-    const label = officeGeofence.value?.name?.trim() || activeBranch.value.name
+    const geoName = officeGeofence.value?.name?.trim() ?? ''
+    /** Long geofence names are often full addresses from config; keep pin label short (full address is on circle hover only). */
+    const label =
+      geoName && geoName.length <= 48
+        ? geoName
+        : activeBranch.value.name
     const radiusLabel =
       officeGeofence.value != null
         ? Math.round(officeGeofence.value.radius_meters)
@@ -276,15 +326,80 @@ function updateCenterMarker() {
     centerMarker = L.marker([c.lat, c.lng], { icon: centerIcon }).addTo(map!)
     centerMarker.bindTooltip(
       `<div class="map-tooltip-inner"><strong>${escapeHtml(label)}</strong><span>${radiusLabel}m radius</span></div>`,
-      { permanent: true, direction: 'top', offset: [0, -12], className: 'map-bound-tooltip map-bound-tooltip-branch' }
-    ).openTooltip()
+      { permanent: false, direction: 'top', offset: [0, -12], className: 'map-bound-tooltip map-bound-tooltip-branch', sticky: true }
+    )
   } else centerMarker = null
 }
 
-const USER_MARKER_SIZE = 40
-
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+const GEOFENCE_CIRCLE_STYLE_DEFAULT = {
+  color: '#4285F4',
+  fillColor: '#4285F4',
+  fillOpacity: 0.14,
+  weight: 3
+} as const
+
+const GEOFENCE_CIRCLE_STYLE_OUT = {
+  color: '#ea4335',
+  fillColor: '#ea4335',
+  fillOpacity: 0.14,
+  weight: 3
+} as const
+
+const GEOFENCE_CIRCLE_STYLE_IN = {
+  color: '#34a853',
+  fillColor: '#34a853',
+  fillOpacity: 0.14,
+  weight: 3
+} as const
+
+function geofenceCircleLeafletStyle(): L.PathOptions {
+  if (workModality.value !== 'office' || step.value !== 'choose_modality' || !officeGeofence.value) {
+    return { ...GEOFENCE_CIRCLE_STYLE_DEFAULT }
+  }
+  return isOutsideOfficeRadius.value ? { ...GEOFENCE_CIRCLE_STYLE_OUT } : { ...GEOFENCE_CIRCLE_STYLE_IN }
+}
+
+function syncGeofenceCircleStyle() {
+  if (!circle) return
+  circle.setStyle(geofenceCircleLeafletStyle())
+}
+
+/** Full office site address for geofence circle tooltip (hover boundary only). */
+function geofenceCircleTooltipText(): string | null {
+  if (workModality.value !== 'office' || step.value === 'idle') return null
+  const addr = activeBranch.value?.address?.trim()
+  if (addr) return addr
+  const name = officeGeofence.value?.name?.trim()
+  if (name) return name
+  return activeBranch.value?.name ?? null
+}
+
+function bindGeofenceCircleTooltip() {
+  if (!circle) return
+  circle.unbindTooltip()
+  const text = geofenceCircleTooltipText()
+  if (!text) return
+  circle.bindTooltip(
+    `<div class="map-tooltip-inner map-tooltip-geofence-bind">${escapeHtml(text)}</div>`,
+    {
+      permanent: false,
+      direction: 'auto',
+      sticky: true,
+      className: 'map-bound-tooltip map-bound-tooltip-geofence'
+    }
+  )
+}
+
+/** Office + choose_modality: red ring outside geofence, green inside; otherwise default blue styling. */
+function userMarkerRootGeofenceClass(): string {
+  if (workModality.value !== 'office' || step.value !== 'choose_modality' || !officeGeofence.value) return ''
+  return isOutsideOfficeRadius.value
+    ? 'map-user-marker-root--geofence-out'
+    : 'map-user-marker-root--geofence-in'
 }
 
 function createUserMarkerIcon(): L.DivIcon {
@@ -293,12 +408,44 @@ function createUserMarkerIcon(): L.DivIcon {
   const imgHtml = pic
     ? `<img src="${escapeHtml(pic)}" alt="" class="map-user-marker-img" />`
     : `<span class="map-user-marker-initial">${initial}</span>`
+  const h = userMovementHeadingDeg.value
+  const showArrow = h != null
+  const arrowHtml = `<div class="map-user-marker-arrow-wrap" style="display:${showArrow ? 'block' : 'none'}"><div class="map-user-marker-arrow" style="transform:rotate(${h ?? 0}deg)" aria-hidden="true"><svg class="map-user-marker-arrow-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 3L4 20h16L12 3z" fill="currentColor"/></svg></div></div>`
+  const half = USER_MARKER_ICON_PX / 2
+  const gfRoot = userMarkerRootGeofenceClass()
   return L.divIcon({
     className: 'map-user-marker',
-    html: `<div class="map-user-marker-wrap">${imgHtml}</div>`,
-    iconSize: [USER_MARKER_SIZE, USER_MARKER_SIZE],
-    iconAnchor: [USER_MARKER_SIZE / 2, USER_MARKER_SIZE]
+    html: `<div class="map-user-marker-root ${gfRoot}">
+      <span class="map-user-marker-pulse" aria-hidden="true"></span>
+      <span class="map-user-marker-pulse map-user-marker-pulse--delay" aria-hidden="true"></span>
+      <div class="map-user-marker-wrap">${imgHtml}</div>
+      ${arrowHtml}
+    </div>`,
+    iconSize: [USER_MARKER_ICON_PX, USER_MARKER_ICON_PX],
+    iconAnchor: [half, half]
   })
+}
+
+function syncUserMarkerHeadingElement() {
+  const el = userMarker?.getElement?.()
+  if (!el) return
+  const wrap = el.querySelector('.map-user-marker-arrow-wrap') as HTMLElement | null
+  const arrow = el.querySelector('.map-user-marker-arrow') as HTMLElement | null
+  const h = userMovementHeadingDeg.value
+  if (wrap) wrap.style.display = h == null ? 'none' : 'block'
+  if (!arrow) return
+  if (h == null) return
+  arrow.style.transform = `rotate(${h}deg)`
+}
+
+function syncUserMarkerGeofenceBorder() {
+  const el = userMarker?.getElement?.()
+  if (!el) return
+  const root = el.querySelector('.map-user-marker-root') as HTMLElement | null
+  if (!root) return
+  root.classList.remove('map-user-marker-root--geofence-out', 'map-user-marker-root--geofence-in')
+  const next = userMarkerRootGeofenceClass()
+  if (next) root.classList.add(next)
 }
 
 function cancelUserMarkerMoveAnimation() {
@@ -317,8 +464,8 @@ function bindUserMarkerTooltip(mark: L.Marker) {
       ? officeUserAddress.value
       : `${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`
   mark.bindTooltip(
-    `<div class="map-tooltip-inner map-tooltip-you"><strong></strong><span class="map-tooltip-address" title="${escapeHtml(fullAddress)}">${escapeHtml(fullAddress)}</span></div>`,
-    { permanent: false, direction: 'top', offset: [0, -USER_MARKER_SIZE - 8], className: 'map-bound-tooltip map-bound-tooltip-user', sticky: true }
+    `<div class="map-tooltip-inner map-tooltip-you"><span class="map-tooltip-address-only">${escapeHtml(fullAddress)}</span></div>`,
+    { permanent: false, direction: 'top', offset: [0, -USER_MARKER_ICON_PX - 8], className: 'map-bound-tooltip map-bound-tooltip-user', sticky: true }
   )
 }
 
@@ -376,6 +523,8 @@ function updateUserMarker(animateMove = false) {
     userMarker = null
     userLabelMarker = null
     userMarkerLastIconSig = ''
+    lastGpsForHeading = null
+    userMovementHeadingDeg.value = null
     return
   }
   if (!userMarker) {
@@ -384,6 +533,8 @@ function updateUserMarker(animateMove = false) {
     userMarker = L.marker([loc.lat, loc.lng], { icon }).addTo(map!)
     userMarkerLastIconSig = iconSig
     bindUserMarkerTooltip(userMarker)
+    syncUserMarkerHeadingElement()
+    syncUserMarkerGeofenceBorder()
     return
   }
   if (iconSig !== userMarkerLastIconSig) {
@@ -393,15 +544,23 @@ function updateUserMarker(animateMove = false) {
     userMarker = L.marker([loc.lat, loc.lng], { icon }).addTo(map!)
     userMarkerLastIconSig = iconSig
     bindUserMarkerTooltip(userMarker)
+    syncUserMarkerHeadingElement()
+    syncUserMarkerGeofenceBorder()
     return
   }
   if (animateMove) {
-    animateUserMarkerTo(loc.lat, loc.lng, () => bindUserMarkerTooltip(userMarker!))
+    animateUserMarkerTo(loc.lat, loc.lng, () => {
+      bindUserMarkerTooltip(userMarker!)
+      syncUserMarkerHeadingElement()
+      syncUserMarkerGeofenceBorder()
+    })
     return
   }
   cancelUserMarkerMoveAnimation()
   userMarker.setLatLng([loc.lat, loc.lng])
   bindUserMarkerTooltip(userMarker)
+  syncUserMarkerHeadingElement()
+  syncUserMarkerGeofenceBorder()
 }
 
 const DEFAULT_MAP_VIEW = { lat: 14.5995, lng: 120.9842, zoom: 13 }
@@ -521,6 +680,8 @@ function updateMapView(preserveViewport = false, animateUserMove = false) {
   circle.setLatLng([c.lat, c.lng])
   circle.setRadius(radius)
   if (!map.hasLayer(circle)) circle.addTo(map!)
+  syncGeofenceCircleStyle()
+  bindGeofenceCircleTooltip()
   updateCenterMarker()
   updateUserMarker(animateUserMove)
   const loc = userLoc.value
@@ -556,16 +717,18 @@ function fetchLocationOnce() {
   wfhFetchingLocation.value = true
   void (async () => {
     try {
-      const loc = await getLocation()
-      locationIn.value = loc
-      console.log('[Timeclock] location fetched', { lat: loc.lat, lng: loc.lng })
-      nextTick(() => updateMapView())
-      void reverseGeocode(loc.lat, loc.lng).then((addr) => {
-        officeUserAddress.value = addr
-        wfhAddress.value = addr
-      })
+      const loc = await getLocationInitialQuick()
+      if (!locationIn.value) {
+        locationIn.value = loc
+        console.log('[Timeclock] location fetched', { lat: loc.lat, lng: loc.lng })
+        nextTick(() => updateMapView())
+        void reverseGeocode(loc.lat, loc.lng).then((addr) => {
+          officeUserAddress.value = addr
+          wfhAddress.value = addr
+        })
+      }
     } catch (err) {
-      console.warn('[Timeclock] getLocation failed', err)
+      console.warn('[Timeclock] getLocationInitialQuick failed', err)
     } finally {
       officeFetchingLocation.value = false
       wfhFetchingLocation.value = false
@@ -573,6 +736,39 @@ function fetchLocationOnce() {
     }
   })()
 }
+
+/** First paint / UI unblock: one high-accuracy fix with a short timeout (not the long multi-sample `getLocation`). */
+function getLocationInitialQuick(): Promise<{ lat: number; lng: number }> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation not supported'))
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (err) => reject(err),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 6000 }
+    )
+  })
+}
+
+watch(
+  () => liveLocation.value,
+  (loc) => {
+    if (!loc) return
+    if (!officeFetchingLocation.value && !wfhFetchingLocation.value) return
+    if (locationIn.value) return
+    locationIn.value = loc
+    nextTick(() => updateMapView())
+    void reverseGeocode(loc.lat, loc.lng).then((addr) => {
+      officeUserAddress.value = addr
+      wfhAddress.value = addr
+    })
+    officeFetchingLocation.value = false
+    wfhFetchingLocation.value = false
+  },
+  { immediate: true }
+)
 
 watch(workModality, () => {
   console.log('[Timeclock] workModality changed', { to: workModality.value, locationIn: !!locationIn.value, officeFetching: officeFetchingLocation.value, wfhFetching: wfhFetchingLocation.value })
@@ -665,12 +861,45 @@ watch(mapContainer, (el) => {
   if (el && !map) initMap()
 })
 
-/** Map preview: poll often with short timeout so the marker tracks movement without stacking requests. */
-const LIVE_LOCATION_POLL_MS = 1000
+/** Map preview: faster poll (same accuracy options); marker + heading update more often. */
+const LIVE_LOCATION_POLL_MS = 600
 const GEO_LIVE_POLL_OPTIONS: PositionOptions = {
   enableHighAccuracy: true,
   maximumAge: 0,
-  timeout: 2500
+  timeout: 2000
+}
+
+/** GMaps-style: refresh GPS (same accuracy as live poll) and recenter on you. */
+function onMapLocateMeClick() {
+  if (!navigator.geolocation) return
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const next = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+      if (lastGpsForHeading) {
+        const moved = distanceMeters(lastGpsForHeading, next)
+        if (moved >= 2) {
+          userMovementHeadingDeg.value = bearingDegrees(lastGpsForHeading, next)
+        } else {
+          userMovementHeadingDeg.value = null
+        }
+      } else {
+        userMovementHeadingDeg.value = null
+      }
+      lastGpsForHeading = next
+      liveLocation.value = next
+      nextTick(() => {
+        updateMapView(true, true)
+        nextTick(() => {
+          updateEdgeIndicators()
+          focusOnUserLocation()
+        })
+      })
+    },
+    () => {
+      focusOnUserLocation()
+    },
+    GEO_LIVE_POLL_OPTIONS
+  )
 }
 
 function startLiveLocationWatch() {
@@ -685,10 +914,19 @@ function startLiveLocationWatch() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         livePollInFlight = false
-        liveLocation.value = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude
+        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+        if (lastGpsForHeading) {
+          const moved = distanceMeters(lastGpsForHeading, next)
+          if (moved >= 2) {
+            userMovementHeadingDeg.value = bearingDegrees(lastGpsForHeading, next)
+          } else {
+            userMovementHeadingDeg.value = null
+          }
+        } else {
+          userMovementHeadingDeg.value = null
         }
+        lastGpsForHeading = next
+        liveLocation.value = next
         console.log('[Timeclock] live GPS update', {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
@@ -732,11 +970,12 @@ function getLocation(): Promise<{ lat: number; lng: number }> {
     const sampleOpts: PositionOptions = {
       enableHighAccuracy: true,
       maximumAge: 0,
-      timeout: 30000
+      timeout: 20000
     }
     /** Early exit when horizontal accuracy is at or below this (meters). */
     const GOOD_ENOUGH_ACCURACY_M = 50
-    const MAX_SAMPLE_MS = 30000
+    /** Shorter cap than before so resolves faster while still sampling for best accuracy. */
+    const MAX_SAMPLE_MS = 18000
 
     let best: GeolocationPosition | null = null
     let watchId: number | null = null
@@ -1050,6 +1289,19 @@ async function cancelFacialModal() {
     step.value = 'choose_modality'
     locationIn.value = null
   } else {
+    if (step.value === 'facial_out') {
+      const id = livenessVerificationId.value ?? todayRecord.value?.facial_verifications_id ?? null
+      if (id) {
+        try {
+          await supabase
+            .from('facial_verifications')
+            .update({ facial_clock_out_indicator: false })
+            .eq('id', id)
+        } catch {
+          /* still return to clocked-in UI */
+        }
+      }
+    }
     step.value = 'clocked_in'
     closeLivenessRealtime()
   }
@@ -1110,32 +1362,45 @@ function formatWorkModalityLabel(m: string | null | undefined): string {
   if (v === 'office') return 'Office'
   return String(m).trim()
 }
-function formatTotalTime(interval: string | null) {
-  if (!interval) return '—'
-  const timeMatch = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (timeMatch) {
-    const [, h, m, s] = timeMatch.map(Number)
-    const parts = []
-    if (h) parts.push(`${h}h`)
-    if (m) parts.push(`${m}m`)
-    if (s || !parts.length) parts.push(`${s}s`)
-    return parts.join(' ')
+
+/** Chronological events for today (clock in/out, lunch start/end) for the activity panel. */
+const todayTimelineEvents = computed(() => {
+  type Ev = { key: string; label: string; time: string; modality?: string }
+  const raw: Ev[] = []
+  for (const r of todayRecords.value) {
+    if (r.clock_in) {
+      raw.push({
+        key: `${r.attendance_id}-in`,
+        label: 'Clock in',
+        time: r.clock_in,
+        modality: formatWorkModalityLabel(r.work_modality)
+      })
+    }
+    if (r.lunch_break_start) {
+      raw.push({
+        key: `${r.attendance_id}-lunch-start`,
+        label: 'Lunch break started',
+        time: r.lunch_break_start
+      })
+    }
+    if (r.lunch_break_end) {
+      raw.push({
+        key: `${r.attendance_id}-lunch-end`,
+        label: 'Lunch break ended',
+        time: r.lunch_break_end
+      })
+    }
+    if (r.clock_out) {
+      raw.push({
+        key: `${r.attendance_id}-out`,
+        label: 'Clock out',
+        time: r.clock_out,
+        modality: formatWorkModalityLabel(r.work_modality)
+      })
+    }
   }
-  const match = interval.match(/(\d+)\s*hours?|(\d+)\s*minutes?|(\d+)\s*seconds?/gi)
-  if (!match) return interval
-  let h = 0, m = 0, s = 0
-  match.forEach((p) => {
-    const n = parseInt(p, 10)
-    if (p.toLowerCase().includes('hour')) h = n
-    else if (p.toLowerCase().includes('minute')) m = n
-    else if (p.toLowerCase().includes('second')) s = n
-  })
-  const parts = []
-  if (h) parts.push(`${h}h`)
-  if (m) parts.push(`${m}m`)
-  if (s || !parts.length) parts.push(`${s}s`)
-  return parts.join(' ')
-}
+  return raw.sort((a, b) => storedToRealInstant(a.time) - storedToRealInstant(b.time))
+})
 
 const cancelFacialLoading = ref(false)
 async function handleCancelFacial() {
@@ -1227,7 +1492,10 @@ async function handleCancelFacial() {
           </div>
           <!-- Choose modality (after Clock in click) -->
           <div v-else-if="step === 'choose_modality'" class="hero-card">
-            <p class="muted">Where are you working?</p>
+            <div class="modality-heading">
+              <h2 class="modality-heading-title">Select your work modality</h2>
+              <p class="muted modality-heading-sub">Choose whether you are working from the office or remotely.</p>
+            </div>
             <div
               class="modality-btns modality-toggle"
               :class="{ 'is-office': workModality === 'office', 'is-wfh': workModality === 'wfh' }"
@@ -1242,7 +1510,12 @@ async function handleCancelFacial() {
                 :aria-pressed="workModality === 'office'"
                 @click="workModality = 'office'"
               >
-                Office
+                <span class="modality-toggle-btn-inner">
+                  <svg class="modality-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M3 21h18v-8H3v8zm2-2v-4h14v4H5zM3 10h18V3H3v7zm2-2V5h14v3H5z" />
+                  </svg>
+                  <span>Office</span>
+                </span>
               </button>
               <button
                 type="button"
@@ -1251,7 +1524,12 @@ async function handleCancelFacial() {
                 :aria-pressed="workModality === 'wfh'"
                 @click="workModality = 'wfh'"
               >
-                WFH
+                <span class="modality-toggle-btn-inner">
+                  <svg class="modality-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8h5z" />
+                  </svg>
+                  <span>WFH</span>
+                </span>
               </button>
             </div>
             <p v-if="(officeFetchingLocation || wfhFetchingLocation) && !locationIn" class="muted">
@@ -1266,9 +1544,6 @@ async function handleCancelFacial() {
             >
               Office location is not set up yet. Please contact your administrator.
             </p>
-            <p v-if="isOutsideOfficeRadius" class="block-msg">
-              You are outside the office geofence. Move closer to clock in.
-            </p>
             <div class="actions">
               <button
                 type="button"
@@ -1282,6 +1557,19 @@ async function handleCancelFacial() {
                 <span v-else>Continue</span>
               </button>
               <button type="button" class="btn secondary" @click="step = 'idle'">Cancel</button>
+            </div>
+            <div v-if="todayTimelineEvents.length" class="today-activity-panel" aria-label="Today's activity">
+              <h3 class="today-activity-panel-title">Today's activity</h3>
+              <ol class="today-activity-list">
+                <li v-for="ev in todayTimelineEvents" :key="ev.key" class="today-activity-item">
+                  <span class="today-activity-dot" aria-hidden="true"></span>
+                  <div class="today-activity-body">
+                    <span class="today-activity-label">{{ ev.label }}</span>
+                    <time class="today-activity-time" :datetime="ev.time">{{ fmtStored(ev.time) }}</time>
+                    <span v-if="ev.modality" class="today-activity-modality">{{ ev.modality }}</span>
+                  </div>
+                </li>
+              </ol>
             </div>
           </div>
           <div v-else-if="step === 'wfh_photo'" class="hero-card wfh-photo-card">
@@ -1328,11 +1616,18 @@ async function handleCancelFacial() {
               </p>
             </div>
             <button type="button" class="btn hero-cta" :disabled="isLoading" @click="onClockInClick">Clock in</button>
-            <div v-if="completedToday.length" class="completed-list">
-              <p class="muted small">Today</p>
-              <div v-for="r in completedToday" :key="r.attendance_id" class="completed-row">
-                {{ fmtStored(r.clock_in) }} – {{ fmtStored(r.clock_out) }} · {{ formatTotalTime(r.total_time) }} · {{ formatWorkModalityLabel(r.work_modality) }}
-              </div>
+            <div v-if="todayTimelineEvents.length" class="today-activity-panel" aria-label="Today's activity">
+              <h3 class="today-activity-panel-title">Today's activity</h3>
+              <ol class="today-activity-list">
+                <li v-for="ev in todayTimelineEvents" :key="ev.key" class="today-activity-item">
+                  <span class="today-activity-dot" aria-hidden="true"></span>
+                  <div class="today-activity-body">
+                    <span class="today-activity-label">{{ ev.label }}</span>
+                    <time class="today-activity-time" :datetime="ev.time">{{ fmtStored(ev.time) }}</time>
+                    <span v-if="ev.modality" class="today-activity-modality">{{ ev.modality }}</span>
+                  </div>
+                </li>
+              </ol>
             </div>
           </div>
         </template>
@@ -1345,6 +1640,24 @@ async function handleCancelFacial() {
             <span class="map-loading-text">Getting location…</span>
           </div>
           <div ref="mapContainer" class="map-wrap"></div>
+          <div
+            v-if="workModality === 'office' && step === 'choose_modality' && isOutsideOfficeRadius"
+            class="map-geofence-float"
+            role="status"
+          >
+            You are outside the office geofence. Move closer to clock in.
+          </div>
+          <button
+            type="button"
+            class="map-locate-me-btn"
+            aria-label="Refresh location and center map on you"
+            title="Refresh location and center map on you"
+            @click="onMapLocateMeClick"
+          >
+            <svg class="map-locate-me-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z" />
+            </svg>
+          </button>
           <div ref="userEdgeIndicator" class="map-edge-indicator map-edge-user" aria-label="Your location direction" title="Click to focus on your location" @click="focusOnUserLocation">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 2L8 10L12 8L16 10L12 2Z"/>
@@ -1359,21 +1672,14 @@ async function handleCancelFacial() {
         <p class="map-caption muted">
           <span v-if="userLoc" class="you-are-here">Your current location</span>
           <template v-if="userLoc"> · </template>
-          {{
-            workModality === 'office' && officeGeofence
-              ? officeGeofence.name
-              : workModality === 'office' && activeBranch
-                ? activeBranch.address
-                : workModality === 'wfh' && wfhAddress
-                  ? wfhAddress
-                  : 'Location'
-          }}{{
-            workModality === 'office'
-              ? officeGeofence
+          {{ mapCaptionShort }}
+          <template v-if="workModality === 'office'">
+            {{
+              officeGeofence
                 ? ` · ${Math.round(officeGeofence.radius_meters)}m radius`
                 : ` · ${RADIUS_M}m radius`
-              : ''
-          }}
+            }}
+          </template>
         </p>
       </aside>
     </div>
@@ -1591,6 +1897,46 @@ async function handleCancelFacial() {
   margin: 0.5rem 0;
 }
 
+.modality-heading {
+  margin-bottom: 0.75rem;
+}
+
+.modality-heading-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.modality-heading-sub {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.modality-toggle-btn-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.modality-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+  transition:
+    transform 0.32s cubic-bezier(0.34, 1.45, 0.64, 1),
+    opacity 0.2s ease;
+  opacity: 0.88;
+}
+
+.modality-toggle-btn.primary .modality-icon {
+  transform: scale(1.1);
+  opacity: 1;
+}
+
 /* Segmented toggle (work modality) */
 .modality-toggle {
   position: relative;
@@ -1655,9 +2001,89 @@ async function handleCancelFacial() {
 
 @media (prefers-reduced-motion: reduce) {
   .modality-toggle-indicator,
-  .modality-toggle-btn {
+  .modality-toggle-btn,
+  .modality-icon {
     transition: none;
   }
+
+  .modality-toggle-btn.primary .modality-icon {
+    transform: none;
+  }
+}
+
+.today-activity-panel {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.today-activity-panel-title {
+  margin: 0 0 0.65rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.today-activity-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.today-activity-item {
+  position: relative;
+  display: flex;
+  gap: 0.65rem;
+  padding: 0.45rem 0 0.45rem 0.15rem;
+  border-left: 2px solid rgba(14, 165, 233, 0.35);
+  margin-left: 0.35rem;
+  padding-left: 0.85rem;
+}
+
+.today-activity-item:last-child {
+  padding-bottom: 0;
+}
+
+.today-activity-dot {
+  position: absolute;
+  left: -0.4rem;
+  top: 0.65rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #0ea5e9;
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.today-activity-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.65rem;
+  min-width: 0;
+}
+
+.today-activity-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.today-activity-time {
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: #64748b;
+}
+
+.today-activity-modality {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #0ea5e9;
+  padding: 0.1rem 0.45rem;
+  border-radius: 6px;
+  background: rgba(14, 165, 233, 0.12);
 }
 
 .actions {
@@ -1840,38 +2266,79 @@ async function handleCancelFacial() {
   color: #f87171;
 }
 
-.completed-list {
-  margin-top: 1rem;
-  border-top: 1px solid #9ee2ff;
-}
-
-.completed-list .small {
-  font-size: 0.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.completed-row {
-  font-size: 0.8125rem;
-  color: #94a3b8;
-}
-
 .map-aside {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
+/* Google Maps–style chrome: land #F1F3F4, subtle borders, Material-like elevation */
 .map-wrap-wrapper {
   position: relative;
   min-height: 320px;
-  border-radius: 16px;
+  border-radius: 20px;
   overflow: hidden;
-  border: 1px solid #9ee2ff;
-  background:
-    radial-gradient(circle at top, rgba(56, 189, 248, 0.22), rgba(15, 23, 42, 0.98)),
-    linear-gradient(135deg, rgba(15, 23, 42, 1), rgba(15, 23, 42, 0.92));
-    box-shadow: rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, 
-      rgba(0, 0, 0, 0.06) 0px 1px 2px 0px;
+  isolation: isolate;
+  border: 1px solid rgba(32, 33, 36, 0.12);
+  background: linear-gradient(180deg, #ffffff 0%, #f8f9fa 35%, #f1f3f4 100%);
+  box-shadow:
+    0 1px 2px rgba(60, 64, 67, 0.28),
+    0 2px 6px rgba(60, 64, 67, 0.15),
+    0 8px 24px rgba(60, 64, 67, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  animation: map-frame-ambient 14s ease-in-out infinite;
+}
+
+@keyframes map-frame-ambient {
+  0%,
+  100% {
+    box-shadow:
+      0 1px 2px rgba(60, 64, 67, 0.28),
+      0 2px 6px rgba(60, 64, 67, 0.15),
+      0 8px 24px rgba(60, 64, 67, 0.08),
+      0 0 40px rgba(66, 133, 244, 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+  50% {
+    box-shadow:
+      0 1px 2px rgba(60, 64, 67, 0.3),
+      0 3px 8px rgba(60, 64, 67, 0.16),
+      0 10px 28px rgba(60, 64, 67, 0.1),
+      0 0 52px rgba(66, 133, 244, 0.1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-wrap-wrapper {
+    animation: none;
+  }
+}
+
+.map-wrap-wrapper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 14;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(ellipse 100% 95% at 50% 40%, transparent 55%, rgba(32, 33, 36, 0.05) 100%);
+  mix-blend-mode: multiply;
+}
+
+.map-wrap-wrapper::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 8%;
+  right: 8%;
+  height: 4px;
+  z-index: 16;
+  pointer-events: none;
+  border-radius: 0 0 999px 999px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+  opacity: 0.65;
+  filter: blur(0.5px);
 }
 
 .map-loading-overlay {
@@ -1883,23 +2350,72 @@ async function handleCancelFacial() {
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
-  background: rgba(15, 23, 42, 0.75);
-  border-radius: 16px;
-  color: var(--text-secondary, #94a3b8);
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 40%, rgba(59, 130, 246, 0.25) 0%, transparent 55%),
+    linear-gradient(165deg, rgba(15, 23, 42, 0.82) 0%, rgba(30, 41, 59, 0.88) 100%);
+  border-radius: 20px;
+  color: var(--text-secondary, #cbd5e1);
   font-size: 0.9375rem;
 }
 
 .map-loading-overlay .map-loading-spinner {
   width: 28px;
   height: 28px;
-  border: 2px solid rgba(14, 165, 233, 0.3);
-  border-top-color: #0ea5e9;
+  border: 2px solid rgba(66, 133, 244, 0.3);
+  border-top-color: #4285f4;
+  border-right-color: rgba(66, 133, 244, 0.55);
   border-radius: 50%;
   animation: map-spin 0.7s linear infinite;
+  box-shadow: 0 0 18px rgba(66, 133, 244, 0.2);
 }
 
 .map-loading-overlay .map-loading-text {
   font-weight: 500;
+}
+
+.map-locate-me-btn {
+  position: absolute;
+  z-index: 35;
+  right: 10px;
+  bottom: 10px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  color: #5f6368;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 1px 4px rgba(60, 64, 67, 0.32),
+    0 2px 6px rgba(60, 64, 67, 0.15);
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.map-locate-me-btn:hover {
+  background: #f8f9fa;
+  color: #202124;
+  box-shadow:
+    0 2px 6px rgba(60, 64, 67, 0.28),
+    0 4px 12px rgba(60, 64, 67, 0.12);
+}
+
+.map-locate-me-btn:active {
+  background: #f1f3f4;
+}
+
+.map-locate-me-btn:focus-visible {
+  outline: 2px solid #4285f4;
+  outline-offset: 2px;
+}
+
+.map-locate-me-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
 }
 
 .map-edge-indicator {
@@ -1918,7 +2434,7 @@ async function handleCancelFacial() {
 }
 
 .map-edge-user {
-  color: #0ea5e9;
+  color: #4285f4;
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
 }
 
@@ -1954,14 +2470,16 @@ async function handleCancelFacial() {
 }
 
 .map-wrap-wrapper :deep(.map-bound-tooltip) {
-  background: rgba(255, 255, 255, 0.97);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #fff;
+  border: 1px solid rgba(32, 33, 36, 0.1);
   border-radius: 10px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.28), 0 2px 8px rgba(60, 64, 67, 0.12);
   padding: 0;
   font-size: 0.8125rem;
-  color: #334155;
-  white-space: nowrap;
+  color: #3c4043;
+  /* nowrap caused Leaflet to measure tooltips at ~0 width; long addresses then stacked one character per line */
+  white-space: normal;
+  box-sizing: border-box;
 }
 
 .map-wrap-wrapper :deep(.map-user-marker) {
@@ -1969,17 +2487,134 @@ async function handleCancelFacial() {
   border: none;
 }
 
+.map-wrap-wrapper :deep(.map-user-marker-root) {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-pulse) {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid rgba(66, 133, 244, 0.7);
+  animation: map-marker-pulse 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-pulse--delay) {
+  animation-delay: 0.9s;
+}
+
+@keyframes map-marker-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.15);
+    opacity: 0;
+  }
+}
+
 .map-wrap-wrapper :deep(.map-user-marker-wrap) {
+  position: relative;
+  z-index: 1;
   width: 40px;
   height: 40px;
   border-radius: 50%;
   overflow: hidden;
-  border: 3px solid #0ea5e9;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-  background: #e2e8f0;
+  border: 3px solid #4285f4;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+  background: #e8f0fe;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-arrow-wrap) {
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  width: 22px;
+  height: 22px;
+  margin-left: -11px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-arrow) {
+  width: 100%;
+  height: 100%;
+  color: #4285f4;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+  transform-origin: 50% 50%;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-arrow-svg) {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-root--geofence-out .map-user-marker-wrap) {
+  border-color: #ea4335;
+  box-shadow: 0 2px 8px rgba(234, 67, 53, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-root--geofence-in .map-user-marker-wrap) {
+  border-color: #34a853;
+  box-shadow: 0 2px 8px rgba(52, 168, 83, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-root--geofence-out .map-user-marker-pulse) {
+  border-color: rgba(234, 67, 53, 0.65);
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-root--geofence-in .map-user-marker-pulse) {
+  border-color: rgba(52, 168, 83, 0.58);
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-root--geofence-out .map-user-marker-initial) {
+  color: #c5221f;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-root--geofence-in .map-user-marker-initial) {
+  color: #137333;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-root--geofence-out .map-user-marker-arrow) {
+  color: #ea4335;
+}
+
+.map-wrap-wrapper :deep(.map-user-marker-root--geofence-in .map-user-marker-arrow) {
+  color: #34a853;
+}
+
+.map-geofence-float {
+  position: absolute;
+  z-index: 40;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  max-width: min(360px, calc(100% - 24px));
+  padding: 0.65rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #3c4043;
+  background: #fff;
+  border-radius: 8px;
+  border-left: 4px solid #ea4335;
+  box-shadow:
+    0 1px 2px rgba(60, 64, 67, 0.28),
+    0 4px 14px rgba(60, 64, 67, 0.12);
+  pointer-events: none;
+  text-align: center;
 }
 
 .map-wrap-wrapper :deep(.map-user-marker-img) {
@@ -1991,7 +2626,7 @@ async function handleCancelFacial() {
 .map-wrap-wrapper :deep(.map-user-marker-initial) {
   font-size: 1.125rem;
   font-weight: 700;
-  color: #0ea5e9;
+  color: #1967d2;
 }
 
 .map-wrap-wrapper :deep(.map-user-label-icon) {
@@ -2018,27 +2653,43 @@ async function handleCancelFacial() {
   font-size: 0.8125rem;
 }
 
-.map-wrap-wrapper :deep(.map-tooltip-address-hover) {
-  color: #64748b;
+.map-wrap-wrapper :deep(.map-tooltip-you .map-tooltip-address-only) {
+  display: block;
+  color: #5f6368;
   font-size: 0.75rem;
+  font-weight: 400;
   white-space: normal;
   word-break: break-word;
-  max-width: 240px;
-  display: block;
-  opacity: 0;
-  max-height: 0;
-  overflow: hidden;
-  transition: opacity 0.2s ease, max-height 0.3s ease, margin-top 0.2s ease;
-  margin-top: 0;
+  max-width: 260px;
+  text-align: center;
 }
 
-.map-wrap-wrapper :deep(.map-tooltip-address[title]) {
-  cursor: help;
+.map-wrap-wrapper :deep(.map-bound-tooltip-geofence) {
+  min-width: min(280px, calc(100vw - 48px));
+  max-width: min(320px, calc(100vw - 48px));
+  text-align: left;
+}
+
+.map-wrap-wrapper :deep(.map-bound-tooltip-geofence .map-tooltip-inner) {
+  align-items: stretch;
+  width: 100%;
+}
+
+.map-wrap-wrapper :deep(.map-tooltip-geofence-bind) {
+  display: block;
+  width: 100%;
+  color: #5f6368;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  text-align: center;
 }
 
 .you-are-here {
   font-weight: 600;
-  color: #0ea5e9;
+  color: #1a73e8;
 }
 
 .map-wrap-wrapper :deep(.map-bound-tooltip::before) {
@@ -2054,13 +2705,13 @@ async function handleCancelFacial() {
 }
 
 .map-wrap-wrapper :deep(.map-tooltip-inner strong) {
-  color: #0f172a;
+  color: #202124;
   font-weight: 600;
   font-size: 0.8125rem;
 }
 
 .map-wrap-wrapper :deep(.map-tooltip-inner span) {
-  color: #64748b;
+  color: #5f6368;
   font-size: 0.75rem;
 }
 
@@ -2068,6 +2719,23 @@ async function handleCancelFacial() {
   width: 100%;
   height: 320px;
   border-radius: 12px;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* Land chrome ~#F1F3F4; water reads cyan ~#AADAFF after tile + filter (Voyager + tuning). */
+.map-wrap-wrapper :deep(.leaflet-container) {
+  background: #f1f3f4;
+  font-family: system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+/*
+ * Push raster tiles toward Google Maps default: light land, bright cyan water (#AADAFF-ish),
+ * pastel park green (#C6E9AF-ish), crisp white roads.
+ */
+.map-wrap-wrapper :deep(.leaflet-tile-pane img.leaflet-tile) {
+  filter: brightness(1.08) saturate(1.26) contrast(1.04) hue-rotate(352deg);
+  image-rendering: auto;
 }
 
 @media (min-width: 1200px) {
@@ -2120,6 +2788,42 @@ async function handleCancelFacial() {
 .timeclock-page :deep(.leaflet-control-zoom),
 .timeclock-page :deep(.leaflet-control-attribution) {
   z-index: 20;
+}
+
+.timeclock-page :deep(.leaflet-control-zoom) {
+  border: none;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(60, 64, 67, 0.28), 0 2px 8px rgba(60, 64, 67, 0.12);
+}
+
+.timeclock-page :deep(.leaflet-control-zoom a) {
+  width: 40px;
+  height: 40px;
+  line-height: 38px;
+  font-size: 20px;
+  font-weight: 400;
+  color: #5f6368;
+  background: #fff;
+  border-bottom: 1px solid #e8eaed;
+}
+
+.timeclock-page :deep(.leaflet-control-zoom a:last-child) {
+  border-bottom: none;
+}
+
+.timeclock-page :deep(.leaflet-control-zoom a:hover) {
+  background: #f8f9fa;
+  color: #202124;
+}
+
+.timeclock-page :deep(.leaflet-bar a.leaflet-disabled) {
+  opacity: 0.35;
+}
+.timeclock-page :deep(.leaflet-tooltip.map-bound-tooltip) {
+  /* Leaflet sets white-space: nowrap on .leaflet-tooltip — breaks multi-line addresses into a narrow strip */
+  white-space: normal;
+  max-width: none;
 }
 .timeclock-page :deep(.leaflet-tooltip),
 .timeclock-page :deep(.leaflet-popup) {
@@ -2174,7 +2878,15 @@ async function handleCancelFacial() {
 .map-caption {
   font-size: 0.75rem;
   margin: 0;
+  padding: 0.5rem 0.85rem 0.55rem;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid rgba(32, 33, 36, 0.1);
+  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.28), 0 2px 8px rgba(60, 64, 67, 0.12);
+  line-height: 1.35;
+  color: #3c4043;
 }
+
 
 .branch-select {
   margin: 0.75rem 0 0;
