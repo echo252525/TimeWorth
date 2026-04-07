@@ -48,6 +48,8 @@ const locationOut = ref<{ lat: number; lng: number } | null>(null)
 const locationError = ref<string | null>(null)
 const clockOutConfirm = ref<{ outsideOffice?: boolean; outsideWfh?: boolean } | null>(null)
 const WFH_PICTURE_BUCKET = 'wfh_employee_picture'
+/** Face enrollment images; presence determines `employee.isregistered` (synced in this view). */
+const REGISTERED_FACE_BUCKET = 'registered_user_face'
 const wfhPhotoFile = ref<File | null>(null)
 const wfhPhotoPreviewUrl = ref<string | null>(null)
 const wfhPhotoError = ref<string | null>(null)
@@ -142,6 +144,47 @@ async function loadUserProfile() {
   }
 }
 
+function joinStoragePath(prefix: string, name: string): string {
+  return prefix ? `${prefix}/${name}` : name
+}
+
+/** True if at least one file exists under `userId/`; false if empty; null if listing failed. */
+async function registeredFaceBucketHasAnyFile(userId: string): Promise<boolean | null> {
+  const queue: string[] = [userId]
+  while (queue.length) {
+    const folder = queue.shift() ?? ''
+    let offset = 0
+    while (true) {
+      const { data, error: listError } = await supabase.storage
+        .from(REGISTERED_FACE_BUCKET)
+        .list(folder, { limit: 100, offset, sortBy: { column: 'name', order: 'asc' } })
+      if (listError) {
+        console.warn('[Timeclock] registered_user_face list failed', listError.message)
+        return null
+      }
+      const rows = data ?? []
+      for (const entry of rows) {
+        const fullPath = joinStoragePath(folder, entry.name)
+        if (entry.id) return true
+        queue.push(fullPath)
+      }
+      if (rows.length < 100) break
+      offset += rows.length
+    }
+  }
+  return false
+}
+
+/** Align `employee.isregistered` with storage (not the previous column value). */
+async function syncEmployeeIsregisteredFromFaceBucket(): Promise<void> {
+  const uid = user.value?.id
+  if (!uid) return
+  const hasFace = await registeredFaceBucketHasAnyFile(uid)
+  if (hasFace === null) return
+  const { error } = await supabase.from('employee').update({ isregistered: hasFace }).eq('id', uid)
+  if (error) console.error('[Timeclock] sync isregistered from face bucket', error.message)
+}
+
 const LIVENESS_RESUME_MAX_AGE_MS = 60 * 60 * 1000 // 1 hour
 
 function resumeLivenessRow(row: { id: string }) {
@@ -163,6 +206,7 @@ onMounted(() => {
   fetchToday()
   void loadOfficeGeofence()
   loadUserProfile()
+  void syncEmployeeIsregisteredFromFaceBucket()
   nextTick(() => { if (mapContainer.value) initMap() })
   startLiveLocationWatch()
   fetchLocationOnce()
@@ -1164,6 +1208,7 @@ async function selectModalityAndStart(mod: WorkModality) {
     }
   }
   if (workModality.value === 'office' && branch) {
+    await syncEmployeeIsregisteredFromFaceBucket()
     await startLivenessVerification()
   }
 }
