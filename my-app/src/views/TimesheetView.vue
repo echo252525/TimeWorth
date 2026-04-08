@@ -34,8 +34,8 @@ type TimeFilter = 'all' | 'undertime' | 'enough' | 'overtime'
 const timeFilter = ref<TimeFilter>('all')
 
 // Date filter (Today, Yesterday, Last 7 Days, Last Month, Custom)
-type DateFilter = 'today' | 'yesterday' | 'last7Days' | 'lastMonth' | 'custom'
-const dateFilter = ref<DateFilter>('lastMonth')
+type DateFilter = 'all' | 'today' | 'yesterday' | 'last7Days' | 'lastMonth' | 'custom'
+const dateFilter = ref<DateFilter>('all')
 const customStartDate = ref<string>('')
 const customEndDate = ref<string>('')
 const showCustomDateModal = ref(false)
@@ -262,6 +262,12 @@ function getDateRange() {
   const end = new Date()
   end.setHours(23, 59, 59, 999)
   const start = new Date(end)
+
+  if (dateFilter.value === 'all') {
+    const allStart = new Date(0)
+    allStart.setHours(0, 0, 0, 0)
+    return { start: allStart.toISOString(), end: end.toISOString() }
+  }
   
   if (dateFilter.value === 'custom' && customStartDate.value && customEndDate.value) {
     const customStart = new Date(customStartDate.value)
@@ -315,6 +321,8 @@ function formatDateRange(): string {
 
 const dateFilterLabel = computed(() => {
   switch (dateFilter.value) {
+    case 'all':
+      return 'All'
     case 'today':
       return 'Today'
     case 'yesterday':
@@ -326,7 +334,7 @@ const dateFilterLabel = computed(() => {
     case 'custom':
       return formatDateRange() || 'Custom Range'
     default:
-      return 'Last Month'
+      return 'All'
   }
 })
 
@@ -648,7 +656,7 @@ interface TimesheetPdfEmp {
 
 /** Letterhead copy for exported PDFs (matches AdminTimesheetView). */
 const PDF_LETTERHEAD = {
-  brand: 'PCWorth',
+  brand: 'PC Worth',
   ownedByLabel: 'Owned and Operated by:',
   legalName: 'DRJ TECHNOLOGIES TRADING CORP.',
   address: '618 M Earnshaw Street, Sampaloc, Manila, Metro Manila 1008'
@@ -664,9 +672,6 @@ function buildPdfTableBodyFromRows(rows: AttendanceRow[]): string[][] {
       lunchIn: string
       lunchOut: string
       total: string
-      modality: string
-      travel: string
-      output: string
     }>
   > = {}
 
@@ -679,14 +684,11 @@ function buildPdfTableBodyFromRows(rows: AttendanceRow[]): string[][] {
       clockOut: formatTime12hApmFromStored(r.clock_out),
       lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
       lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
-      total: formatTotalTimeCompact(r.total_time),
-      modality: r.work_modality ? String(r.work_modality).toLowerCase() : '—',
-      travel: attendanceActivityLabel(r),
-      output: (r.output && String(r.output).trim()) || '—'
+      total: formatTotalTimeCompact(r.total_time)
     })
   }
 
-  const flat: Array<[string, string, string, string, string, string, string, string, string]> = []
+  const flat: Array<[string, string, string, string, string, string]> = []
   for (const [dateKey, groupRows] of Object.entries(map).sort(([a], [b]) =>
     a === '—' ? 1 : b === '—' ? -1 : new Date(b).getTime() - new Date(a).getTime()
   )) {
@@ -694,27 +696,21 @@ function buildPdfTableBodyFromRows(rows: AttendanceRow[]): string[][] {
       flat.push([
         dateKey,
         r.clockIn,
-        r.clockOut,
         r.lunchIn,
         r.lunchOut,
-        r.total,
-        r.modality,
-        r.travel,
-        r.output
+        r.clockOut,
+        r.total
       ])
     }
   }
 
-  return flat.map(([date, clockIn, clockOut, lunchIn, lunchOut, total, modality, travel, output]) => [
+  return flat.map(([date, clockIn, lunchIn, lunchOut, clockOut, total]) => [
     date,
     clockIn,
-    clockOut,
     lunchIn,
     lunchOut,
-    total,
-    modality,
-    travel,
-    output
+    clockOut,
+    total
   ])
 }
 
@@ -788,7 +784,7 @@ function createTimesheetPdfDocument(
 
   autoTable(doc, {
     head: [
-      ['Date', 'Clock in', 'Clock out', 'Lunch In', 'Lunch Out', 'Total Hours', 'Modality', 'Activity', 'Output']
+      ['DATE', 'CLOCK IN', 'LUNCH IN', 'LUNCH OUT', 'CLOCK OUT', 'TOTAL HOURS']
     ],
     body: tableBody,
     startY: tableStartY,
@@ -1476,9 +1472,7 @@ async function confirmEditRequest() {
                 <div class="th-filter-wrap">
                   <span class="th-column-label th-column-label--date">
                     Date
-                    <template v-if="dateFilter !== 'lastMonth'">
-                      <span class="th-filter-selection th-filter-selection--date"> · {{ dateFilterLabel }}</span>
-                    </template>
+                    <span class="th-filter-selection th-filter-selection--date"> · {{ dateFilterLabel }}</span>
                   </span>
                   <div ref="dateFilterTriggerRef" class="ts-filter-trigger-wrap">
                     <button
@@ -1499,6 +1493,16 @@ async function confirmEditRequest() {
                         role="listbox"
                         @click.stop
                       >
+                        <button
+                          type="button"
+                          class="period-option"
+                          :class="{ active: dateFilter === 'all' }"
+                          role="option"
+                          :aria-selected="dateFilter === 'all'"
+                          @click="selectDateFilter('all')"
+                        >
+                          All
+                        </button>
                         <button
                           type="button"
                           class="period-option"
