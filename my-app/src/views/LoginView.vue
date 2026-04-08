@@ -118,14 +118,19 @@ function dismissAccountModal() {
       </div>
       <div
         v-if="showEmailConfirmedBanner"
-        class="auth-success-banner"
-        role="status"
+        class="auth-modal-overlay"
+        role="dialog"
+        aria-modal="true"
         aria-live="polite"
+        aria-labelledby="email-confirmed-title"
       >
-        <p class="auth-success-banner__title">Email confirmed</p>
-        <p class="auth-success-banner__text">
-          You have successfully confirmed your email. You can now log in.
-        </p>
+        <div class="auth-modal-card">
+          <div class="auth-modal-badge">Success</div>
+          <h3 id="email-confirmed-title" class="auth-modal-title">Email confirmed</h3>
+          <p class="auth-modal-text">
+            You have successfully confirmed your email. You can now log in.
+          </p>
+        </div>
       </div>
       <div
         v-if="showPasswordResetBanner"
