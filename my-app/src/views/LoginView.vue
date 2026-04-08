@@ -140,9 +140,9 @@ function dismissAccountModal() {
       </div>
       <h2 class="auth-title"><strong>EMPLOYEE LOGIN</strong></h2>
       <form class="auth-form" @submit.prevent="onSubmit">
-        <div class="field"><label for="email">EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="name@gmail.com" autocomplete="email" /></div>
+        <div class="field"><label for="email">EMAIL <span class="required-asterisk">*</span></label><input id="email" v-model="form.email" type="email" required placeholder="name@gmail.com" autocomplete="email" /></div>
         <div class="field">
-          <label for="password">PASSWORD (Must be at least 6 characters)</label>
+          <label for="password">PASSWORD <span class="required-asterisk">*</span> (Must be at least 6 characters)</label>
           <div class="input-with-icon">
             <input
               id="password"
@@ -298,5 +298,9 @@ body.dark-mode .login-view .auth-modal-card {
 
 .login-view .auth-success-banner--spaced {
   margin-bottom: 1rem;
+}
+
+.login-view .required-asterisk {
+  color: #ef4444;
 }
 </style>

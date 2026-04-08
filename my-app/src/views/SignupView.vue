@@ -159,13 +159,13 @@
       </ol>
       <form class="auth-form signup-form-steps" @submit.prevent="onSubmit">
       <div ref="step1Panel" v-show="signupStep === 1" class="signup-step-panel">
-        <div class="field"><label for="first_name">FIRST NAME</label><input id="first_name" v-model="form.first_name" type="text" required placeholder="First Name" autocomplete="given-name" /></div>
+        <div class="field"><label for="first_name">FIRST NAME <span class="required-asterisk">*</span></label><input id="first_name" v-model="form.first_name" type="text" required placeholder="First Name" autocomplete="given-name" /></div>
         <div class="field"><label for="middle_initial">MIDDLE INITIAL (Optional)</label><input id="middle_initial" v-model="form.middle_initial" type="text" maxlength="8" placeholder="Middle Initial" autocomplete="additional-name" /></div>
-        <div class="field"><label for="last_name">LAST NAME</label><input id="last_name" v-model="form.last_name" type="text" required placeholder="Last Name" autocomplete="family-name" /></div>
+        <div class="field"><label for="last_name">LAST NAME <span class="required-asterisk">*</span></label><input id="last_name" v-model="form.last_name" type="text" required placeholder="Last Name" autocomplete="family-name" /></div>
       </div>
       <div ref="step2Panel" v-show="signupStep === 2" class="signup-step-panel">
         <div class="field">
-          <label for="position">COMPANY POSITION</label>
+          <label for="position">COMPANY POSITION <span class="required-asterisk">*</span></label>
           <select
             v-if="positionOptions.length"
             id="position"
@@ -186,13 +186,13 @@
             :disabled="positionsLoading"
           />
         </div>
-        <div class="field"><label for="empno">EMPLOYEE NO. (Enter N/A if not available)</label><input id="empno" v-model="form.employee_no" type="text" required autocomplete="off" placeholder="PCW00000" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
-        <div class="field"><label for="phone">PHONE NUMBER</label><input id="phone" v-model="form.phone_number" type="tel" required autocomplete="tel" placeholder="09XXXXXXXXX" /></div>
-        <div class="field"><label for="email">EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="name@gmail.com" autocomplete="email" /></div>
+        <div class="field"><label for="empno">EMPLOYEE NO. <span class="required-asterisk">*</span> (Enter N/A if not available)</label><input id="empno" v-model="form.employee_no" type="text" required autocomplete="off" placeholder="PCW00000" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
+        <div class="field"><label for="phone">PHONE NUMBER <span class="required-asterisk">*</span></label><input id="phone" v-model="form.phone_number" type="tel" required autocomplete="tel" placeholder="09XXXXXXXXX" /></div>
+        <div class="field"><label for="email">EMAIL <span class="required-asterisk">*</span></label><input id="email" v-model="form.email" type="email" required placeholder="name@gmail.com" autocomplete="email" /></div>
       </div>
       <div v-show="signupStep === 3" class="signup-step-panel">
         <div class="field">
-          <label for="password">PASSWORD (Must be at least 6 characters)</label>
+          <label for="password">PASSWORD <span class="required-asterisk">*</span> (Must be at least 6 characters)</label>
           <div class="input-with-icon">
             <input
               id="password"
@@ -223,7 +223,7 @@
           </div>
         </div>
         <div class="field">
-          <label for="confirmPassword">CONFIRM PASSWORD</label>
+          <label for="confirmPassword">CONFIRM PASSWORD <span class="required-asterisk">*</span></label>
           <div class="input-with-icon">
             <input
               id="confirmPassword"
@@ -324,5 +324,9 @@ body.dark-mode .signup-view .auth-page {
 .select-input:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.required-asterisk {
+  color: #ef4444;
 }
 </style>

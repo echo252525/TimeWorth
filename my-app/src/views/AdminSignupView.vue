@@ -119,7 +119,7 @@
       <form class="auth-form signup-form-steps" @submit.prevent="onSubmit">
       <div ref="step1Panel" v-show="signupStep === 1" class="signup-step-panel">
         <div class="field">
-          <label for="first_name">FIRST NAME</label>
+          <label for="first_name">FIRST NAME <span class="required-asterisk">*</span></label>
           <input
             id="first_name"
             v-model="form.first_name"
@@ -141,7 +141,7 @@
           />
         </div>
         <div class="field">
-          <label for="last_name">LAST NAME</label>
+          <label for="last_name">LAST NAME <span class="required-asterisk">*</span></label>
           <input
             id="last_name"
             v-model="form.last_name"
@@ -153,13 +153,13 @@
         </div>
       </div>
       <div ref="step2Panel" v-show="signupStep === 2" class="signup-step-panel">
-        <div class="field"><label for="employeeid">Employee ID</label><input id="employeeid" v-model="form.employeeid" type="text" required placeholder="Your employee ID" autocomplete="off" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
-        <div class="field"><label for="position">Position</label><input id="position" v-model="form.position_in_company" type="text" required placeholder="e.g. Admin" autocomplete="organization-title" /></div>
-        <div class="field"><label for="email">Email</label><input id="email" v-model="form.email" type="email" required placeholder="admin@company.com" autocomplete="email" /></div>
+        <div class="field"><label for="employeeid">Employee ID <span class="required-asterisk">*</span></label><input id="employeeid" v-model="form.employeeid" type="text" required placeholder="Your employee ID" autocomplete="off" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
+        <div class="field"><label for="position">Position <span class="required-asterisk">*</span></label><input id="position" v-model="form.position_in_company" type="text" required placeholder="e.g. Admin" autocomplete="organization-title" /></div>
+        <div class="field"><label for="email">Email <span class="required-asterisk">*</span></label><input id="email" v-model="form.email" type="email" required placeholder="admin@company.com" autocomplete="email" /></div>
       </div>
       <div v-show="signupStep === 3" class="signup-step-panel">
         <div class="field">
-          <label for="password">Password</label>
+          <label for="password">Password <span class="required-asterisk">*</span></label>
           <div class="input-with-icon">
             <input
               id="password"
@@ -190,7 +190,7 @@
           </div>
         </div>
         <div class="field">
-          <label for="confirmPassword">Confirm password</label>
+          <label for="confirmPassword">Confirm password <span class="required-asterisk">*</span></label>
           <div class="input-with-icon">
             <input
               id="confirmPassword"
@@ -251,6 +251,10 @@ body.dark-mode .signup-view .auth-page {
 }
 </style>
 <style scoped>
+.required-asterisk {
+  color: #ef4444;
+}
+
 .signup-step-label {
   text-align: center;
   margin: 0 0 0.75rem;
