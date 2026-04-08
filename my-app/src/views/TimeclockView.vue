@@ -64,9 +64,16 @@ const wfhVideoMetaReady = ref(false)
 // Liveness verification state
 const livenessVerificationId = ref<string | null>(null)
 const facialScanSuccess = ref(false)
+/** Success overlay after remote facial terminal triggers clock-out (poll detects `facial_clock_out`). */
+const autoFacialClockOutSuccess = ref(false)
+/** Whether `location_out` was saved from GPS for that auto clock-out. */
+const autoFacialClockOutSavedLocation = ref(false)
 const livenessLoading = ref(false)
 const livenessError = ref<string | null>(null)
 const clockOutLoading = ref(false)
+/** While clocked in with a facial row, poll for remote clock-out flag (hardware / facial terminal). */
+let facialAutoClockOutPollId: number | null = null
+const facialAutoClockOutInFlight = ref(false)
 let livenessRealtimeChannel: ReturnType<typeof supabase.channel> | null = null
 
 const wfhFetchingLocation = ref(false)
@@ -342,6 +349,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  stopFacialClockOutPoll()
+  autoFacialClockOutSuccess.value = false
+  autoFacialClockOutSavedLocation.value = false
   closeLivenessRealtime()
   cancelUserMarkerMoveAnimation()
   if (liveLocationIntervalId !== null) {
@@ -999,10 +1009,70 @@ watch(
   { immediate: true }
 )
 
+function stopFacialClockOutPoll() {
+  if (facialAutoClockOutPollId != null) {
+    clearInterval(facialAutoClockOutPollId)
+    facialAutoClockOutPollId = null
+  }
+}
+
+async function tryAutoClockOutFromFacialFlag() {
+  if (facialAutoClockOutInFlight.value || isLoading.value) return
+  if (!isClockedIn.value) return
+  if (step.value === 'facial_out') return
+  const tr = todayRecord.value
+  if (!tr?.facial_verifications_id) return
+  const { data, error: qErr } = await supabase
+    .from('facial_verifications')
+    .select('facial_clock_out')
+    .eq('id', tr.facial_verifications_id)
+    .maybeSingle()
+  if (qErr || !data) return
+  if ((data as { facial_clock_out?: boolean }).facial_clock_out !== true) return
+  facialAutoClockOutInFlight.value = true
+  try {
+    let savedLocation = false
+    try {
+      const loc = await getLocation()
+      locationOut.value = loc
+      const locStr = locationString(loc)
+      if (locStr) {
+        await clockOut(locStr, null)
+        savedLocation = true
+      } else {
+        await clockOut(undefined, null)
+      }
+    } catch {
+      await clockOut(undefined, null)
+    }
+    if (isClockedIn.value) return
+    step.value = 'idle'
+    clockOutOutputDraft.value = ''
+    clockOutOutputToSave.value = null
+    showClockOutOutputPanel.value = false
+    clockOutConfirm.value = null
+    autoFacialClockOutSavedLocation.value = savedLocation
+    autoFacialClockOutSuccess.value = true
+    setTimeout(() => {
+      autoFacialClockOutSuccess.value = false
+      autoFacialClockOutSavedLocation.value = false
+      locationOut.value = null
+    }, 1800)
+  } finally {
+    facialAutoClockOutInFlight.value = false
+  }
+}
+
 watch(
-  isClockedIn,
-  (in_) => {
-    if (in_ && step.value === 'idle') step.value = 'clocked_in'
+  [isClockedIn, () => todayRecord.value?.facial_verifications_id ?? null],
+  ([clocked, vid]) => {
+    if (clocked && step.value === 'idle') step.value = 'clocked_in'
+    stopFacialClockOutPoll()
+    if (clocked && vid) {
+      facialAutoClockOutPollId = window.setInterval(() => {
+        void tryAutoClockOutFromFacialFlag()
+      }, 1000)
+    }
   },
   { immediate: true }
 )
@@ -1967,7 +2037,7 @@ async function handleCancelFacial() {
 
     <!-- Face scanning modal (clock in / clock out). Include facialScanSuccess so success overlay can show after step is clocked_in (timer visible behind lighter overlay). -->
     <div
-      v-if="step === 'facial' || step === 'facial_out' || facialScanSuccess"
+      v-if="step === 'facial' || step === 'facial_out' || facialScanSuccess || autoFacialClockOutSuccess"
       class="liveness-modal-overlay"
       :class="{ 'liveness-modal-overlay--post-clock-in': facialScanSuccess && step === 'clocked_in' }"
       aria-modal="true"
@@ -1976,7 +2046,7 @@ async function handleCancelFacial() {
     >
       <div class="liveness-modal facial-scan-modal">
         <video
-          v-if="!facialScanSuccess"
+          v-if="!facialScanSuccess && !autoFacialClockOutSuccess"
           class="liveness-icon liveness-face-id-video"
           src="/face-id.webm"
           autoplay
@@ -1987,15 +2057,31 @@ async function handleCancelFacial() {
         />
         <div v-else class="facial-success-block">
           <span class="facial-success-icon" aria-hidden="true">✓</span>
-          <p class="facial-success-msg">Scanned successfully</p>
+          <p class="facial-success-msg">
+            {{ autoFacialClockOutSuccess ? 'Successfully clocked out' : 'Scanned successfully' }}
+          </p>
         </div>
-        <h2 id="facial-modal-title" class="liveness-title">{{ facialScanSuccess ? 'Success' : 'Face verification' }}</h2>
+        <h2 id="facial-modal-title" class="liveness-title">
+          {{ facialScanSuccess || autoFacialClockOutSuccess ? 'Success' : 'Face verification' }}
+        </h2>
         <p class="liveness-description">
-          {{ facialScanSuccess
-            ? (step === 'facial_out' ? 'Clocking out…' : 'Proceeding to timer…')
-            : (step === 'facial' ? 'Verify at facial to clock in.' : 'Verify at facial to clock out.') }}
+          {{
+            autoFacialClockOutSuccess
+              ? autoFacialClockOutSavedLocation
+                ? 'Your clock-out was recorded with your current location.'
+                : 'Your clock-out has been recorded.'
+              : facialScanSuccess
+                ? (step === 'facial_out' ? 'Clocking out…' : 'Proceeding to timer…')
+                : (step === 'facial' ? 'Verify at facial to clock in.' : 'Verify at facial to clock out.')
+          }}
         </p>
-        <button v-if="!facialScanSuccess" type="button" class="btn liveness-cancel-btn" :disabled="cancelFacialLoading" @click="handleCancelFacial">
+        <button
+          v-if="!facialScanSuccess && !autoFacialClockOutSuccess"
+          type="button"
+          class="btn liveness-cancel-btn"
+          :disabled="cancelFacialLoading"
+          @click="handleCancelFacial"
+        >
           <span v-if="cancelFacialLoading" class="btn-loading-wrap">
             <span class="btn-loading-spinner liveness-cancel-spinner" aria-hidden="true"></span>
             <span>Cancelling…</span>
