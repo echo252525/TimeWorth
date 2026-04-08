@@ -10,7 +10,11 @@ import {
   InboxIcon
 } from '@heroicons/vue/24/outline'
 import supabase from '../lib/supabaseClient'
-import { getSignedProfileUrl } from '../composables/useAuth'
+import {
+  getSignedProfileUrl,
+  getSignedRegisteredFaceUrl,
+  revokeRegisteredFaceBlobUrl
+} from '../composables/useAuth'
 import {
   storedToRealInstant,
   getLocalDateString,
@@ -79,6 +83,8 @@ interface Emp {
   phone_number: string | null
   picture: string | null
   account_status: 'pending' | 'approved' | 'rejected' | null
+  /** Synced when face enrollment exists in `registered_user_face` storage. */
+  isregistered: boolean | null
 }
 
 interface PositionRow {
@@ -311,6 +317,7 @@ const anyEmpFilterMenuOpen = computed(
 
 const selectedEmployee = ref<Emp | null>(null)
 const profilePictureUrl = ref<string | null>(null)
+const registeredFaceUrl = ref<string | null>(null)
 const attendanceHistory = ref<AttendanceRecord[]>([])
 const modalLoading = ref(false)
 const statusUpdatingByUser = ref<Record<string, boolean>>({})
@@ -801,7 +808,7 @@ async function loadEmployees() {
   error.value = null
   const { data, error: err } = await supabase
     .from('employee')
-    .select('id, name, email, position_in_company, employee_no, phone_number, picture, account_status')
+    .select('id, name, email, position_in_company, employee_no, phone_number, picture, account_status, isregistered')
     .order('name')
   loading.value = false
   if (err) {
@@ -828,6 +835,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  revokeRegisteredFaceBlobUrl(registeredFaceUrl.value)
   if (attendanceRefreshTimer) clearInterval(attendanceRefreshTimer)
   if (leaveHoverTimer) clearTimeout(leaveHoverTimer)
   stopHoverTick()
@@ -872,12 +880,17 @@ watch(selectedEmployee, async (emp) => {
   console.log('[AdminEmployees] selectedEmployee watcher fired', {
     selectedId: emp?.id ?? null
   })
+  revokeRegisteredFaceBlobUrl(registeredFaceUrl.value)
   profilePictureUrl.value = null
+  registeredFaceUrl.value = null
   attendanceHistory.value = []
   if (!emp) return
   modalLoading.value = true
   try {
     profilePictureUrl.value = await getSignedProfileUrl(emp.picture)
+    if (emp.isregistered === true) {
+      registeredFaceUrl.value = await getSignedRegisteredFaceUrl(emp.id)
+    }
     const end = new Date()
     const start = new Date()
     start.setDate(start.getDate() - 7)
@@ -1382,6 +1395,19 @@ function formatDate(iso: string | null): string {
                 <dt>Employee no.</dt>
                 <dd>{{ selectedEmployee.employee_no ?? '—' }}</dd>
               </dl>
+              <div class="registered-face-section">
+                <h3 class="registered-face-title">Registered face</h3>
+                <template v-if="selectedEmployee.isregistered === true">
+                  <img
+                    v-if="registeredFaceUrl"
+                    :src="registeredFaceUrl"
+                    alt=""
+                    class="registered-face-img"
+                  />
+                  <p v-else class="muted registered-face-msg">No face image available.</p>
+                </template>
+                <p v-else class="muted registered-face-msg">Not registered yet.</p>
+              </div>
               <div v-if="isPendingAccount(selectedEmployee)" class="modal-account-actions">
                 <button
                   type="button"
@@ -2175,6 +2201,37 @@ body.light-mode .kpi-card-pending .kpi-icon {
 .profile-details dd {
   margin: 0.15rem 0 0;
   color: var(--text-primary);
+}
+.registered-face-section {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+  text-align: left;
+  max-width: 280px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.registered-face-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: center;
+}
+.registered-face-img {
+  display: block;
+  width: 100%;
+  max-width: 220px;
+  max-height: 220px;
+  margin: 0 auto;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--border-color);
+}
+.registered-face-msg {
+  margin: 0;
+  text-align: center;
+  font-size: 0.8125rem;
 }
 .history-section {
   padding: 1rem 1.5rem 1.5rem;

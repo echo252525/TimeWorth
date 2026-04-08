@@ -9,48 +9,67 @@ import {
   type AttendanceRow
 } from '../composables/useAttendance'
 import supabase from '../lib/supabaseClient'
-import { ChevronDownIcon } from '@heroicons/vue/24/outline'
+import {
+  ChevronDownIcon,
+  PencilSquareIcon,
+  UsersIcon,
+  UserGroupIcon,
+  PhotoIcon
+} from '@heroicons/vue/24/outline'
 
 const { adminProfile } = useAdminAuth()
 
-// Dashboard KPIs (today)
+function formatAdminRoleLabel(role: string | null | undefined): string {
+  const r = String(role ?? '').trim().toLowerCase()
+  if (r === 'superadmin') return 'Superadmin'
+  if (r === 'admin') return 'Admin'
+  if (r === 'pending') return 'Pending review'
+  return role?.trim() || 'Administrator'
+}
+
+// Dashboard KPIs (today): ratio vs total employees
 const kpiLoading = ref(true)
-const kpiTotalPresent = ref(0)
-const kpiTotalAbsent = ref(0)
-const kpiTotalWorkingHours = ref(0)
-const kpiOnLunch = ref(0)
+/** Distinct employees with at least one clock-in today. */
+const kpiWithClockInToday = ref(0)
+/** Employees with no clock-in record today. */
+const kpiWithoutClockInToday = ref(0)
+const kpiEmployeeTotal = ref(0)
+/** All rows in `attendance_edit_requests`. */
+const kpiEditRequestsTotal = ref(0)
+/** `admin` rows with role pending (awaiting approval). */
+const kpiPendingAdmins = ref(0)
+/** `employee` rows with account_status pending. */
+const kpiPendingEmployees = ref(0)
+/** Employees with `isregistered` true (face enrollment). */
+const kpiRegisteredFaceCount = ref(0)
 
 async function fetchKpis() {
   kpiLoading.value = true
   const today = todayStr()
   const start = `${today}T00:00:00.000Z`
   const end = `${today}T23:59:59.999Z`
-  const [empRes, attRes] = await Promise.all([
-    supabase.from('employee').select('id'),
-    supabase.from('attendance').select('user_id, clock_out, total_time, lunch_break_start, lunch_break_end')
-      .gte('clock_in', start)
-      .lte('clock_in', end)
+  const [empRes, attRes, editReqRes, pendingAdminsRes, pendingEmpRes] = await Promise.all([
+    supabase.from('employee').select('isregistered'),
+    supabase.from('attendance').select('user_id').gte('clock_in', start).lte('clock_in', end),
+    supabase.from('attendance_edit_requests').select('id', { count: 'exact', head: true }),
+    supabase.from('admin').select('id', { count: 'exact', head: true }).eq('role', 'pending'),
+    supabase.from('employee').select('id', { count: 'exact', head: true }).eq('account_status', 'pending')
   ])
-  const totalEmployees = Array.isArray(empRes.data) ? empRes.data.length : 0
-  const rows = (attRes.data ?? []) as { user_id: string; clock_out: string | null; total_time: string | null; lunch_break_start: string | null; lunch_break_end: string | null }[]
-  const clockedInNow = rows.filter(r => !r.clock_out).length
-  const usersWithAttendanceToday = new Set(rows.map(r => r.user_id)).size
-  const absent = Math.max(0, totalEmployees - usersWithAttendanceToday)
-  let totalSeconds = 0
-  for (const r of rows) {
-    totalSeconds += parseIntervalToSeconds(r.total_time)
-  }
-  const onLunch = rows.filter(r => !r.clock_out && r.lunch_break_start && !r.lunch_break_end).length
-  kpiTotalPresent.value = clockedInNow
-  kpiTotalAbsent.value = absent
-  kpiTotalWorkingHours.value = Math.round((totalSeconds / 3600) * 100) / 100
-  kpiOnLunch.value = onLunch
-  kpiLoading.value = false
-}
+  const emps = (empRes.data ?? []) as { isregistered: boolean | null }[]
+  const totalEmployees = emps.length
+  const registeredCount = emps.filter((e) => e.isregistered === true).length
+  kpiRegisteredFaceCount.value = empRes.error ? 0 : registeredCount
 
-function formatKpiHours(h: number): string {
-  if (h < 0.01) return '0.00'
-  return h.toFixed(2)
+  const rows = (attRes.data ?? []) as { user_id: string }[]
+  const usersWithClockInToday = new Set(rows.map((r) => r.user_id)).size
+  const without = Math.max(0, totalEmployees - usersWithClockInToday)
+  kpiEmployeeTotal.value = totalEmployees
+  kpiWithClockInToday.value = usersWithClockInToday
+  kpiWithoutClockInToday.value = without
+  kpiEditRequestsTotal.value = editReqRes.error ? 0 : editReqRes.count ?? 0
+  kpiPendingAdmins.value = pendingAdminsRes.error ? 0 : pendingAdminsRes.count ?? 0
+  kpiPendingEmployees.value = pendingEmpRes.error ? 0 : pendingEmpRes.count ?? 0
+  kpiLoading.value = false
 }
 
 // Map hero – default date is today; status-based pins when viewing a date
@@ -778,39 +797,89 @@ onUnmounted(() => {
 
 <template>
   <div class="page">
-    <section class="admin-kpis">
+    <section
+      class="admin-home-welcome"
+      :class="{ 'admin-home-welcome--superadmin': adminProfile?.role === 'superadmin' }"
+      aria-label="Welcome"
+    >
+      <h1 class="admin-home-welcome-title">Welcome, {{ adminProfile?.name?.trim() || 'Admin' }}</h1>
+      <p class="admin-home-welcome-role">{{ formatAdminRoleLabel(adminProfile?.role) }}</p>
+    </section>
+
+    <div class="admin-kpi-dashboard">
       <div v-if="kpiLoading" class="admin-kpis-loading">Loading…</div>
       <template v-else>
-        <div class="admin-kpi-card">
-          <div class="admin-kpi-icon admin-kpi-icon-green" aria-hidden="true">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+        <section class="admin-kpis" aria-label="Today’s attendance overview">
+          <div class="admin-kpi-card">
+            <div class="admin-kpi-icon admin-kpi-icon-green" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+            </div>
+            <div class="admin-kpi-value admin-kpi-value--ratio">
+              <span class="admin-kpi-num">{{ kpiWithClockInToday }}</span><span class="admin-kpi-slash">/</span><span class="admin-kpi-den">{{ kpiEmployeeTotal }}</span>
+            </div>
+            <div class="admin-kpi-label">Clocked in today</div>
+            <p class="admin-kpi-hint">Employees with a clock-in entry today · total employees {{ kpiEmployeeTotal }}</p>
           </div>
-          <div class="admin-kpi-value">{{ kpiTotalPresent }}</div>
-          <div class="admin-kpi-label">Total present</div>
-        </div>
-        <div class="admin-kpi-card">
-          <div class="admin-kpi-icon admin-kpi-icon-purple" aria-hidden="true">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>
+          <div class="admin-kpi-card">
+            <div class="admin-kpi-icon admin-kpi-icon-purple" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>
+            </div>
+            <div class="admin-kpi-value admin-kpi-value--ratio">
+              <span class="admin-kpi-num">{{ kpiWithoutClockInToday }}</span><span class="admin-kpi-slash">/</span><span class="admin-kpi-den">{{ kpiEmployeeTotal }}</span>
+            </div>
+            <div class="admin-kpi-label">No clock-in today</div>
+            <p class="admin-kpi-hint">No attendance record with clock-in today · total employees {{ kpiEmployeeTotal }}</p>
           </div>
-          <div class="admin-kpi-value">{{ kpiTotalAbsent }}</div>
-          <div class="admin-kpi-label">Total absent</div>
-        </div>
-        <div class="admin-kpi-card">
-          <div class="admin-kpi-icon admin-kpi-icon-blue" aria-hidden="true">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </section>
+
+        <section class="admin-kpis admin-kpis--queue" aria-label="Edit requests and pending accounts">
+          <router-link class="admin-kpi-card admin-kpi-card--link" to="/admin/edit-requests">
+            <div class="admin-kpi-icon admin-kpi-icon-amber" aria-hidden="true">
+              <PencilSquareIcon class="admin-kpi-hero-icon" />
+            </div>
+            <div class="admin-kpi-value">{{ kpiEditRequestsTotal }}</div>
+            <div class="admin-kpi-label">Edit requests (total)</div>
+            <p class="admin-kpi-hint">All attendance edit request records</p>
+            <span class="admin-kpi-link-hint">Open edit requests →</span>
+          </router-link>
+          <router-link class="admin-kpi-card admin-kpi-card--link" to="/admin/admins">
+            <div class="admin-kpi-icon admin-kpi-icon-orange" aria-hidden="true">
+              <UsersIcon class="admin-kpi-hero-icon" />
+            </div>
+            <div class="admin-kpi-value">{{ kpiPendingAdmins }}</div>
+            <div class="admin-kpi-label">Pending admins</div>
+            <p class="admin-kpi-hint">Admin accounts awaiting role approval</p>
+            <span class="admin-kpi-link-hint">Open admins →</span>
+          </router-link>
+          <router-link class="admin-kpi-card admin-kpi-card--link" to="/admin/employees">
+            <div class="admin-kpi-icon admin-kpi-icon-sky" aria-hidden="true">
+              <UserGroupIcon class="admin-kpi-hero-icon" />
+            </div>
+            <div class="admin-kpi-value">{{ kpiPendingEmployees }}</div>
+            <div class="admin-kpi-label">Pending employees</div>
+            <p class="admin-kpi-hint">Employee signups awaiting approval</p>
+            <span class="admin-kpi-link-hint">Open employees →</span>
+          </router-link>
+        </section>
+
+        <section class="admin-kpis admin-kpis--face" aria-label="Face registration">
+          <div class="admin-kpi-card admin-kpi-card--face-wide">
+            <div class="admin-kpi-face-head">
+              <div class="admin-kpi-icon admin-kpi-icon-teal" aria-hidden="true">
+                <PhotoIcon class="admin-kpi-hero-icon" />
+              </div>
+              <div class="admin-kpi-face-head-text">
+                <div class="admin-kpi-value admin-kpi-value--ratio">
+                  <span class="admin-kpi-num">{{ kpiRegisteredFaceCount }}</span><span class="admin-kpi-slash">/</span><span class="admin-kpi-den">{{ kpiEmployeeTotal }}</span>
+                </div>
+                <div class="admin-kpi-label">Face registered</div>
+              </div>
+            </div>
+            <router-link class="admin-kpi-link-hint admin-kpi-link-hint--block" to="/admin/employees">View employees →</router-link>
           </div>
-          <div class="admin-kpi-value">{{ formatKpiHours(kpiTotalWorkingHours) }}</div>
-          <div class="admin-kpi-label">Total working hours</div>
-        </div>
-        <div class="admin-kpi-card">
-          <div class="admin-kpi-icon admin-kpi-icon-orange" aria-hidden="true">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-          </div>
-          <div class="admin-kpi-value">{{ kpiOnLunch }}</div>
-          <div class="admin-kpi-label">On lunch</div>
-        </div>
+        </section>
       </template>
-    </section>
+    </div>
 
     <section class="hero-map-section">
       <h2 class="hero-map-title fw-bold">Employee Locations</h2>
@@ -997,31 +1066,165 @@ onUnmounted(() => {
 
 <style scoped>
 .page { width: 100%; max-width: 100%; }
-.page h1 { margin: 0 0 2rem; font-size: 1.5rem; font-weight: 600; }
 .muted { color: var(--text-secondary); font-size: 0.9375rem; margin: 0 0 1rem; }
 .intro { margin-bottom: 0.5rem; }
+
+.admin-home-welcome {
+  margin-bottom: 1.25rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 16px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-secondary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.admin-home-welcome-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.admin-home-welcome-role {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.admin-home-welcome--superadmin {
+  background: linear-gradient(125deg, #e8c547 0%, #d4a012 42%, #c99506 100%);
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 10px 28px rgba(180, 134, 11, 0.38);
+}
+
+.admin-home-welcome--superadmin .admin-home-welcome-title,
+.admin-home-welcome--superadmin .admin-home-welcome-role {
+  color: #1a1508;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.admin-kpi-dashboard {
+  margin-bottom: 1.5rem;
+}
+
+.admin-kpi-dashboard .admin-kpis-loading {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 1.5rem;
+}
 
 .admin-kpis {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
-  margin-bottom: 1.5rem;
 }
-@media (min-width: 900px) {
-  .admin-kpis {
-    grid-template-columns: repeat(4, 1fr);
+
+.admin-kpis--queue {
+  margin-top: 0.85rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.admin-kpis--face {
+  margin-top: 0.85rem;
+  grid-template-columns: 1fr;
+}
+
+@media (max-width: 960px) {
+  .admin-kpis--queue {
+    grid-template-columns: 1fr;
   }
 }
-.admin-kpis-loading { grid-column: 1 / -1; text-align: center; color: var(--text-secondary); padding: 1.5rem; }
-.admin-kpi-card { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 14px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.admin-kpi-card { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 14px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.35rem; }
 .admin-kpi-icon { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #fff; }
 .admin-kpi-icon svg { width: 24px; height: 24px; color: currentColor; }
 .admin-kpi-icon-green { background: rgba(34, 197, 94, 0.25); border: 1px solid rgba(34, 197, 94, 0.5); }
 .admin-kpi-icon-purple { background: rgba(168, 85, 247, 0.25); border: 1px solid rgba(168, 85, 247, 0.5); }
-.admin-kpi-icon-blue { background: rgba(59, 130, 246, 0.25); border: 1px solid rgba(59, 130, 246, 0.5); }
-.admin-kpi-icon-orange { background: rgba(249, 115, 22, 0.25); border: 1px solid rgba(249, 115, 22, 0.5); }
+.admin-kpi-icon-amber { background: rgba(245, 158, 11, 0.22); border: 1px solid rgba(245, 158, 11, 0.45); color: #d97706; }
+.admin-kpi-icon-orange { background: rgba(249, 115, 22, 0.22); border: 1px solid rgba(249, 115, 22, 0.45); color: #ea580c; }
+.admin-kpi-icon-sky { background: rgba(14, 165, 233, 0.2); border: 1px solid rgba(14, 165, 233, 0.45); color: #0284c7; }
+.admin-kpi-icon-teal { background: rgba(20, 184, 166, 0.2); border: 1px solid rgba(20, 184, 166, 0.45); color: #0d9488; }
+.admin-kpi-card--face-wide {
+  grid-column: 1 / -1;
+}
+.admin-kpi-face-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+}
+.admin-kpi-face-head-text {
+  flex: 1;
+  min-width: 0;
+}
+.admin-kpi-link-hint--block {
+  display: inline-block;
+  margin-top: 0.65rem;
+  text-decoration: none;
+}
+.admin-kpi-link-hint--block:hover {
+  text-decoration: underline;
+}
+.admin-kpi-hero-icon {
+  width: 24px;
+  height: 24px;
+}
+.admin-kpi-card--link {
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s;
+}
+.admin-kpi-card--link:hover {
+  border-color: rgba(56, 189, 248, 0.45);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+}
+.admin-kpi-card--link:focus-visible {
+  outline: 2px solid var(--accent, #38bdf8);
+  outline-offset: 2px;
+}
+.admin-kpi-link-hint {
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent, #0ea5e9);
+}
 .admin-kpi-value { font-size: 1.75rem; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
-.admin-kpi-label { font-size: 0.8125rem; color: var(--text-secondary); }
+.admin-kpi-value--ratio {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0;
+  font-variant-numeric: tabular-nums;
+}
+.admin-kpi-num {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+.admin-kpi-slash {
+  margin: 0 0.1rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+.admin-kpi-den {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+.admin-kpi-label { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
+.admin-kpi-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 560px) {
+  .admin-kpis {
+    grid-template-columns: 1fr;
+  }
+}
 
 .hero-map-section { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 16px; padding: 1.25rem; margin-bottom: 1.5rem; }
 .hero-map-header { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-bottom: 1rem; }

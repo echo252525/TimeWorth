@@ -14,6 +14,38 @@ interface EmployeeSignup {
 }
 
 const BUCKET = 'employee_profile'
+/** Face enrollment: `registered_user_face` / `{userId}/face.jpg`. */
+const REGISTERED_FACE_BUCKET = 'registered_user_face'
+const REGISTERED_FACE_FILENAME = 'face.jpg'
+
+function registeredFaceStoragePath(userId: string): string | null {
+  const uid = userId.trim()
+  if (!uid) return null
+  return `${uid}/${REGISTERED_FACE_FILENAME}`
+}
+
+/** Revoke a URL returned by `getSignedRegisteredFaceUrl` when it uses a blob: fallback. */
+export function revokeRegisteredFaceBlobUrl(url: string | null | undefined): void {
+  if (url && url.startsWith('blob:')) URL.revokeObjectURL(url)
+}
+
+/**
+ * Private bucket: object key `{userId}/face.jpg`. Prefer signed URL; if that fails, download → blob
+ * (caller must `revokeRegisteredFaceBlobUrl` when discarding).
+ */
+export async function getSignedRegisteredFaceUrl(userId: string, expiresIn = 3600): Promise<string | null> {
+  const path = registeredFaceStoragePath(userId)
+  if (!path) return null
+
+  const bucket = supabase.storage.from(REGISTERED_FACE_BUCKET)
+  const { data: signed, error: signErr } = await bucket.createSignedUrl(path, expiresIn)
+  if (!signErr && signed?.signedUrl) return signed.signedUrl
+
+  const { data: blob, error: dlErr } = await bucket.download(path)
+  if (!dlErr && blob) return URL.createObjectURL(blob)
+  return null
+}
+
 export type PasswordResetOrigin = 'employee' | 'admin'
 const DEPLOYED_APP_URL = 'https://time-worth-gk3a.vercel.app'
 
