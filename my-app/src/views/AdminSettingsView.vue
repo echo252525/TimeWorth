@@ -364,10 +364,6 @@ async function updateRole(id: string, roleVal: string) {
                       <span class="summary-value">{{ name || '—' }}</span>
                     </div>
                     <div class="summary-item">
-                      <span class="summary-label">Position</span>
-                      <span class="summary-value">{{ positionInCompany || '—' }}</span>
-                    </div>
-                    <div class="summary-item">
                       <span class="summary-label">Employee ID</span>
                       <span class="summary-value">{{ employeeid || '—' }}</span>
                     </div>
@@ -395,16 +391,6 @@ async function updateRole(id: string, roleVal: string) {
                           type="text"
                           autocomplete="name"
                           placeholder="Your name"
-                        />
-                      </div>
-                      <div class="summary-item personal-form__cell">
-                        <label class="summary-label" for="admin-position">Position</label>
-                        <input
-                          id="admin-position"
-                          v-model="positionInCompany"
-                          type="text"
-                          autocomplete="organization-title"
-                          placeholder="e.g. Office manager"
                         />
                       </div>
                       <div class="summary-item personal-form__cell">

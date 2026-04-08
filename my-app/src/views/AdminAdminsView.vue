@@ -7,7 +7,7 @@ import { useAdminAuth, getSignedAdminProfileUrl, type AdminRow } from '../compos
 
 type AdminListRow = Pick<
   AdminRow,
-  'id' | 'name' | 'email' | 'employeeid' | 'position_in_company' | 'picture' | 'role' | 'created_at' | 'updated_at'
+  'id' | 'name' | 'email' | 'employeeid' | 'picture' | 'role' | 'created_at' | 'updated_at'
 >
 
 const list = ref<AdminListRow[]>([])
@@ -42,7 +42,6 @@ const filteredList = computed(() => {
       a.name.toLowerCase().includes(q)
       || a.email.toLowerCase().includes(q)
       || a.employeeid.toLowerCase().includes(q)
-      || a.position_in_company.toLowerCase().includes(q)
       || a.role.toLowerCase().includes(q)
     )
   }
@@ -197,7 +196,7 @@ async function loadAdmins() {
   error.value = null
   const { data, error: err } = await supabase
     .from('admin')
-    .select('id, name, email, employeeid, position_in_company, picture, role, created_at, updated_at')
+    .select('id, name, email, employeeid, picture, role, created_at, updated_at')
     .order('name')
   loading.value = false
   if (err) {
@@ -312,7 +311,6 @@ function formatDateTime(iso: string | null) {
                 <th scope="col">Employee ID</th>
                 <th scope="col">Role</th>
                 <th scope="col">Email</th>
-                <th scope="col">Position</th>
               </tr>
             </thead>
             <tbody>
@@ -337,7 +335,6 @@ function formatDateTime(iso: string | null) {
                   <span class="role-pill" :class="'role-pill--' + a.role">{{ roleLabel(a.role) }}</span>
                 </td>
                 <td class="td-muted">{{ a.email }}</td>
-                <td class="td-muted">{{ a.position_in_company || '—' }}</td>
               </tr>
             </tbody>
           </table>
@@ -367,8 +364,6 @@ function formatDateTime(iso: string | null) {
                 <dd>{{ selectedAdmin.email }}</dd>
                 <dt>Employee ID</dt>
                 <dd>{{ selectedAdmin.employeeid || '—' }}</dd>
-                <dt>Position</dt>
-                <dd>{{ selectedAdmin.position_in_company || '—' }}</dd>
                 <dt>Role</dt>
                 <dd>{{ roleLabel(selectedAdmin.role) }}</dd>
                 <dt>Created</dt>

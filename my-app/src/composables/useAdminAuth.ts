@@ -137,7 +137,8 @@ export function useAdminAuth() {
   async function signUpAdmin(p: {
     name: string
     employeeid: string
-    position_in_company: string
+    /** Kept optional for backward compatibility with older callers. */
+    position_in_company?: string
     email: string
     password: string
   }) {
@@ -158,7 +159,6 @@ export function useAdminAuth() {
       id: authData.user.id,
       name: p.name,
       employeeid: p.employeeid.trim(),
-      position_in_company: p.position_in_company,
       email: p.email,
       role: 'pending'
     })

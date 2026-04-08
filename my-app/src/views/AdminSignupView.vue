@@ -15,7 +15,6 @@
     middle_initial: '',
     last_name: '',
     employeeid: '',
-    position_in_company: '',
     email: '',
     password: '',
     confirmPassword: ''
@@ -93,7 +92,7 @@
     const r = await signUpAdmin({
       name: combineFullName(),
       employeeid: form.employeeid,
-      position_in_company: form.position_in_company,
+      position_in_company: '',
       email: form.email,
       password: form.password
     })
@@ -154,7 +153,6 @@
       </div>
       <div ref="step2Panel" v-show="signupStep === 2" class="signup-step-panel">
         <div class="field"><label for="employeeid">Employee ID <span class="required-asterisk">*</span></label><input id="employeeid" v-model="form.employeeid" type="text" required placeholder="Your employee ID" autocomplete="off" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
-        <div class="field"><label for="position">Position <span class="required-asterisk">*</span></label><input id="position" v-model="form.position_in_company" type="text" required placeholder="e.g. Admin" autocomplete="organization-title" /></div>
         <div class="field"><label for="email">Email <span class="required-asterisk">*</span></label><input id="email" v-model="form.email" type="email" required placeholder="admin@company.com" autocomplete="email" /></div>
       </div>
       <div v-show="signupStep === 3" class="signup-step-panel">
