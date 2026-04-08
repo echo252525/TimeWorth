@@ -791,6 +791,8 @@ async function save() {
                         v-model="positionInCompany"
                         type="text"
                         placeholder="e.g. Developer"
+                        readonly
+                        aria-readonly="true"
                       />
                     </div>
                     <div class="summary-item personal-form__cell">
@@ -814,6 +816,8 @@ async function save() {
                         type="email"
                         autocomplete="email"
                         placeholder="Enter your personal/company email"
+                        readonly
+                        aria-readonly="true"
                       />
                     </div>
                     <div class="summary-item personal-form__cell">
@@ -1486,6 +1490,16 @@ async function save() {
 .personal-form__cell input:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.personal-form__cell input[readonly] {
+  cursor: not-allowed;
+  opacity: 0.85;
+  background: color-mix(in srgb, var(--bg-primary) 80%, var(--border-color));
+}
+
+.personal-form__cell input[readonly]:focus {
+  border-color: var(--border-color);
 }
 .personal-card__footer .personal-form__actions,
 .security-card__footer .password-form__actions,
