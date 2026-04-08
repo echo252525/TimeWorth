@@ -306,6 +306,17 @@ body.dark-mode .login-view .auth-modal-card {
   min-width: 140px;
 }
 
+body.dark-mode .login-view .auth-modal-cta.btn.primary {
+  background: #38bdf8;
+  border-color: #38bdf8;
+  color: #0b1220;
+}
+
+body.dark-mode .login-view .auth-modal-cta.btn.primary:hover {
+  background: #0ea5e9;
+  border-color: #0ea5e9;
+}
+
 .login-view .auth-success-banner--spaced {
   margin-bottom: 1rem;
 }
