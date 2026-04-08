@@ -298,8 +298,8 @@ function captureWfhPhotoFromCamera() {
         wfhPhotoError.value = 'Could not capture image.'
         return
       }
-      if (blob.size > 8 * 1024 * 1024) {
-        wfhPhotoError.value = 'Photo must be 8MB or smaller. Try again.'
+      if (blob.size > 100 * 1024 * 1024) {
+        wfhPhotoError.value = 'Photo must be 100MB or smaller. Try again.'
         return
       }
       if (wfhPhotoPreviewUrl.value) URL.revokeObjectURL(wfhPhotoPreviewUrl.value)
