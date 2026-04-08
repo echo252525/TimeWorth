@@ -97,6 +97,10 @@
     showConfirmPassword.value = !showConfirmPassword.value
   }
 
+  function digitsOnly(s: string): string {
+    return s.replace(/\D/g, '')
+  }
+
   async function onSubmit() {
     if (!form.first_name.trim() || !form.last_name.trim()) {
       error.value = 'First name and last name are required'
@@ -187,7 +191,7 @@
           />
         </div>
         <div class="field"><label for="empno">EMPLOYEE NO. <span class="required-asterisk">*</span> (Enter N/A if not available)</label><input id="empno" v-model="form.employee_no" type="text" required autocomplete="off" placeholder="PCW00000" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
-        <div class="field"><label for="phone">PHONE NUMBER <span class="required-asterisk">*</span></label><input id="phone" v-model="form.phone_number" type="tel" required autocomplete="tel" placeholder="09XXXXXXXXX" /></div>
+        <div class="field"><label for="phone">PHONE NUMBER <span class="required-asterisk">*</span></label><input id="phone" v-model="form.phone_number" type="text" inputmode="numeric" pattern="[0-9]*" required autocomplete="tel" placeholder="09XXXXXXXXX" @input="form.phone_number = digitsOnly(form.phone_number)" /></div>
         <div class="field"><label for="email">EMAIL <span class="required-asterisk">*</span></label><input id="email" v-model="form.email" type="email" required placeholder="name@gmail.com" autocomplete="email" /></div>
       </div>
       <div v-show="signupStep === 3" class="signup-step-panel">
