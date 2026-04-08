@@ -111,7 +111,7 @@ function dismissEmailConfirmedModal() {
           <p class="auth-modal-text">
             {{
               accountModal === 'pending'
-                ? 'Your employee account is currently being reviewed by the admin. Please wait for approval before logging in.'
+                ? 'Your employee account is currently being reviewed by the admin. Please wait for the approval before logging in.'
                 : accountModal === 'rejected'
                   ? 'After careful review by the admin, your employee account has been rejected. Please contact the admin if you think this was a mistake.'
                   : 'Your account has been approved. Welcome to TimeWorth. Click okay to continue to your dashboard.'
@@ -306,15 +306,15 @@ body.dark-mode .login-view .auth-modal-card {
   min-width: 140px;
 }
 
-body.dark-mode .login-view .auth-modal-cta.btn.primary {
-  background: #38bdf8;
-  border-color: #38bdf8;
-  color: #0b1220;
+body.dark-mode .login-view .auth-modal-card .auth-modal-cta.btn.primary {
+  background: #38bdf8 !important;
+  border-color: #38bdf8 !important;
+  color: #0b1220 !important;
 }
 
-body.dark-mode .login-view .auth-modal-cta.btn.primary:hover {
-  background: #0ea5e9;
-  border-color: #0ea5e9;
+body.dark-mode .login-view .auth-modal-card .auth-modal-cta.btn.primary:hover {
+  background: #0ea5e9 !important;
+  border-color: #0ea5e9 !important;
 }
 
 .login-view .auth-success-banner--spaced {
