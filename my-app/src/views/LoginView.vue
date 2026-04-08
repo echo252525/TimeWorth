@@ -80,6 +80,10 @@ function dismissAccountModal() {
   accountModal.value = null
   if (variant === 'welcome') router.push('/dashboard')
 }
+
+function dismissEmailConfirmedModal() {
+  showEmailConfirmedBanner.value = false
+}
 </script>
 <template>
   <div class="login-view">
@@ -130,6 +134,7 @@ function dismissAccountModal() {
           <p class="auth-modal-text">
             You have successfully confirmed your email. You can now log in.
           </p>
+          <button type="button" class="btn primary auth-modal-cta" @click="dismissEmailConfirmedModal">Okay</button>
         </div>
       </div>
       <div
