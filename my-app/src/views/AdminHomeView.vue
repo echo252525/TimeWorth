@@ -72,7 +72,19 @@ const addressCache = ref<Record<string, string>>({})
 const MARKER_SIZE = 44
 const tick = ref(0)
 let tickInterval: ReturnType<typeof setInterval> | null = null
-const runningMarkers = ref<{ marker: L.Marker; pin: MapPin }[]>([])
+
+/** Employee detail (single marker or from cluster picker). */
+const mapDetailPin = ref<MapPin | null>(null)
+const mapDetailAddress = ref<string | null>(null)
+const mapDetailAddressLoading = ref(false)
+/** Cluster picker when zoom is max but icons still overlap. */
+const mapClusterPickerPins = ref<MapPin[] | null>(null)
+
+/** Screen-space distance (px) between marker centers: merge as soon as icons touch/overlap a little (≈ one avatar width). */
+const CLUSTER_MERGE_PX = MARKER_SIZE
+const CLUSTER_MARKER_W = 120
+const CLUSTER_MARKER_H = 56
+let mapZoomMoveHandler: (() => void) | null = null
 
 // Filters
 const filterLocationType = ref<'clock_in' | 'clock_out' | 'both'>('both')
@@ -215,6 +227,10 @@ interface MapPin {
   isRunning: boolean
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
   const key = `${lat.toFixed(6)},${lng.toFixed(6)}`
   if (addressCache.value[key]) return addressCache.value[key]
@@ -230,10 +246,6 @@ async function reverseGeocode(lat: number, lng: number): Promise<string | null> 
   } catch {
     return null
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 function fmtTime(t: string | null): string {
@@ -525,59 +537,190 @@ function createMarkerIcon(pin: MapPin): L.DivIcon {
   })
 }
 
-function buildTooltipHtml(pin: MapPin, addr: string | null): string {
-  const stateLabels: Record<MapPinState, string> = {
-    not_clocked_in: 'Last clock out',
-    clocked_in: 'Clock in (working)',
-    on_lunch: 'On lunch',
-    clocked_out: 'Clock out'
+function centroidLatLng(pins: MapPin[]): { lat: number; lng: number } {
+  let lat = 0
+  let lng = 0
+  for (const p of pins) {
+    lat += p.lat
+    lng += p.lng
   }
-  const label = stateLabels[pin.state]
-  const displayAddr = addr || `${pin.lat.toFixed(6)}, ${pin.lng.toFixed(6)}`
-  const timeLine = pin.state === 'clocked_out' ? `Total: <strong>${escapeHtml(pin.timeLabel)}</strong>` : `Time: <strong>${escapeHtml(pin.timeLabel)}</strong>`
-  return `<div class="admin-map-tooltip"><strong>${escapeHtml(pin.name)}</strong> ${escapeHtml(label)} · ${timeLine}<span class="admin-map-tooltip-address" title="${escapeHtml(displayAddr)}">${escapeHtml(displayAddr)}</span></div>`
+  const n = pins.length
+  return { lat: lat / n, lng: lng / n }
 }
 
-function updateRunningTooltips() {
-  runningMarkers.value.forEach(({ marker, pin }) => {
-    const updatedLabel = getRunningElapsed(pin.record)
-    const updatedPin = { ...pin, timeLabel: updatedLabel }
-    const tip = marker.getTooltip()
-    if (tip) tip.setContent(buildTooltipHtml(updatedPin, pin.address || null))
+/**
+ * Merge pins that overlap even slightly in screen space (union-find).
+ * At any zoom, only markers whose icons touch or overlap are grouped; separated markers stay individual.
+ */
+function clusterPinsByOverlap(
+  pins: MapPin[],
+  map: L.Map
+): Array<{ type: 'single'; pin: MapPin } | { type: 'cluster'; pins: MapPin[] }> {
+  if (pins.length <= 1) {
+    return pins.map((p) => ({ type: 'single' as const, pin: p }))
+  }
+  const layerPoints = pins.map((p) => ({
+    pin: p,
+    pt: map.latLngToLayerPoint(L.latLng(p.lat, p.lng))
+  }))
+  const n = layerPoints.length
+  const parent = Array.from({ length: n }, (_, i) => i)
+  function find(i: number): number {
+    if (parent[i] !== i) parent[i] = find(parent[i])
+    return parent[i]
+  }
+  function union(a: number, b: number) {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent[ra] = rb
+  }
+  const r2 = CLUSTER_MERGE_PX * CLUSTER_MERGE_PX
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const dx = layerPoints[i].pt.x - layerPoints[j].pt.x
+      const dy = layerPoints[i].pt.y - layerPoints[j].pt.y
+      if (dx * dx + dy * dy <= r2) union(i, j)
+    }
+  }
+  const groups = new Map<number, MapPin[]>()
+  for (let i = 0; i < n; i++) {
+    const r = find(i)
+    if (!groups.has(r)) groups.set(r, [])
+    groups.get(r)!.push(layerPoints[i].pin)
+  }
+  const out: Array<{ type: 'single'; pin: MapPin } | { type: 'cluster'; pins: MapPin[] }> = []
+  for (const group of groups.values()) {
+    if (group.length === 1) out.push({ type: 'single', pin: group[0] })
+    else {
+      group.sort((a, b) => a.name.localeCompare(b.name))
+      out.push({ type: 'cluster', pins: group })
+    }
+  }
+  return out
+}
+
+function createClusterIcon(pins: MapPin[]): L.DivIcon {
+  const sorted = [...pins].sort((a, b) => a.name.localeCompare(b.name))
+  const primary = sorted[0]
+  const others = sorted.slice(1)
+  const mini = sorted.slice(0, 3).map((p) => {
+    const pic = p.pictureUrl
+    const initial = escapeHtml(p.initial)
+    const inner = pic
+      ? `<img src="${escapeHtml(pic)}" alt="" class="admin-map-cluster-mini-img" />`
+      : `<span class="admin-map-cluster-mini-initial">${initial}</span>`
+    return `<div class="admin-map-cluster-mini" style="border-color:${escapeHtml(p.borderColor)}">${inner}</div>`
+  })
+  const opacity = primary.opacity
+  const othersHint =
+    others.length > 0
+      ? `<span class="admin-map-cluster-others">+${others.length} other${others.length === 1 ? '' : 's'}</span>`
+      : ''
+  const w = CLUSTER_MARKER_W + 40
+  const h = CLUSTER_MARKER_H + LABEL_HEIGHT
+  return L.divIcon({
+    className: 'admin-map-marker admin-map-marker-cluster',
+    html: `<div class="admin-map-marker-with-label admin-map-cluster-with-label" style="opacity:${opacity}">
+      <span class="admin-map-marker-name admin-map-cluster-name-line"><span class="admin-map-cluster-primary">${escapeHtml(primary.name)}</span>${othersHint}</span>
+      <div class="admin-map-cluster-bubble">
+        <div class="admin-map-cluster-avatars">${mini.join('')}</div>
+        <span class="admin-map-cluster-badge" aria-hidden="true">${sorted.length}</span>
+      </div>
+    </div>`,
+    iconSize: [w, h],
+    iconAnchor: [w / 2, h]
   })
 }
 
-function updateMapMarkers() {
+/** Short status for detail modal (no “clock” wording). */
+function shortKindLabel(state: MapPinState): string {
+  switch (state) {
+    case 'clocked_in':
+      return 'In'
+    case 'on_lunch':
+      return 'Lunch'
+    case 'clocked_out':
+    case 'not_clocked_in':
+      return 'Out'
+    default:
+      return '—'
+  }
+}
+
+const mapDetailTimeDisplay = computed(() => {
+  const p = mapDetailPin.value
+  if (!p) return ''
+  void tick.value
+  if (p.isRunning) return getRunningElapsed(p.record)
+  if (p.state === 'clocked_out') return `${p.timeLabel} total`
+  return p.timeLabel
+})
+
+async function openMapEmployeeDetail(pin: MapPin) {
+  mapClusterPickerPins.value = null
+  mapDetailPin.value = pin
+  mapDetailAddress.value = null
+  mapDetailAddressLoading.value = true
+  const addr = await reverseGeocode(pin.lat, pin.lng)
+  mapDetailAddress.value = addr
+  mapDetailAddressLoading.value = false
+}
+
+function closeMapDetailModal() {
+  mapDetailPin.value = null
+  mapDetailAddress.value = null
+  mapDetailAddressLoading.value = false
+}
+
+function closeClusterPickerModal() {
+  mapClusterPickerPins.value = null
+}
+
+function onPickClusterPerson(pin: MapPin) {
+  mapClusterPickerPins.value = null
+  void openMapEmployeeDetail(pin)
+}
+
+function updateMapMarkers(opts?: { fitBounds?: boolean }) {
+  const fitBounds = opts?.fitBounds !== false
   if (!map) return
-  markers.forEach(m => m.remove())
+  markers.forEach((m) => m.remove())
   markers = []
-  runningMarkers.value = []
 
   const pins = filteredPins.value
   if (pins.length === 0) return
 
-  const bounds = L.latLngBounds(pins.map(p => [p.lat, p.lng] as [number, number]))
-  pins.forEach(pin => {
-    const icon = createMarkerIcon(pin)
-    const m = L.marker([pin.lat, pin.lng], { icon }).addTo(map!)
-    m.bindTooltip(
-      buildTooltipHtml(pin, pin.address || null),
-      { permanent: false, direction: 'top', offset: [0, -MARKER_SIZE - LABEL_HEIGHT - 4], className: 'admin-map-tooltip-wrap', sticky: true }
-    )
-    m.on('mouseover', async () => {
-      const key = `${pin.lat.toFixed(6)},${pin.lng.toFixed(6)}`
-      if (addressCache.value[key]) return
-      const resolved = await reverseGeocode(pin.lat, pin.lng)
-      if (resolved) {
-        addressCache.value[key] = resolved
-        const tip = m.getTooltip()
-        if (tip) tip.setContent(buildTooltipHtml(pin, resolved))
-      }
-    })
-    markers.push(m)
-    if (pin.isRunning) runningMarkers.value.push({ marker: m, pin })
-  })
+  const bounds = L.latLngBounds(pins.map((p) => [p.lat, p.lng] as [number, number]))
+  const groups = clusterPinsByOverlap(pins, map)
 
+  for (const g of groups) {
+    if (g.type === 'single') {
+      const pin = g.pin
+      const icon = createMarkerIcon(pin)
+      const m = L.marker([pin.lat, pin.lng], { icon }).addTo(map!)
+      m.on('click', () => {
+        void openMapEmployeeDetail(pin)
+      })
+      markers.push(m)
+    } else {
+      const clusterPins = g.pins
+      const c = centroidLatLng(clusterPins)
+      const icon = createClusterIcon(clusterPins)
+      const m = L.marker([c.lat, c.lng], { icon }).addTo(map!)
+      m.on('click', () => {
+        const maxZ = map!.getMaxZoom()
+        const curZ = map!.getZoom()
+        if (curZ < maxZ) {
+          map!.setView([c.lat, c.lng], Math.min(curZ + 2, maxZ))
+        } else {
+          mapClusterPickerPins.value = [...clusterPins]
+        }
+      })
+      markers.push(m)
+    }
+  }
+
+  if (!fitBounds) return
   if (pins.length === 1) {
     map.setView([pins[0].lat, pins[0].lng], 15)
   } else if (pins.length > 1) {
@@ -590,6 +733,9 @@ function initMap() {
   map = L.map(mapContainer.value, { zoomControl: false }).setView([14.5992, 120.9845], 11)
   L.control.zoom({ position: 'topright' }).addTo(map)
   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '© CARTO', subdomains: 'abcd', maxZoom: 20 }).addTo(map)
+  mapZoomMoveHandler = () => updateMapMarkers({ fitBounds: false })
+  map.on('zoomend', mapZoomMoveHandler)
+  map.on('moveend', mapZoomMoveHandler)
   updateMapMarkers()
 }
 
@@ -607,7 +753,6 @@ onMounted(async () => {
   document.addEventListener('click', handleMapFilterClickOutside)
   tickInterval = setInterval(() => {
     tick.value = Date.now()
-    updateRunningTooltips()
   }, 1000)
 })
 
@@ -619,9 +764,13 @@ onUnmounted(() => {
   window.removeEventListener('resize', positionMapModalityDropdown)
   if (tickInterval) clearInterval(tickInterval)
   tickInterval = null
-  markers.forEach(m => m.remove())
+  if (map && mapZoomMoveHandler) {
+    map.off('zoomend', mapZoomMoveHandler)
+    map.off('moveend', mapZoomMoveHandler)
+    mapZoomMoveHandler = null
+  }
+  markers.forEach((m) => m.remove())
   markers = []
-  runningMarkers.value = []
   map?.remove()
   map = null
 })
@@ -793,6 +942,56 @@ onUnmounted(() => {
         <p v-if="mapError" class="hero-map-error">{{ mapError }}</p>
       </div>
     </section>
+
+    <Teleport to="body">
+      <div
+        v-if="mapDetailPin"
+        class="admin-map-modal-overlay"
+        @click.self="closeMapDetailModal"
+      >
+        <div class="admin-map-modal" role="dialog" aria-modal="true" aria-labelledby="map-detail-name" @click.stop>
+          <button type="button" class="admin-map-modal-close" aria-label="Close" @click="closeMapDetailModal">
+            ×
+          </button>
+          <div class="admin-map-modal-avatar" :style="{ borderColor: mapDetailPin.borderColor }">
+            <img v-if="mapDetailPin.pictureUrl" :src="mapDetailPin.pictureUrl" alt="" />
+            <span v-else class="admin-map-modal-initial">{{ mapDetailPin.initial }}</span>
+          </div>
+          <h3 id="map-detail-name" class="admin-map-modal-name">{{ mapDetailPin.name }}</h3>
+          <p class="admin-map-modal-meta">
+            {{ shortKindLabel(mapDetailPin.state) }} · {{ mapDetailTimeDisplay }}
+          </p>
+          <p v-if="mapDetailAddressLoading" class="admin-map-modal-address admin-map-modal-address--muted">Loading address…</p>
+          <p v-else class="admin-map-modal-address">{{ mapDetailAddress || '—' }}</p>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="mapClusterPickerPins?.length"
+        class="admin-map-modal-overlay"
+        @click.self="closeClusterPickerModal"
+      >
+        <div class="admin-map-modal admin-map-modal--picker" role="dialog" aria-modal="true" aria-labelledby="cluster-picker-title" @click.stop>
+          <button type="button" class="admin-map-modal-close" aria-label="Close" @click="closeClusterPickerModal">
+            ×
+          </button>
+          <h3 id="cluster-picker-title" class="admin-map-modal-picker-title">People at this spot</h3>
+          <ul class="admin-map-modal-picker-list">
+            <li v-for="p in mapClusterPickerPins" :key="p.record.attendance_id">
+              <button type="button" class="admin-map-modal-picker-row" @click="onPickClusterPerson(p)">
+                <span class="admin-map-modal-picker-avatar" :style="{ borderColor: p.borderColor }">
+                  <img v-if="p.pictureUrl" :src="p.pictureUrl" alt="" />
+                  <span v-else class="admin-map-modal-picker-initial">{{ p.initial }}</span>
+                </span>
+                <span class="admin-map-modal-picker-name">{{ p.name }}</span>
+              </button>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -980,8 +1179,8 @@ onUnmounted(() => {
 }
 .filter-checkbox { width: 1rem; height: 1rem; accent-color: #38bdf8; }
 
-.hero-map-wrap { position: relative; min-height: 380px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border-light); background: #f1f5f9; }
-.hero-map { width: 100%; height: 380px; border-radius: 12px; }
+.hero-map-wrap { position: relative; min-height: 380px; border-radius: 12px; overflow: visible; border: 1px solid var(--border-light); background: #f1f5f9; }
+.hero-map { width: 100%; height: 380px; border-radius: 12px; overflow: hidden; }
 .hero-map-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 0.5rem; background: rgba(15,23,42,0.5); color: #e2e8f0; font-size: 0.9375rem; z-index: 10; }
 .spinner { width: 20px; height: 20px; border: 2px solid rgba(56,189,248,0.3); border-top-color: #38bdf8; border-radius: 50%; animation: admin-spin 0.7s linear infinite; }
 @keyframes admin-spin { to { transform: rotate(360deg); } }
@@ -993,8 +1192,229 @@ onUnmounted(() => {
 :deep(.admin-map-marker-wrap) { width: 44px; height: 44px; border-radius: 50%; overflow: hidden; border: 3px solid #0ea5e9; box-shadow: 0 2px 10px rgba(0,0,0,0.25); background: #e2e8f0; display: flex; align-items: center; justify-content: center; }
 :deep(.admin-map-marker-img) { width: 100%; height: 100%; object-fit: cover; }
 :deep(.admin-map-marker-initial) { font-size: 1.125rem; font-weight: 700; color: #0ea5e9; }
-:deep(.admin-map-tooltip-wrap) { padding: 0; border: none; background: transparent; box-shadow: none; }
-:deep(.admin-map-tooltip) { padding: 8px 12px; background: rgba(15,23,42,0.95); border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); font-size: 0.8125rem; color: #e2e8f0; max-width: 280px; }
+:deep(.admin-map-marker-cluster) { z-index: 650 !important; }
+:deep(.admin-map-cluster-with-label) { display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: 200px; }
+:deep(.admin-map-cluster-name-line) { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 6px; max-width: 200px; }
+:deep(.admin-map-cluster-primary) { font-weight: 700; color: #0f172a; text-shadow: 0 0 2px #fff, 0 1px 2px #fff; }
+:deep(.admin-map-cluster-others) {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #334155;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: inherit;
+  text-shadow: none;
+}
+:deep(.admin-map-cluster-bubble) {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  min-height: 56px;
+  padding: 6px 10px;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #f8fafc, #e2e8f0);
+  border: 3px solid #334155;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+}
+:deep(.admin-map-cluster-avatars) { display: flex; align-items: center; justify-content: center; margin: 0 -2px; padding: 0 4px; }
+:deep(.admin-map-cluster-mini) {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid #fff;
+  margin-left: -10px;
+  background: #e2e8f0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+:deep(.admin-map-cluster-mini:first-child) { margin-left: 0; }
+:deep(.admin-map-cluster-mini-img) { width: 100%; height: 100%; object-fit: cover; }
+:deep(.admin-map-cluster-mini-initial) { font-size: 0.875rem; font-weight: 700; color: #0ea5e9; }
+:deep(.admin-map-cluster-badge) {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+:deep(.admin-map-marker-with-label .admin-map-marker-wrap),
+:deep(.admin-map-cluster-bubble) {
+  transition: none;
+}
+:deep(.admin-map-marker-with-label:hover .admin-map-marker-wrap),
+:deep(.admin-map-cluster-bubble:hover) {
+  transform: none;
+  filter: none;
+}
+
+.admin-map-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+}
+.admin-map-modal {
+  position: relative;
+  width: min(100%, 360px);
+  max-height: min(90vh, 520px);
+  overflow: auto;
+  padding: 1.5rem 1.25rem 1.25rem;
+  border-radius: 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.35);
+}
+.admin-map-modal--picker {
+  width: min(100%, 400px);
+  padding-top: 1.25rem;
+}
+.admin-map-modal-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.admin-map-modal-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.admin-map-modal-avatar {
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 3px solid #0ea5e9;
+  background: #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.admin-map-modal-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.admin-map-modal-initial {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #0ea5e9;
+}
+.admin-map-modal-name {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--text-primary);
+}
+.admin-map-modal-meta {
+  margin: 0 0 1rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+.admin-map-modal-address {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.admin-map-modal-address--muted {
+  color: var(--text-secondary);
+}
+.admin-map-modal-picker-title {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.admin-map-modal-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: min(60vh, 360px);
+  overflow-y: auto;
+}
+.admin-map-modal-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+}
+.admin-map-modal-picker-row:hover {
+  background: var(--bg-hover);
+}
+.admin-map-modal-picker-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid #0ea5e9;
+  flex-shrink: 0;
+  background: #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.admin-map-modal-picker-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.admin-map-modal-picker-initial {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0ea5e9;
+}
+.admin-map-modal-picker-name {
+  flex: 1;
+  min-width: 0;
+}
 
 :root.light-mode .ts-filter-dropdown-portal.period-dropdown,
 body.light-mode .ts-filter-dropdown-portal.period-dropdown {
@@ -1006,6 +1426,4 @@ body.light-mode .period-option.active {
   background: rgba(56, 189, 248, 0.2);
   color: #0284c7;
 }
-:deep(.admin-map-tooltip strong) { display: block; margin-bottom: 4px; color: #fff; }
-:deep(.admin-map-tooltip-address) { display: block; margin-top: 6px; color: #94a3b8; font-size: 0.75rem; line-height: 1.3; word-break: break-word; }
 </style>

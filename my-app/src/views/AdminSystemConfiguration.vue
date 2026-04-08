@@ -1,9 +1,21 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { PencilSquareIcon, TrashIcon, PlusCircleIcon } from '@heroicons/vue/24/outline'
+import {
+  PencilSquareIcon,
+  TrashIcon,
+  PlusCircleIcon,
+  MapPinIcon,
+  BriefcaseIcon,
+  MagnifyingGlassIcon
+} from '@heroicons/vue/24/outline'
 import supabase from '../lib/supabaseClient'
+
+type ActiveSection = 'geofence' | 'positions'
+const activeSection = ref<ActiveSection>('geofence')
+const geofenceSearch = ref('')
+const positionSearch = ref('')
 
 /** Matches `public.geolocation` (see ALTER for `geolocation_status`). */
 interface GeolocationRow {
@@ -418,202 +430,347 @@ function formatDate(iso: string) {
     return iso
   }
 }
+
+const filteredGeoRows = computed(() => {
+  const q = geofenceSearch.value.trim().toLowerCase()
+  if (!q) return geoRows.value
+  return geoRows.value.filter(
+    (g) =>
+      g.name.toLowerCase().includes(q) ||
+      String(g.latitude).includes(q) ||
+      String(g.longitude).includes(q) ||
+      String(Math.round(g.radius_meters)).includes(q)
+  )
+})
+
+const filteredPositionRows = computed(() => {
+  const q = positionSearch.value.trim().toLowerCase()
+  if (!q) return rows.value
+  return rows.value.filter((r) => r.title.toLowerCase().includes(q))
+})
+
+watch(activeSection, async (s) => {
+  if (s === 'geofence') {
+    await nextTick()
+    initOrRefreshGeoMap()
+  } else {
+    teardownGeoMap()
+  }
+})
 </script>
 
 <template>
   <div class="page">
-    <h1>System configuration</h1>
-    <p class="muted">Manage job positions available for employee signup and records.</p>
-
-    <section class="geofence-section" aria-labelledby="geofence-heading">
-      <h2 id="geofence-heading" class="section-title">Geofence</h2>
-      <p class="muted section-desc">
-        You can save many geofence rows; only one may have office enabled (column <code class="code-inline">geolocation_status</code> = true at a time). Set the center by clicking the map, dragging the marker, or using Current location. Then set radius and save. Use the table to mark which row is the office geofence.
+    <header class="sys-config-page-header">
+      <h1>System configuration</h1>
+      <p class="muted page-lead">
+        Choose a category from the left. Use search to narrow lists. Geofence and job positions are organized as separate settings areas.
       </p>
-      <p v-if="geoError" class="banner-error">{{ geoError }}</p>
-      <div v-if="geoLoading" class="loading-state">Loading map…</div>
-      <div v-show="!geoLoading" class="geofence-map-wrap">
-        <div ref="geoMapContainer" class="geofence-map" role="application" aria-label="Map: click to set geofence center" />
+    </header>
+
+    <div class="sys-config-shell">
+      <nav class="sys-config-nav" aria-label="Configuration categories">
         <button
           type="button"
-          class="geo-locate-btn"
-          :disabled="geoLocating"
-          title="Center map on your current location"
-          @click="recenterMapOnCurrentLocation"
+          class="sys-config-nav-item"
+          :class="{ 'sys-config-nav-item--active': activeSection === 'geofence' }"
+          :aria-current="activeSection === 'geofence' ? 'page' : undefined"
+          @click="activeSection = 'geofence'"
         >
-          {{ geoLocating ? 'Locating…' : 'Current location' }}
+          <MapPinIcon class="sys-config-nav-icon" aria-hidden="true" />
+          <span class="sys-config-nav-label">Geofence</span>
         </button>
-      </div>
-      <div v-if="!geoLoading" class="geofence-controls">
-        <label class="radius-label">
-          <span>Radius (meters)</span>
-          <input
-            v-model.number="geoRadiusMeters"
-            type="number"
-            min="1"
-            max="500000"
-            step="1"
-            class="input radius-input"
-            aria-label="Geofence radius in meters"
-          />
-        </label>
-        <div class="geo-coords muted" aria-live="polite">
-          {{ geoLat.toFixed(6) }}, {{ geoLng.toFixed(6) }}
-        </div>
-        <p class="geo-mode-hint muted" aria-live="polite">
-          {{ geoRowId ? 'Table: row highlighted = updating this location.' : 'Adding a new location — no row highlighted.' }}
-        </p>
-        <button type="button" class="btn-primary" :disabled="geoSaving" @click="saveGeofence">
-          {{ geoSaving ? 'Saving…' : geoRowId ? 'Update geofence' : 'Save new geofence' }}
+        <button
+          type="button"
+          class="sys-config-nav-item"
+          :class="{ 'sys-config-nav-item--active': activeSection === 'positions' }"
+          :aria-current="activeSection === 'positions' ? 'page' : undefined"
+          @click="activeSection = 'positions'"
+        >
+          <BriefcaseIcon class="sys-config-nav-icon" aria-hidden="true" />
+          <span class="sys-config-nav-label">Job positions</span>
         </button>
+      </nav>
+
+      <div class="sys-config-main">
+        <section
+          v-if="activeSection === 'geofence'"
+          class="sys-config-panel"
+          aria-labelledby="geofence-panel-title"
+        >
+          <h2 id="geofence-panel-title" class="sys-config-panel-title">Geofence</h2>
+          <p class="muted sys-config-panel-lead">
+            Define where attendance may be validated. Multiple rows can exist; only one may be marked as the office geofence (<code class="code-inline">geolocation_status</code>). Search applies to the saved list below.
+          </p>
+
+          <div class="sys-config-search" role="search">
+            <MagnifyingGlassIcon class="sys-config-search-icon" aria-hidden="true" />
+            <input
+              v-model="geofenceSearch"
+              type="search"
+              class="sys-config-search-input"
+              placeholder="Search saved geofences by name or coordinates…"
+              aria-label="Search geofences"
+              autocomplete="off"
+            />
+          </div>
+
+          <p v-if="geoError" class="banner-error">{{ geoError }}</p>
+
+          <article class="config-item">
+            <h3 class="config-item-title">Geofence center and radius</h3>
+            <p class="config-item-key">geolocation.center · geolocation.radius_meters</p>
+            <p class="config-item-desc">
+              Click the map or drag the pin to set the center. Use <strong>Current location</strong> to jump to your device GPS, then adjust radius and save.
+            </p>
+            <div class="config-item-control">
+              <div v-if="geoLoading" class="loading-state">Loading map…</div>
+              <div v-show="!geoLoading" class="geofence-map-wrap">
+                <div ref="geoMapContainer" class="geofence-map" role="application" aria-label="Map: click to set geofence center" />
+                <button
+                  type="button"
+                  class="geo-locate-btn"
+                  :disabled="geoLocating"
+                  title="Center map on your current location"
+                  @click="recenterMapOnCurrentLocation"
+                >
+                  {{ geoLocating ? 'Locating…' : 'Current location' }}
+                </button>
+              </div>
+              <div v-if="!geoLoading" class="geofence-controls">
+                <label class="radius-label">
+                  <span>Radius (meters)</span>
+                  <input
+                    v-model.number="geoRadiusMeters"
+                    type="number"
+                    min="1"
+                    max="500000"
+                    step="1"
+                    class="input radius-input"
+                    aria-label="Geofence radius in meters"
+                  />
+                </label>
+                <div class="geo-coords muted" aria-live="polite">
+                  {{ geoLat.toFixed(6) }}, {{ geoLng.toFixed(6) }}
+                </div>
+                <p class="geo-mode-hint muted" aria-live="polite">
+                  {{ geoRowId ? 'Table: row highlighted = updating this location.' : 'Adding a new location — no row highlighted.' }}
+                </p>
+                <button type="button" class="btn-primary" :disabled="geoSaving" @click="saveGeofence">
+                  {{ geoSaving ? 'Saving…' : geoRowId ? 'Update geofence' : 'Save new geofence' }}
+                </button>
+              </div>
+            </div>
+            <p class="config-item-note">Saving reverse-geocodes the center for the row label. Office designation is managed in the table setting.</p>
+          </article>
+
+          <article class="config-item">
+            <h3 class="config-item-title">Saved geofences</h3>
+            <p class="config-item-key">geolocation.records</p>
+            <p class="config-item-desc">
+              Select a row to load it on the map. Mark one row as the office geofence, or clear the office flag.
+            </p>
+            <div class="config-item-control">
+              <div class="geo-table-header">
+                <button type="button" class="btn-add-location" @click="startNewGeofenceOnMap">
+                  Add new location
+                </button>
+              </div>
+              <div v-if="geoTableLoading && !geoRows.length" class="loading-state muted">Loading list…</div>
+              <div v-else class="table-scroll geo-table-scroll">
+                <table class="data-table geo-data-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Location (address)</th>
+                      <th scope="col">Latitude</th>
+                      <th scope="col">Longitude</th>
+                      <th scope="col">Radius (m)</th>
+                      <th scope="col">Office geofence</th>
+                      <th scope="col" class="th-actions">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="g in filteredGeoRows"
+                      :key="g.id"
+                      class="geo-row--clickable"
+                      :class="{
+                        'geo-row--office': g.geolocation_status,
+                        'geo-row--selected': geoRowId !== null && geoRowId === g.id
+                      }"
+                      tabindex="0"
+                      @click="editGeofenceOnMap(g)"
+                      @keydown.enter.prevent="editGeofenceOnMap(g)"
+                    >
+                      <td class="geo-name-cell">{{ g.name }}</td>
+                      <td class="td-muted">{{ g.latitude?.toFixed(6) }}</td>
+                      <td class="td-muted">{{ g.longitude?.toFixed(6) }}</td>
+                      <td class="td-muted">{{ Math.round(g.radius_meters) }}</td>
+                      <td>
+                        <span v-if="g.geolocation_status" class="office-badge">Office</span>
+                        <span v-else class="muted">—</span>
+                      </td>
+                      <td class="td-actions geo-actions" @click.stop>
+                        <button
+                          type="button"
+                          class="btn-mini"
+                          :disabled="geoOfficeSavingId !== null || geoDeletingId !== null"
+                          @click="editGeofenceOnMap(g)"
+                        >
+                          Edit on map
+                        </button>
+                        <button
+                          v-if="!g.geolocation_status"
+                          type="button"
+                          class="btn-mini btn-mini-accent"
+                          :disabled="geoOfficeSavingId !== null || geoDeletingId !== null"
+                          @click="setOfficeGeofence(g.id)"
+                        >
+                          {{ geoOfficeSavingId === g.id ? 'Setting…' : 'Set as office geofence' }}
+                        </button>
+                        <button
+                          v-else
+                          type="button"
+                          class="btn-mini"
+                          :disabled="geoOfficeSavingId !== null || geoDeletingId !== null"
+                          @click="clearOfficeGeofence"
+                        >
+                          {{ geoOfficeSavingId === 'all' ? 'Clearing…' : 'Clear office' }}
+                        </button>
+                        <button
+                          type="button"
+                          class="btn-mini btn-mini-danger"
+                          :disabled="geoDeletingId !== null || geoOfficeSavingId !== null"
+                          @click="deleteGeofenceRow(g)"
+                        >
+                          {{ geoDeletingId === g.id ? '…' : 'Delete' }}
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p v-if="!geoRows.length && !geoTableLoading && !geoLoading" class="empty-hint">No geofences yet. Place a point on the map and save.</p>
+              <p v-else-if="geoRows.length && !filteredGeoRows.length" class="empty-hint">No geofences match your search.</p>
+            </div>
+            <p class="config-item-note">The current office row is the one with geolocation_status true in the database.</p>
+          </article>
+        </section>
+
+        <section
+          v-else
+          class="sys-config-panel"
+          aria-labelledby="positions-panel-title"
+        >
+          <h2 id="positions-panel-title" class="sys-config-panel-title">Job positions</h2>
+          <p class="muted sys-config-panel-lead">
+            Titles appear wherever employees pick a position. Search filters the list below.
+          </p>
+
+          <div class="sys-config-search" role="search">
+            <MagnifyingGlassIcon class="sys-config-search-icon" aria-hidden="true" />
+            <input
+              v-model="positionSearch"
+              type="search"
+              class="sys-config-search-input"
+              placeholder="Search positions by title…"
+              aria-label="Search positions"
+              autocomplete="off"
+            />
+          </div>
+
+          <p v-if="error" class="banner-error">{{ error }}</p>
+
+          <article class="config-item">
+            <h3 class="config-item-title">Add position</h3>
+            <p class="config-item-key">position.create</p>
+            <p class="config-item-desc">Create a new job title for signup and attendance records.</p>
+            <div class="config-item-control">
+              <div class="toolbar">
+                <button type="button" class="btn-add" :disabled="loading || showNewRow" @click="openNew">
+                  <PlusCircleIcon class="btn-add-icon" aria-hidden="true" />
+                  Add position
+                </button>
+              </div>
+              <div v-if="showNewRow" class="new-row">
+                <input
+                  v-model="newTitle"
+                  type="text"
+                  class="input"
+                  placeholder="New position title"
+                  aria-label="New position title"
+                  @keyup.enter="saveNew"
+                />
+                <button type="button" class="btn-primary" :disabled="savingId === 'new'" @click="saveNew">
+                  {{ savingId === 'new' ? 'Saving…' : 'Save' }}
+                </button>
+                <button type="button" class="btn-ghost" :disabled="savingId === 'new'" @click="cancelNew">Cancel</button>
+              </div>
+            </div>
+            <p class="config-item-note">New rows are stored in the <code class="code-inline">position</code> table.</p>
+          </article>
+
+          <article class="config-item">
+            <h3 class="config-item-title">Saved positions</h3>
+            <p class="config-item-key">position.list</p>
+            <p class="config-item-desc">Edit titles in place or remove positions that are no longer offered.</p>
+            <div class="config-item-control">
+              <div v-if="loading" class="loading-state">Loading…</div>
+              <div v-else class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Title</th>
+                      <th scope="col">Created</th>
+                      <th scope="col" class="th-actions">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="r in filteredPositionRows" :key="r.position_id" class="data-row">
+                      <td>
+                        <template v-if="editingId === r.position_id">
+                          <input
+                            v-model="editTitle"
+                            type="text"
+                            class="input input-inline"
+                            :aria-label="`Edit title for ${r.title}`"
+                            @keyup.enter="saveEdit(r)"
+                          />
+                        </template>
+                        <template v-else>
+                          {{ r.title }}
+                        </template>
+                      </td>
+                      <td class="td-muted">{{ formatDate(r.created_at) }}</td>
+                      <td class="td-actions">
+                        <template v-if="editingId === r.position_id">
+                          <button type="button" class="btn-icon btn-save" :disabled="savingId === r.position_id" title="Save" @click="saveEdit(r)">
+                            Save
+                          </button>
+                          <button type="button" class="btn-icon btn-cancel" :disabled="savingId === r.position_id" title="Cancel" @click="cancelEdit">Cancel</button>
+                        </template>
+                        <template v-else>
+                          <button type="button" class="btn-icon" title="Edit title" :disabled="savingId !== null" @click="startEdit(r)">
+                            <PencilSquareIcon class="icon" aria-hidden="true" />
+                            <span class="sr-only">Edit</span>
+                          </button>
+                          <button type="button" class="btn-icon btn-danger" title="Remove" :disabled="savingId !== null" @click="removeRow(r)">
+                            <TrashIcon class="icon" aria-hidden="true" />
+                            <span class="sr-only">Remove</span>
+                          </button>
+                        </template>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p v-if="!rows.length && !loading && !showNewRow" class="empty-hint">No positions yet. Use “Add position” above to create one.</p>
+              <p v-else-if="rows.length && !filteredPositionRows.length" class="empty-hint">No positions match your search.</p>
+            </div>
+            <p class="config-item-note">Edits update <code class="code-inline">position.title</code> for the selected row.</p>
+          </article>
+        </section>
       </div>
-
-      <div class="geo-table-wrap">
-        <div class="geo-table-header">
-          <h3 class="geo-table-title">Saved geofences</h3>
-          <button type="button" class="btn-add-location" @click="startNewGeofenceOnMap">
-            Add new location
-          </button>
-        </div>
-        <div v-if="geoTableLoading && !geoRows.length" class="loading-state muted">Loading list…</div>
-        <div v-else class="table-scroll geo-table-scroll">
-          <table class="data-table geo-data-table">
-            <thead>
-              <tr>
-                <th scope="col">Location (address)</th>
-                <th scope="col">Latitude</th>
-                <th scope="col">Longitude</th>
-                <th scope="col">Radius (m)</th>
-                <th scope="col">Office geofence</th>
-                <th scope="col" class="th-actions">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="g in geoRows"
-                :key="g.id"
-                class="geo-row--clickable"
-                :class="{
-                  'geo-row--office': g.geolocation_status,
-                  'geo-row--selected': geoRowId !== null && geoRowId === g.id
-                }"
-                tabindex="0"
-                @click="editGeofenceOnMap(g)"
-                @keydown.enter.prevent="editGeofenceOnMap(g)"
-              >
-                <td class="geo-name-cell">{{ g.name }}</td>
-                <td class="td-muted">{{ g.latitude?.toFixed(6) }}</td>
-                <td class="td-muted">{{ g.longitude?.toFixed(6) }}</td>
-                <td class="td-muted">{{ Math.round(g.radius_meters) }}</td>
-                <td>
-                  <span v-if="g.geolocation_status" class="office-badge">Office</span>
-                  <span v-else class="muted">—</span>
-                </td>
-                <td class="td-actions geo-actions" @click.stop>
-                  <button
-                    type="button"
-                    class="btn-mini"
-                    :disabled="geoOfficeSavingId !== null || geoDeletingId !== null"
-                    @click="editGeofenceOnMap(g)"
-                  >
-                    Edit on map
-                  </button>
-                  <button
-                    v-if="!g.geolocation_status"
-                    type="button"
-                    class="btn-mini btn-mini-accent"
-                    :disabled="geoOfficeSavingId !== null || geoDeletingId !== null"
-                    @click="setOfficeGeofence(g.id)"
-                  >
-                    {{ geoOfficeSavingId === g.id ? 'Setting…' : 'Set as office geofence' }}
-                  </button>
-                  <button
-                    v-else
-                    type="button"
-                    class="btn-mini"
-                    :disabled="geoOfficeSavingId !== null || geoDeletingId !== null"
-                    @click="clearOfficeGeofence"
-                  >
-                    {{ geoOfficeSavingId === 'all' ? 'Clearing…' : 'Clear office' }}
-                  </button>
-                  <button
-                    type="button"
-                    class="btn-mini btn-mini-danger"
-                    :disabled="geoDeletingId !== null || geoOfficeSavingId !== null"
-                    @click="deleteGeofenceRow(g)"
-                  >
-                    {{ geoDeletingId === g.id ? '…' : 'Delete' }}
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p v-if="!geoRows.length && !geoTableLoading && !geoLoading" class="empty-hint">No geofences yet. Place a point on the map and save.</p>
-      </div>
-    </section>
-
-    <p v-if="error" class="banner-error">{{ error }}</p>
-
-    <div class="toolbar">
-      <button type="button" class="btn-add" :disabled="loading || showNewRow" @click="openNew">
-        <PlusCircleIcon class="btn-add-icon" aria-hidden="true" />
-        Add position
-      </button>
-    </div>
-
-    <div v-if="loading" class="loading-state">Loading…</div>
-
-    <div v-else class="table-card">
-      <div v-if="showNewRow" class="new-row">
-        <input v-model="newTitle" type="text" class="input" placeholder="New position title" aria-label="New position title" @keyup.enter="saveNew" />
-        <button type="button" class="btn-primary" :disabled="savingId === 'new'" @click="saveNew">{{ savingId === 'new' ? 'Saving…' : 'Save' }}</button>
-        <button type="button" class="btn-ghost" :disabled="savingId === 'new'" @click="cancelNew">Cancel</button>
-      </div>
-
-      <div class="table-scroll">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th scope="col">Title</th>
-              <th scope="col">Created</th>
-              <th scope="col" class="th-actions">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="r in rows" :key="r.position_id" class="data-row">
-              <td>
-                <template v-if="editingId === r.position_id">
-                  <input v-model="editTitle" type="text" class="input input-inline" :aria-label="`Edit title for ${r.title}`" @keyup.enter="saveEdit(r)" />
-                </template>
-                <template v-else>
-                  {{ r.title }}
-                </template>
-              </td>
-              <td class="td-muted">{{ formatDate(r.created_at) }}</td>
-              <td class="td-actions">
-                <template v-if="editingId === r.position_id">
-                  <button type="button" class="btn-icon btn-save" :disabled="savingId === r.position_id" title="Save" @click="saveEdit(r)">
-                    Save
-                  </button>
-                  <button type="button" class="btn-icon btn-cancel" :disabled="savingId === r.position_id" title="Cancel" @click="cancelEdit">Cancel</button>
-                </template>
-                <template v-else>
-                  <button type="button" class="btn-icon" title="Edit title" :disabled="savingId !== null" @click="startEdit(r)">
-                    <PencilSquareIcon class="icon" aria-hidden="true" />
-                    <span class="sr-only">Edit</span>
-                  </button>
-                  <button type="button" class="btn-icon btn-danger" title="Remove" :disabled="savingId !== null" @click="removeRow(r)">
-                    <TrashIcon class="icon" aria-hidden="true" />
-                    <span class="sr-only">Remove</span>
-                  </button>
-                </template>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p v-if="!rows.length && !showNewRow" class="empty-hint">No positions yet. Click “Add position” to create one.</p>
     </div>
   </div>
 </template>
@@ -625,6 +782,9 @@ function formatDate(iso: string) {
   min-width: 0;
   box-sizing: border-box;
 }
+.sys-config-page-header .page-lead {
+  max-width: 42rem;
+}
 .page h1 {
   margin: 0 0 0.5rem;
   font-size: 1.5rem;
@@ -635,6 +795,218 @@ function formatDate(iso: string) {
   color: var(--text-secondary);
   font-size: 0.9375rem;
   margin: 0 0 1rem;
+}
+
+.sys-config-shell {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-height: min(70vh, 720px);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.sys-config-nav {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1rem 0.75rem;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  min-width: 7.5rem;
+}
+
+.sys-config-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.75rem 0.5rem;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sys-config-nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sys-config-nav-item--active {
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.25);
+}
+
+.sys-config-nav-icon {
+  width: 1.5rem;
+  height: 1.5rem;
+  color: currentColor;
+}
+
+.sys-config-nav-label {
+  text-align: center;
+  line-height: 1.2;
+  max-width: 5.5rem;
+}
+
+.sys-config-main {
+  flex: 1;
+  min-width: 0;
+  padding: 1.25rem 1.25rem 1.5rem;
+  overflow: auto;
+}
+
+.sys-config-panel-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sys-config-panel-lead {
+  margin: 0 0 1rem;
+  max-width: 48rem;
+  line-height: 1.5;
+}
+
+.sys-config-panel-lead .code-inline {
+  font-size: 0.8125rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+}
+
+.sys-config-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  max-width: 36rem;
+}
+
+.sys-config-search-icon {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.sys-config-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.sys-config-search-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.config-item {
+  margin-bottom: 1.5rem;
+  padding: 1.1rem 1rem 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-primary);
+}
+
+.config-item:last-child {
+  margin-bottom: 0;
+}
+
+.config-item-title {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.config-item-key {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  font-style: italic;
+  color: var(--text-tertiary);
+  font-family: ui-monospace, monospace;
+}
+
+.config-item-desc {
+  margin: 0 0 0.85rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  max-width: 48rem;
+}
+
+.config-item-desc strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.config-item-control {
+  margin-bottom: 0.65rem;
+}
+
+.config-item-note {
+  margin: 0;
+  font-size: 0.75rem;
+  font-style: italic;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+.config-item-note .code-inline {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  font-style: normal;
+  font-family: ui-monospace, monospace;
+}
+
+@media (max-width: 640px) {
+  .sys-config-shell {
+    flex-direction: column;
+    min-height: 0;
+  }
+  .sys-config-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    padding: 0.75rem;
+  }
+  .sys-config-nav-item {
+    flex: 1 1 auto;
+    min-width: 44%;
+    flex-direction: row;
+    justify-content: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+  }
+  .sys-config-nav-label {
+    max-width: none;
+  }
 }
 .banner-error {
   padding: 0.75rem 1rem;
@@ -675,12 +1047,6 @@ function formatDate(iso: string) {
 .loading-state {
   color: var(--text-tertiary);
   padding: 1rem 0;
-}
-.table-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 1rem;
 }
 .new-row {
   display: flex;
@@ -808,30 +1174,6 @@ function formatDate(iso: string) {
   border: 0;
 }
 
-.geofence-section {
-  margin-bottom: 2rem;
-  padding: 1.25rem;
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  background: var(--bg-secondary);
-}
-.section-title {
-  margin: 0 0 0.35rem;
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.section-desc {
-  margin: 0 0 1rem;
-  max-width: 52rem;
-}
-.section-desc .code-inline {
-  font-size: 0.8125rem;
-  padding: 0.1rem 0.35rem;
-  border-radius: 4px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-}
 .geofence-map-wrap {
   position: relative;
   margin-bottom: 1rem;
@@ -896,24 +1238,13 @@ function formatDate(iso: string) {
   font-variant-numeric: tabular-nums;
 }
 
-.geo-table-wrap {
-  margin-top: 1.5rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--border-color);
-}
 .geo-table-header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.75rem;
   margin-bottom: 0.75rem;
-}
-.geo-table-title {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-primary);
 }
 .btn-add-location {
   padding: 0.45rem 0.9rem;

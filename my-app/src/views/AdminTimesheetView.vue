@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import supabase from '../lib/supabaseClient'
-import { ChevronDownIcon } from '@heroicons/vue/24/outline'
+import { ChevronDownIcon, TrophyIcon, CalendarDaysIcon } from '@heroicons/vue/24/outline'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import JSZip from 'jszip'
@@ -15,9 +15,21 @@ import {
   parseLocation,
   type AttendanceRow
 } from '../composables/useAttendance'
+import { Chart, registerables } from 'chart.js'
+
+Chart.register(...registerables)
 
 const ATTENDANCE_SELECT =
   'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,created_at,updated_at,work_modality,facial_verifications_id,wfh_pic_url,output'
+
+/** Minimal rows for admin list analytics (rolling ~36 days). */
+const ANALYTICS_SELECT = 'user_id,clock_in,clock_out'
+
+interface AnalyticsLiteRow {
+  user_id: string
+  clock_in: string | null
+  clock_out: string | null
+}
 
 interface EmpLite {
   id: string
@@ -30,6 +42,12 @@ interface EmpLite {
 
 const employees = ref<EmpLite[]>([])
 const loadingEmployees = ref(true)
+
+const analyticsRows = ref<AnalyticsLiteRow[]>([])
+const analyticsLoading = ref(false)
+const analyticsError = ref<string | null>(null)
+/** Local calendar day (YYYY-MM-DD) for absentee snapshot. */
+const analyticsFocusDate = ref(getLocalDateString(new Date()))
 
 const error = ref<string | null>(null)
 
@@ -211,6 +229,16 @@ const detailAttendanceRow = ref<AttendanceRow | null>(null)
 const detailMapEl = ref<HTMLElement | null>(null)
 let detailMapInstance: L.Map | null = null
 
+const detailGeoAddressCache = ref<Record<string, string>>({})
+const detailAddrIn = ref<string | null>(null)
+const detailAddrOut = ref<string | null>(null)
+const detailAddrLoading = ref(false)
+
+const analyticsBarRef = ref<HTMLCanvasElement | null>(null)
+const analyticsPieRef = ref<HTMLCanvasElement | null>(null)
+let analyticsBarChart: Chart | null = null
+let analyticsPieChart: Chart | null = null
+
 function destroyDetailMap() {
   if (detailMapInstance) {
     detailMapInstance.remove()
@@ -273,12 +301,60 @@ function initDetailMap() {
   void nextTick(() => detailMapInstance?.invalidateSize())
 }
 
+async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+  const key = `${lat.toFixed(6)},${lng.toFixed(6)}`
+  if (detailGeoAddressCache.value[key]) return detailGeoAddressCache.value[key]
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+      { headers: { 'Accept-Language': 'en', 'User-Agent': 'TimeWorthAdmin/1.0' } }
+    )
+    const data = await res.json()
+    const addr = typeof data?.display_name === 'string' ? data.display_name.trim() : ''
+    if (addr) {
+      detailGeoAddressCache.value = { ...detailGeoAddressCache.value, [key]: addr }
+      return addr
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+async function loadDetailAddresses(r: AttendanceRow) {
+  detailAddrIn.value = null
+  detailAddrOut.value = null
+  const pin = parseLocation(r.location_in)
+  const pout = parseLocation(r.location_out)
+  if (!pin && !pout) return
+  detailAddrLoading.value = true
+  try {
+    async function addrFor(lat: number, lng: number): Promise<string> {
+      const a = await reverseGeocode(lat, lng)
+      return a ?? 'Address unavailable'
+    }
+    if (pin && pout && pin.lat === pout.lat && pin.lng === pout.lng) {
+      const line = await addrFor(pin.lat, pin.lng)
+      detailAddrIn.value = line
+      detailAddrOut.value = line
+    } else {
+      if (pin) detailAddrIn.value = await addrFor(pin.lat, pin.lng)
+      if (pout) detailAddrOut.value = await addrFor(pout.lat, pout.lng)
+    }
+  } finally {
+    detailAddrLoading.value = false
+  }
+}
+
 function openAttendanceDetail(r: AttendanceRow) {
   detailAttendanceRow.value = r
 }
 
 function closeAttendanceDetail() {
   destroyDetailMap()
+  detailAddrIn.value = null
+  detailAddrOut.value = null
+  detailAddrLoading.value = false
   detailAttendanceRow.value = null
 }
 
@@ -291,15 +367,155 @@ watch(
   { flush: 'post' }
 )
 
-function officeLocationLabel(r: AttendanceRow): string {
+watch(
+  detailAttendanceRow,
+  (r) => {
+    if (!r) {
+      detailAddrIn.value = null
+      detailAddrOut.value = null
+      detailAddrLoading.value = false
+      return
+    }
+    void loadDetailAddresses(r)
+  },
+  { immediate: true }
+)
+
+/** Branch name only when stored locations are missing (no map). */
+function officeLocationBranchOnly(r: AttendanceRow): string {
   const b = r.branch_location ? getBranch(r.branch_location) : null
-  const parts: string[] = []
-  if (b) parts.push(b.name)
-  const pin = parseLocation(r.location_in)
-  const pout = parseLocation(r.location_out)
-  if (pin) parts.push(`In ${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}`)
-  if (pout) parts.push(`Out ${pout.lat.toFixed(5)}, ${pout.lng.toFixed(5)}`)
-  return parts.length ? parts.join(' · ') : '—'
+  return b?.name ?? '—'
+}
+
+const detailBranchLine = computed(() => {
+  const r = detailAttendanceRow.value
+  if (!r) return ''
+  const b = r.branch_location ? getBranch(r.branch_location) : null
+  return b?.name ?? ''
+})
+
+const detailHasMapPins = computed(() => {
+  const r = detailAttendanceRow.value
+  if (!r) return false
+  return !!(parseLocation(r.location_in) || parseLocation(r.location_out))
+})
+
+function destroyAnalyticsCharts() {
+  analyticsBarChart?.destroy()
+  analyticsBarChart = null
+  analyticsPieChart?.destroy()
+  analyticsPieChart = null
+}
+
+function updateAnalyticsCharts() {
+  if (analyticsLoading.value) return
+  const barEl = analyticsBarRef.value
+  const pieEl = analyticsPieRef.value
+  if (!barEl || !pieEl) return
+
+  destroyAnalyticsCharts()
+
+  const a7 = employeesCompletedLast7.value
+  const a30 = employeesCompletedLast30.value
+  const tot = totalEmployeesCount.value
+
+  analyticsBarChart = new Chart(barEl, {
+    type: 'bar',
+    data: {
+      labels: ['With completion (7 days)', 'With completion (30 days)', 'Directory total'],
+      datasets: [
+        {
+          label: 'Employees',
+          data: [a7, a30, tot],
+          backgroundColor: ['rgba(14, 165, 233, 0.9)', 'rgba(37, 99, 235, 0.88)', 'rgba(148, 163, 184, 0.75)'],
+          borderRadius: 8,
+          borderSkipped: false
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        title: {
+          display: true,
+          text: 'Participation',
+          color: '#334155',
+          font: { size: 14, weight: 'bold' }
+        },
+        tooltip: {
+          callbacks: {
+            label(ctx) {
+              const v = ctx.parsed.y
+              return `${ctx.dataset.label ?? ''}: ${v}`
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#64748b', maxRotation: 45, minRotation: 0, font: { size: 11 } },
+          grid: { display: false }
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { precision: 0, color: '#64748b' },
+          grid: { color: 'rgba(148, 163, 184, 0.25)' }
+        }
+      }
+    }
+  })
+
+  const present = presentUserIdsOnFocusDate.value.size
+  const absent = absentEmployeeCountOnFocusDate.value
+  const pieData =
+    present === 0 && absent === 0
+      ? [1]
+      : [present, absent]
+  const pieLabels = present === 0 && absent === 0 ? ['No data'] : ['Clock-in', 'Absent']
+  const pieColors = present === 0 && absent === 0 ? ['#e2e8f0'] : ['#22c55e', '#fb923c']
+
+  analyticsPieChart = new Chart(pieEl, {
+    type: 'doughnut',
+    data: {
+      labels: pieLabels,
+      datasets: [
+        {
+          data: pieData,
+          backgroundColor: pieColors,
+          borderWidth: 0,
+          hoverOffset: 6
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '58%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { color: '#64748b', padding: 12, font: { size: 12 } }
+        },
+        title: {
+          display: true,
+          text: `Day snapshot · ${analyticsFocusDate.value}`,
+          color: '#334155',
+          font: { size: 13, weight: 'bold' }
+        },
+        tooltip: {
+          callbacks: {
+            label(ctx) {
+              if (present === 0 && absent === 0) return 'No data'
+              const n = typeof ctx.parsed === 'number' ? ctx.parsed : 0
+              return `${ctx.label ?? ''}: ${n}`
+            }
+          }
+        }
+      }
+    }
+  })
 }
 
 const wfhSignedUrls = ref<Record<string, string | null>>({})
@@ -774,6 +990,38 @@ async function loadEmployees() {
   selectedEmployeeIds.value = nextSel
 }
 
+async function loadAnalyticsData() {
+  analyticsLoading.value = true
+  analyticsError.value = null
+  try {
+    const end = new Date()
+    const start = new Date()
+    start.setDate(start.getDate() - 35)
+    const startDay = getLocalDateString(start)
+    const endDay = getLocalDateString(end)
+    const { dbStart, dbEnd } = clockInDbZRange(startDay, endDay)
+    const { data, error: err } = await supabase
+      .from('attendance')
+      .select(ANALYTICS_SELECT)
+      .gte('clock_in', dbStart)
+      .lte('clock_in', dbEnd)
+      .order('clock_in', { ascending: false })
+      .limit(10000)
+    if (err) throw err
+    analyticsRows.value = (data ?? []) as AnalyticsLiteRow[]
+  } catch (e) {
+    analyticsError.value = e instanceof Error ? e.message : 'Unable to load analytics.'
+    analyticsRows.value = []
+  } finally {
+    analyticsLoading.value = false
+  }
+}
+
+async function refreshEmployeesAndAnalytics() {
+  await loadEmployees()
+  await loadAnalyticsData()
+}
+
 const filteredEmployees = computed(() => {
   const q = employeeSearch.value.trim().toLowerCase()
   let rows = employees.value
@@ -811,6 +1059,164 @@ const pagedEmployees = computed(() => {
 const selectedEmployeeCount = computed(
   () => Object.values(selectedEmployeeIds.value).filter(Boolean).length
 )
+
+const employeesCompletedLast7 = computed(() => {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(end.getDate() - 6)
+  const startDay = getLocalDateString(start)
+  const endDay = getLocalDateString(end)
+  const users = new Set<string>()
+  for (const r of analyticsRows.value) {
+    if (!r.clock_in || !r.clock_out) continue
+    const day = getLocalDateString(new Date(storedToRealInstant(r.clock_in)))
+    if (day >= startDay && day <= endDay) users.add(r.user_id)
+  }
+  return users.size
+})
+
+const employeesCompletedLast30 = computed(() => {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(end.getDate() - 29)
+  const startDay = getLocalDateString(start)
+  const endDay = getLocalDateString(end)
+  const users = new Set<string>()
+  for (const r of analyticsRows.value) {
+    if (!r.clock_in || !r.clock_out) continue
+    const day = getLocalDateString(new Date(storedToRealInstant(r.clock_in)))
+    if (day >= startDay && day <= endDay) users.add(r.user_id)
+  }
+  return users.size
+})
+
+const spotlightConsistency = computed(() => {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(end.getDate() - 29)
+  const startDay = getLocalDateString(start)
+  const endDay = getLocalDateString(end)
+  const userDays = new Map<string, Set<string>>()
+  for (const r of analyticsRows.value) {
+    if (!r.clock_in || !r.clock_out) continue
+    const day = getLocalDateString(new Date(storedToRealInstant(r.clock_in)))
+    if (day < startDay || day > endDay) continue
+    const uid = r.user_id
+    if (!userDays.has(uid)) userDays.set(uid, new Set())
+    userDays.get(uid)!.add(day)
+  }
+  const candidates: { id: string; days: number }[] = []
+  for (const [uid, days] of userDays) {
+    candidates.push({ id: uid, days: days.size })
+  }
+  if (!candidates.length) return null
+  const maxDays = Math.max(...candidates.map((c) => c.days))
+  const tied = candidates.filter((c) => c.days === maxDays)
+  tied.sort((a, b) => {
+    const na = employees.value.find((e) => e.id === a.id)?.name ?? ''
+    const nb = employees.value.find((e) => e.id === b.id)?.name ?? ''
+    return na.localeCompare(nb)
+  })
+  const winner = tied[0]
+  const emp = employees.value.find((e) => e.id === winner.id)
+  return {
+    name: emp?.name ?? 'Unknown',
+    days: winner.days,
+    employeeId: winner.id
+  }
+})
+
+const mostAbsentLast30 = computed(() => {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(end.getDate() - 29)
+  const startDay = getLocalDateString(start)
+  const endDay = getLocalDateString(end)
+  const dayList: string[] = []
+  let d = startDay
+  while (d <= endDay) {
+    dayList.push(d)
+    d = addCalendarDaysYmd(d, 1)
+  }
+  const presentByUser = new Map<string, Set<string>>()
+  for (const r of analyticsRows.value) {
+    if (!r.clock_in) continue
+    const day = getLocalDateString(new Date(storedToRealInstant(r.clock_in)))
+    if (day < startDay || day > endDay) continue
+    if (!presentByUser.has(r.user_id)) presentByUser.set(r.user_id, new Set())
+    presentByUser.get(r.user_id)!.add(day)
+  }
+  const candidates: { id: string; absent: number }[] = []
+  for (const emp of employees.value) {
+    const present = presentByUser.get(emp.id) ?? new Set()
+    let absent = 0
+    for (const day of dayList) {
+      if (!present.has(day)) absent++
+    }
+    candidates.push({ id: emp.id, absent })
+  }
+  if (!candidates.length) return null
+  const maxAbsent = Math.max(...candidates.map((c) => c.absent))
+  if (!Number.isFinite(maxAbsent) || maxAbsent === 0) return null
+  const tied = candidates.filter((c) => c.absent === maxAbsent)
+  tied.sort((a, b) => {
+    const na = employees.value.find((e) => e.id === a.id)?.name ?? ''
+    const nb = employees.value.find((e) => e.id === b.id)?.name ?? ''
+    return na.localeCompare(nb)
+  })
+  const w = tied[0]
+  const emp = employees.value.find((e) => e.id === w.id)
+  return {
+    name: emp?.name ?? 'Unknown',
+    days: w.absent,
+    employeeId: w.id
+  }
+})
+
+const presentUserIdsOnFocusDate = computed(() => {
+  const day = analyticsFocusDate.value
+  const set = new Set<string>()
+  for (const r of analyticsRows.value) {
+    if (!r.clock_in) continue
+    const d = getLocalDateString(new Date(storedToRealInstant(r.clock_in)))
+    if (d === day) set.add(r.user_id)
+  }
+  return set
+})
+
+const absentEmployeeCountOnFocusDate = computed(() =>
+  employees.value.filter((e) => !presentUserIdsOnFocusDate.value.has(e.id)).length
+)
+
+const totalEmployeesCount = computed(() => employees.value.length)
+
+function formatAnalyticsDateLabel(isoDay: string): string {
+  try {
+    const dt = new Date(isoDay + 'T12:00:00')
+    return dt.toLocaleDateString(undefined, {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric'
+    })
+  } catch {
+    return isoDay
+  }
+}
+
+function openSpotlightEmployee() {
+  const id = spotlightConsistency.value?.employeeId
+  if (!id) return
+  const emp = employees.value.find((e) => e.id === id)
+  if (emp) void openEmployeeModal(emp)
+}
+
+function openMostAbsentEmployee() {
+  const id = mostAbsentLast30.value?.employeeId
+  if (!id) return
+  const emp = employees.value.find((e) => e.id === id)
+  if (emp) void openEmployeeModal(emp)
+}
 
 const allVisibleOnPageSelected = computed(() => {
   const page = pagedEmployees.value
@@ -875,6 +1281,9 @@ async function openEmployeeModal(emp: EmpLite) {
 function closeEmployeeModal() {
   showHistoryDateDropdown.value = false
   destroyDetailMap()
+  detailAddrIn.value = null
+  detailAddrOut.value = null
+  detailAddrLoading.value = false
   detailAttendanceRow.value = null
   activeEmployee.value = null
   activeProfileUrl.value = null
@@ -965,12 +1374,32 @@ watch([sortedFilteredHistoryRows, modalityFilter, timeComplianceFilter], () => {
   historyDayPage.value = 1
 })
 
+watch(
+  [
+    analyticsLoading,
+    employeesCompletedLast7,
+    employeesCompletedLast30,
+    totalEmployeesCount,
+    absentEmployeeCountOnFocusDate,
+    analyticsFocusDate
+  ],
+  async () => {
+    await nextTick()
+    updateAnalyticsCharts()
+  },
+  { flush: 'post' }
+)
+
 onMounted(async () => {
   await loadEmployees()
+  await loadAnalyticsData()
+  await nextTick()
+  updateAnalyticsCharts()
   document.addEventListener('click', handleHistoryDateFilterClickOutside)
 })
 
 onUnmounted(() => {
+  destroyAnalyticsCharts()
   destroyDetailMap()
   document.removeEventListener('click', handleHistoryDateFilterClickOutside)
   window.removeEventListener('scroll', positionHistoryDateDropdown, true)
@@ -981,6 +1410,113 @@ onUnmounted(() => {
 <template>
   <div class="page admin-ts-page">
     <p v-if="error" class="banner-error">{{ error }}</p>
+
+    <section class="admin-ts-analytics" aria-label="Attendance overview">
+      <p v-if="analyticsError" class="admin-ts-analytics-error">{{ analyticsError }}</p>
+
+      <div
+        class="admin-ts-hero"
+        :class="{ 'admin-ts-hero--clickable': !!spotlightConsistency }"
+        role="region"
+        aria-label="Consistency spotlight"
+        @click="openSpotlightEmployee"
+      >
+        <div class="admin-ts-hero-bg" aria-hidden="true" />
+        <div class="admin-ts-hero-inner">
+          <div class="admin-ts-hero-icon-wrap">
+            <TrophyIcon class="admin-ts-hero-trophy" aria-hidden="true" />
+          </div>
+          <div class="admin-ts-hero-copy">
+            <p class="admin-ts-hero-kicker">Last 30 days · most consistent completions</p>
+            <h2 class="admin-ts-hero-title">
+              <template v-if="analyticsLoading">Loading…</template>
+              <template v-else-if="spotlightConsistency">{{ spotlightConsistency.name }}</template>
+              <template v-else>Not enough data yet</template>
+            </h2>
+            <p class="admin-ts-hero-sub">
+              <template v-if="!analyticsLoading && spotlightConsistency">
+                {{ spotlightConsistency.days }} distinct day(s) with a completed timesheet (clock-in and clock-out).
+              </template>
+              <template v-else-if="!analyticsLoading">Once employees finish full days, a standout will appear here.</template>
+            </p>
+            <p v-if="spotlightConsistency" class="admin-ts-hero-hint">Click to open their timesheet history</p>
+          </div>
+          <div v-if="spotlightConsistency && !analyticsLoading" class="admin-ts-hero-stat" aria-hidden="true">
+            <span class="admin-ts-hero-stat-val">{{ spotlightConsistency.days }}</span>
+            <span class="admin-ts-hero-stat-lbl">days</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="admin-ts-charts-grid" aria-label="Charts">
+        <div class="admin-ts-chart-card">
+          <div v-if="analyticsLoading" class="admin-ts-chart-loading">Loading…</div>
+          <div class="admin-ts-chart-inner">
+            <canvas ref="analyticsBarRef" />
+          </div>
+        </div>
+        <div class="admin-ts-chart-card">
+          <div v-if="analyticsLoading" class="admin-ts-chart-loading">Loading…</div>
+          <div class="admin-ts-chart-inner">
+            <canvas ref="analyticsPieRef" />
+          </div>
+        </div>
+      </div>
+
+      <div class="admin-ts-kpi-row" aria-label="Key figures">
+        <span class="admin-ts-kpi-chip">
+          <strong>{{ analyticsLoading ? '—' : employeesCompletedLast7 }}</strong>
+          completed (7 days)
+        </span>
+        <span class="admin-ts-kpi-chip">
+          <strong>{{ analyticsLoading ? '—' : employeesCompletedLast30 }}</strong>
+          completed (30 days)
+        </span>
+        <span class="admin-ts-kpi-chip admin-ts-kpi-chip--muted">
+          <strong>{{ analyticsLoading ? '—' : totalEmployeesCount }}</strong>
+          in directory
+        </span>
+      </div>
+
+      <div class="admin-ts-absent-panel">
+        <div class="admin-ts-absent-head">
+          <CalendarDaysIcon class="admin-ts-absent-cal-ico" aria-hidden="true" />
+          <div>
+            <h3 class="admin-ts-absent-title">Absentee snapshot</h3>
+            <p class="admin-ts-absent-desc">
+              Pick a date (local). “Absent” means no clock-in that calendar day. Use this to review a specific day or investigate patterns.
+            </p>
+          </div>
+          <label class="admin-ts-date-field">
+            <span class="sr-only">Date</span>
+            <input v-model="analyticsFocusDate" type="date" class="admin-ts-date-input" />
+          </label>
+        </div>
+        <p class="admin-ts-absent-line">
+          <strong>{{ formatAnalyticsDateLabel(analyticsFocusDate) }}</strong>
+          —
+          <span v-if="analyticsLoading">Loading…</span>
+          <template v-else>
+            <span class="admin-ts-absent-num">{{ absentEmployeeCountOnFocusDate }}</span>
+            absent
+            <span class="admin-ts-absent-muted">({{ presentUserIdsOnFocusDate.size }} with a clock-in · {{ totalEmployeesCount }} total)</span>
+          </template>
+        </p>
+        <div
+          v-if="mostAbsentLast30 && !analyticsLoading"
+          class="admin-ts-absent-champ"
+          :class="{ 'admin-ts-absent-champ--click': true }"
+          role="button"
+          tabindex="0"
+          @click="openMostAbsentEmployee"
+          @keydown.enter.prevent="openMostAbsentEmployee"
+        >
+          <span class="admin-ts-absent-champ-lbl">Most days without clock-in (last 30 days)</span>
+          <span class="admin-ts-absent-champ-name">{{ mostAbsentLast30.name }}</span>
+          <span class="admin-ts-absent-champ-meta">{{ mostAbsentLast30.days }} day(s) · click to view history</span>
+        </div>
+      </div>
+    </section>
 
     <div class="admin-ts-layout">
       <aside class="admin-ts-sidebar" aria-label="Employee list">
@@ -1070,7 +1606,7 @@ onUnmounted(() => {
               type="button"
               class="btn btn-secondary btn-toolbar-refresh"
               :disabled="loadingEmployees || bulkDownloadBusy"
-              @click="loadEmployees"
+              @click="refreshEmployeesAndAnalytics"
             >
               {{ loadingEmployees ? 'Refreshing…' : 'Refresh' }}
             </button>
@@ -1335,7 +1871,26 @@ onUnmounted(() => {
               class="admin-detail-map-wrap"
             >
               <div ref="detailMapEl" class="admin-detail-map" />
-              <p class="admin-detail-map-caption">{{ officeLocationLabel(detailAttendanceRow) }}</p>
+              <div class="admin-detail-map-caption">
+                <p v-if="detailBranchLine" class="admin-detail-loc-branch">{{ detailBranchLine }}</p>
+                <p v-if="detailAddrLoading" class="admin-detail-loc-loading">Loading addresses…</p>
+                <template v-else>
+                  <p v-if="detailAddrIn" class="admin-detail-loc-line">
+                    <span class="admin-detail-loc-k">Clock in</span>
+                    {{ detailAddrIn }}
+                  </p>
+                  <p v-if="detailAddrOut" class="admin-detail-loc-line">
+                    <span class="admin-detail-loc-k">Clock out</span>
+                    {{ detailAddrOut }}
+                  </p>
+                  <p
+                    v-if="detailHasMapPins && !detailAddrIn && !detailAddrOut && !detailAddrLoading"
+                    class="admin-detail-loc-fallback muted"
+                  >
+                    Address could not be resolved.
+                  </p>
+                </template>
+              </div>
             </div>
             <div class="admin-entry-grid admin-entry-grid--detail">
               <div class="admin-entry-field">
@@ -1381,7 +1936,7 @@ onUnmounted(() => {
                 class="admin-entry-field admin-entry-field--wide"
               >
                 <span class="admin-entry-lbl">Location</span>
-                <span class="admin-entry-val">{{ officeLocationLabel(detailAttendanceRow) }}</span>
+                <span class="admin-entry-val">{{ officeLocationBranchOnly(detailAttendanceRow) }}</span>
               </div>
             </div>
             <div class="admin-entry-output">
@@ -1403,6 +1958,362 @@ onUnmounted(() => {
 
 .admin-ts-page {
   min-height: calc(100vh - 120px);
+}
+
+.admin-ts-analytics {
+  max-width: 1600px;
+  margin: 0 auto 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.admin-ts-analytics-error {
+  margin: 0;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--error, #f87171);
+  font-size: 0.875rem;
+}
+
+.admin-ts-hero {
+  position: relative;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-light, #e2e8f0);
+  min-height: 132px;
+}
+
+.admin-ts-hero--clickable {
+  cursor: pointer;
+}
+
+.admin-ts-hero--clickable:focus-visible {
+  outline: 2px solid var(--accent, #38bdf8);
+  outline-offset: 2px;
+}
+
+.admin-ts-hero-bg {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, #0ea5e9 0%, #2563eb 42%, #1d4ed8 100%);
+  opacity: 0.92;
+}
+
+.admin-ts-hero-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  color: #fff;
+}
+
+.admin-ts-hero-icon-wrap {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-ts-hero-trophy {
+  width: 1.75rem;
+  height: 1.75rem;
+  color: #fef08a;
+}
+
+.admin-ts-hero-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-ts-hero-kicker {
+  margin: 0 0 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.88;
+}
+
+.admin-ts-hero-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.admin-ts-hero-sub {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  opacity: 0.92;
+  max-width: 42rem;
+}
+
+.admin-ts-hero-hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  opacity: 0.75;
+  font-style: italic;
+}
+
+.admin-ts-hero-stat {
+  flex-shrink: 0;
+  text-align: center;
+  padding: 0.5rem 0.85rem;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.admin-ts-hero-stat-val {
+  display: block;
+  font-size: 1.75rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.admin-ts-hero-stat-lbl {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.85;
+}
+
+.admin-ts-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+@media (max-width: 960px) {
+  .admin-ts-charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-ts-chart-card {
+  position: relative;
+  border-radius: 12px;
+  border: 1px solid var(--border-light, #e2e8f0);
+  background: var(--bg-secondary, #fff);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  min-height: 220px;
+  padding: 0.5rem 0.65rem 0.75rem;
+}
+
+.admin-ts-chart-inner {
+  position: relative;
+  z-index: 1;
+  height: 220px;
+  width: 100%;
+}
+
+.admin-ts-chart-inner canvas {
+  max-height: 220px;
+}
+
+.admin-ts-chart-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 12px;
+  backdrop-filter: blur(2px);
+}
+
+.admin-ts-kpi-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.admin-ts-kpi-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary, #f1f5f9);
+  border: 1px solid var(--border-light, #e2e8f0);
+}
+
+.admin-ts-kpi-chip strong {
+  font-size: 0.95rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.admin-ts-kpi-chip--muted {
+  opacity: 0.95;
+}
+
+.admin-ts-absent-panel {
+  border-radius: 12px;
+  border: 1px solid var(--border-light, #e2e8f0);
+  background: var(--bg-secondary, #fff);
+  padding: 1rem 1.1rem;
+}
+
+.admin-ts-absent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.65rem;
+}
+
+.admin-ts-absent-cal-ico {
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
+  color: var(--accent, #0ea5e9);
+  margin-top: 0.15rem;
+}
+
+.admin-ts-absent-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.admin-ts-absent-desc {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  max-width: 40rem;
+}
+
+.admin-ts-date-field {
+  margin-left: auto;
+}
+
+.admin-ts-date-input {
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-ts-absent-line {
+  margin: 0 0 0.65rem;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.admin-ts-absent-num {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent, #0ea5e9);
+}
+
+.admin-ts-absent-muted {
+  color: var(--text-tertiary);
+  font-size: 0.8125rem;
+}
+
+.admin-ts-absent-champ {
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  background: var(--bg-tertiary, #f1f5f9);
+  border: 1px dashed var(--border-light);
+}
+
+.admin-ts-absent-champ--click {
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.admin-ts-absent-champ--click:hover {
+  background: rgba(56, 189, 248, 0.08);
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.admin-ts-absent-champ--click:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.admin-ts-absent-champ-lbl {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin-bottom: 0.25rem;
+}
+
+.admin-ts-absent-champ-name {
+  display: block;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.admin-ts-absent-champ-meta {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-top: 0.2rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 640px) {
+  .admin-ts-hero-inner {
+    flex-wrap: wrap;
+  }
+  .admin-ts-hero-stat {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+  .admin-ts-date-field {
+    width: 100%;
+    margin-left: 0;
+  }
+  .admin-ts-date-input {
+    width: 100%;
+  }
 }
 
 .admin-ts-layout {
@@ -1846,11 +2757,47 @@ onUnmounted(() => {
 }
 
 .admin-detail-map-caption {
-  margin: 0.4rem 0 0;
-  font-size: 0.75rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.8125rem;
   line-height: 1.45;
   color: var(--text-secondary);
   word-break: break-word;
+}
+
+.admin-detail-loc-branch {
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+}
+
+.admin-detail-loc-loading {
+  margin: 0;
+  font-style: italic;
+  color: var(--text-tertiary);
+}
+
+.admin-detail-loc-line {
+  margin: 0.2rem 0 0;
+}
+
+.admin-detail-loc-line:first-of-type {
+  margin-top: 0;
+}
+
+.admin-detail-loc-k {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin-right: 0.35rem;
+}
+
+.admin-detail-loc-fallback {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
 }
 
 .admin-entry-grid--detail {
