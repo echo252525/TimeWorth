@@ -98,7 +98,7 @@ async function submit() {
           <div class="auth-actions-row">
             <button type="button" class="btn btn-outline-secondary" @click="router.push(backRoute)">Back</button>
             <button type="submit" class="btn primary" :disabled="isLoading">
-              {{ isLoading ? 'Sending link…' : 'Send link' }}
+              {{ isLoading ? 'Sending Link…' : 'Send Link' }}
             </button>
           </div>
         </form>
