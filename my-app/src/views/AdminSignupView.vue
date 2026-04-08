@@ -124,7 +124,7 @@
             v-model="form.first_name"
             type="text"
             required
-            placeholder="First name"
+            placeholder="First Name"
             autocomplete="given-name"
           />
         </div>
@@ -135,7 +135,7 @@
             v-model="form.middle_initial"
             type="text"
             maxlength="8"
-            placeholder="Middle initial"
+            placeholder="Middle Initial"
             autocomplete="additional-name"
           />
         </div>
@@ -146,18 +146,18 @@
             v-model="form.last_name"
             type="text"
             required
-            placeholder="Last name"
+            placeholder="Last Name"
             autocomplete="family-name"
           />
         </div>
       </div>
       <div ref="step2Panel" v-show="signupStep === 2" class="signup-step-panel">
-        <div class="field"><label for="employeeid">Employee ID <span class="required-asterisk">*</span></label><input id="employeeid" v-model="form.employeeid" type="text" required placeholder="Your employee ID" autocomplete="off" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
-        <div class="field"><label for="email">Email <span class="required-asterisk">*</span></label><input id="email" v-model="form.email" type="email" required placeholder="admin@company.com" autocomplete="email" /></div>
+        <div class="field"><label for="employeeid">EMPLOYEE NO. (Enter N/A if not available)</label><input id="employeeid" v-model="form.employeeid" type="text" required placeholder="PCW00000" autocomplete="off" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
+        <div class="field"><label for="email">EMAIL <span class="required-asterisk">*</span></label><input id="email" v-model="form.email" type="email" required placeholder="name@gmail.com" autocomplete="email" /></div>
       </div>
       <div v-show="signupStep === 3" class="signup-step-panel">
         <div class="field">
-          <label for="password">Password <span class="required-asterisk">*</span></label>
+          <label for="password">PASSWORD (Must be at least 6 characters) <span class="required-asterisk">*</span></label>
           <div class="input-with-icon">
             <input
               id="password"
@@ -165,7 +165,7 @@
               :type="showPassword ? 'text' : 'password'"
               required
               minlength="6"
-              placeholder="Minimum of 6 characters"
+              placeholder="Enter password"
               autocomplete="new-password"
             />
             <button
@@ -188,7 +188,7 @@
           </div>
         </div>
         <div class="field">
-          <label for="confirmPassword">Confirm password <span class="required-asterisk">*</span></label>
+          <label for="confirmPassword">CONFIRM PASSWORD <span class="required-asterisk">*</span></label>
           <div class="input-with-icon">
             <input
               id="confirmPassword"
@@ -196,7 +196,7 @@
               :type="showConfirmPassword ? 'text' : 'password'"
               required
               minlength="6"
-              placeholder="Confirm your password"
+              placeholder="Re-enter password"
               autocomplete="new-password"
             />
             <button

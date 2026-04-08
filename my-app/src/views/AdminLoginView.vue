@@ -131,25 +131,25 @@ async function onSubmit() {
         <h2 class="auth-title"><strong>ADMIN LOGIN</strong></h2>
         <form class="auth-form" @submit.prevent="onSubmit">
           <div class="field">
-            <label for="admin-login-email">EMAIL</label>
+            <label for="admin-login-email">EMAIL <span class="required-asterisk">*</span></label>
             <input
               id="admin-login-email"
               v-model="form.email"
               type="email"
               required
-              placeholder="Enter your email used for admin account"
+              placeholder="name@gmail.com"
               autocomplete="email"
             />
           </div>
           <div class="field">
-            <label for="admin-login-password">PASSWORD</label>
+            <label for="admin-login-password">PASSWORD (Must be at least 6 characters) <span class="required-asterisk">*</span></label>
             <div class="input-with-icon">
               <input
                 id="admin-login-password"
                 v-model="form.password"
                 :type="showPassword ? 'text' : 'password'"
                 required
-                placeholder="Minimum of 6 characters"
+                placeholder="Enter password"
                 autocomplete="current-password"
               />
               <button
@@ -229,6 +229,10 @@ body.dark-mode .login-view .auth-page {
   display: flex;
   justify-content: flex-end;
   margin-top: -0.15rem;
+}
+
+.login-view .required-asterisk {
+  color: #ef4444;
 }
 
 .login-view .auth-success-banner--spaced {

@@ -22,7 +22,7 @@ const badgeText = computed(() => 'Secure recovery')
 const title = computed(() => (isAdmin.value ? 'Reset Admin Password' : 'Reset Password'))
 const subtitle = computed(() => (
   isAdmin.value
-    ? 'Enter the email linked to your admin account. A secure password reset link will be sent to you.'
+    ? 'Enter the email you used to sign up for your admin account to receive a secure password recovery link.'
     : 'Enter the email you used to sign up to receive a secure password recovery link.'
 ))
 const placeholder = computed(() => (
