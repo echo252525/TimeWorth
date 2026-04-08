@@ -117,7 +117,14 @@ function dismissEmailConfirmedModal() {
                   : 'Your account has been approved. Welcome to TimeWorth. Click okay to continue to your dashboard.'
             }}
           </p>
-          <button type="button" class="btn primary auth-modal-cta" @click="dismissAccountModal">Okay</button>
+          <button
+            type="button"
+            class="btn primary auth-modal-cta"
+            :class="{ 'auth-modal-cta--welcome': accountModal === 'welcome' }"
+            @click="dismissAccountModal"
+          >
+            Okay
+          </button>
         </div>
       </div>
       <div
@@ -315,6 +322,17 @@ body.dark-mode .login-view .auth-modal-card .auth-modal-cta.btn.primary {
 body.dark-mode .login-view .auth-modal-card .auth-modal-cta.btn.primary:hover {
   background: #0ea5e9 !important;
   border-color: #0ea5e9 !important;
+}
+
+.login-view .auth-modal-card .auth-modal-cta--welcome.btn.primary {
+  background: #22c55e !important;
+  border-color: #22c55e !important;
+  color: #0b1220 !important;
+}
+
+.login-view .auth-modal-card .auth-modal-cta--welcome.btn.primary:hover {
+  background: #16a34a !important;
+  border-color: #16a34a !important;
 }
 
 .login-view .auth-success-banner--spaced {
