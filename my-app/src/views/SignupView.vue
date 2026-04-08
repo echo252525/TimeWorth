@@ -1,134 +1,134 @@
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import AuthLayout from '../components/AuthLayout.vue'
-import { useAuth } from '../composables/useAuth'
-import supabase from '../lib/supabaseClient'
-import {
-  validateEmployeeIdentifier,
-  MAX_EMPLOYEE_IDENTIFIER_LENGTH
-} from '../lib/employeeIdentifierValidation'
+  import { reactive, ref, onMounted } from 'vue'
+  import { useRouter } from 'vue-router'
+  import AuthLayout from '../components/AuthLayout.vue'
+  import { useAuth } from '../composables/useAuth'
+  import supabase from '../lib/supabaseClient'
+  import {
+    validateEmployeeIdentifier,
+    MAX_EMPLOYEE_IDENTIFIER_LENGTH
+  } from '../lib/employeeIdentifierValidation'
 
-const router = useRouter()
-const { signUp, isLoading, error } = useAuth()
-const form = reactive({
-  first_name: '',
-  middle_initial: '',
-  last_name: '',
-  position_in_company: '',
-  employee_no: '' as string,
-  phone_number: '',
-  email: '',
-  password: '',
-  confirmPassword: ''
-})
-const showPassword = ref(false)
-const showConfirmPassword = ref(false)
-/** UI only: 1 = Personal, 2 = Employee, 3 = Security */
-const signupStep = ref(1)
-const step1Panel = ref<HTMLElement | null>(null)
-const step2Panel = ref<HTMLElement | null>(null)
-/** True after signup when email must be verified before a session exists (typical Supabase flow). */
-const postSignupAwaitingEmail = ref(false)
-
-const positionOptions = ref<{ position_id: string; title: string }[]>([])
-const positionsLoading = ref(false)
-
-onMounted(async () => {
-  positionsLoading.value = true
-  const { data, error: posErr } = await supabase.from('position').select('position_id, title').order('title', { ascending: true })
-  positionsLoading.value = false
-  if (!posErr && data?.length) positionOptions.value = data as { position_id: string; title: string }[]
-})
-
-/** Uses each control's existing HTML5 constraints (same as single-page form). */
-function validateStepPanel(el: HTMLElement | null): boolean {
-  if (!el) return true
-  const controls = el.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
-    'input:not([type=hidden]):not([type=button]):not([disabled]), select:not([disabled]), textarea:not([disabled])'
-  )
-  for (const c of controls) {
-    if (!c.checkValidity()) {
-      c.reportValidity()
-      return false
-    }
-  }
-  return true
-}
-
-/** First letter uppercase, rest lowercase (as stored in DB). */
-function titleCasePart(s: string): string {
-  const t = s.trim()
-  if (!t) return ''
-  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
-}
-
-function combineFullName(): string {
-  const first = titleCasePart(form.first_name)
-  const mid = titleCasePart(form.middle_initial)
-  const last = titleCasePart(form.last_name)
-  const parts = [first, mid, last].filter(Boolean)
-  return parts.join(' ')
-}
-
-function goBack() {
-  router.push({ name: 'Home' })
-}
-
-function nextSignupStep() {
-  if (signupStep.value === 1) {
-    if (!validateStepPanel(step1Panel.value)) return
-  } else if (signupStep.value === 2) {
-    if (!validateStepPanel(step2Panel.value)) return
-  }
-  if (signupStep.value < 3) signupStep.value += 1
-}
-
-function prevSignupStep() {
-  if (signupStep.value > 1) signupStep.value -= 1
-  else goBack()
-}
-
-function togglePassword() {
-  showPassword.value = !showPassword.value
-}
-
-function toggleConfirmPassword() {
-  showConfirmPassword.value = !showConfirmPassword.value
-}
-
-async function onSubmit() {
-  if (!form.first_name.trim() || !form.last_name.trim()) {
-    error.value = 'First name and last name are required'
-    return
-  }
-  const empErr = validateEmployeeIdentifier(form.employee_no, 'Employee number')
-  if (empErr) {
-    error.value = empErr
-    return
-  }
-  const emp = form.employee_no.trim()
-  const phone = form.phone_number.trim()
-  if (!phone) {
-    error.value = 'Phone number is required'
-    return
-  }
-  if (form.password !== form.confirmPassword) { error.value = 'Passwords do not match'; return }
-  const result = await signUp({
-    name: combineFullName(),
-    position_in_company: form.position_in_company,
-    employee_no: emp,
-    phone_number: phone,
-    email: form.email,
-    password: form.password
+  const router = useRouter()
+  const { signUp, isLoading, error } = useAuth()
+  const form = reactive({
+    first_name: '',
+    middle_initial: '',
+    last_name: '',
+    position_in_company: '',
+    employee_no: '' as string,
+    phone_number: '',
+    email: '',
+    password: '',
+    confirmPassword: ''
   })
-  if (result.error) return
-  if (result.needsEmailConfirmation) {
-    postSignupAwaitingEmail.value = true
-    return
+  const showPassword = ref(false)
+  const showConfirmPassword = ref(false)
+  /** UI only: 1 = Personal, 2 = Employee, 3 = Security */
+  const signupStep = ref(1)
+  const step1Panel = ref<HTMLElement | null>(null)
+  const step2Panel = ref<HTMLElement | null>(null)
+  /** True after signup when email must be verified before a session exists (typical Supabase flow). */
+  const postSignupAwaitingEmail = ref(false)
+
+  const positionOptions = ref<{ position_id: string; title: string }[]>([])
+  const positionsLoading = ref(false)
+
+  onMounted(async () => {
+    positionsLoading.value = true
+    const { data, error: posErr } = await supabase.from('position').select('position_id, title').order('title', { ascending: true })
+    positionsLoading.value = false
+    if (!posErr && data?.length) positionOptions.value = data as { position_id: string; title: string }[]
+  })
+
+  /** Uses each control's existing HTML5 constraints (same as single-page form). */
+  function validateStepPanel(el: HTMLElement | null): boolean {
+    if (!el) return true
+    const controls = el.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
+      'input:not([type=hidden]):not([type=button]):not([disabled]), select:not([disabled]), textarea:not([disabled])'
+    )
+    for (const c of controls) {
+      if (!c.checkValidity()) {
+        c.reportValidity()
+        return false
+      }
+    }
+    return true
   }
-  router.push('/dashboard')
-}
+
+  /** First letter uppercase, rest lowercase (as stored in DB). */
+  function titleCasePart(s: string): string {
+    const t = s.trim()
+    if (!t) return ''
+    return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
+  }
+
+  function combineFullName(): string {
+    const first = titleCasePart(form.first_name)
+    const mid = titleCasePart(form.middle_initial)
+    const last = titleCasePart(form.last_name)
+    const parts = [first, mid, last].filter(Boolean)
+    return parts.join(' ')
+  }
+
+  function goBack() {
+    router.push({ name: 'Home' })
+  }
+
+  function nextSignupStep() {
+    if (signupStep.value === 1) {
+      if (!validateStepPanel(step1Panel.value)) return
+    } else if (signupStep.value === 2) {
+      if (!validateStepPanel(step2Panel.value)) return
+    }
+    if (signupStep.value < 3) signupStep.value += 1
+  }
+
+  function prevSignupStep() {
+    if (signupStep.value > 1) signupStep.value -= 1
+    else goBack()
+  }
+
+  function togglePassword() {
+    showPassword.value = !showPassword.value
+  }
+
+  function toggleConfirmPassword() {
+    showConfirmPassword.value = !showConfirmPassword.value
+  }
+
+  async function onSubmit() {
+    if (!form.first_name.trim() || !form.last_name.trim()) {
+      error.value = 'First name and last name are required'
+      return
+    }
+    const empErr = validateEmployeeIdentifier(form.employee_no, 'Employee number')
+    if (empErr) {
+      error.value = empErr
+      return
+    }
+    const emp = form.employee_no.trim()
+    const phone = form.phone_number.trim()
+    if (!phone) {
+      error.value = 'Phone number is required'
+      return
+    }
+    if (form.password !== form.confirmPassword) { error.value = 'Passwords do not match'; return }
+    const result = await signUp({
+      name: combineFullName(),
+      position_in_company: form.position_in_company,
+      employee_no: emp,
+      phone_number: phone,
+      email: form.email,
+      password: form.password
+    })
+    if (result.error) return
+    if (result.needsEmailConfirmation) {
+      postSignupAwaitingEmail.value = true
+      return
+    }
+    router.push('/dashboard')
+  }
 </script>
 <template>
   <div class="signup-view">
@@ -146,7 +146,7 @@ async function onSubmit() {
         <router-link class="btn primary auth-success-banner__cta" to="/login">Go to log in</router-link>
       </div>
       <template v-else>
-      <h2 class="auth-title"><strong>EMPLOYEE SIGN UP</strong></h2>
+      <h3 class="auth-title"><strong>EMPLOYEE SIGN UP</strong></h3>
       <p class="signup-step-label" aria-live="polite">
         <template v-if="signupStep === 1">Personal Information</template>
         <template v-else-if="signupStep === 2">Employee Information</template>
@@ -159,13 +159,13 @@ async function onSubmit() {
       </ol>
       <form class="auth-form signup-form-steps" @submit.prevent="onSubmit">
       <div ref="step1Panel" v-show="signupStep === 1" class="signup-step-panel">
-        <div class="field"><label for="first_name">FIRST NAME*</label><input id="first_name" v-model="form.first_name" type="text" required placeholder="First name" autocomplete="given-name" /></div>
-        <div class="field"><label for="middle_initial">MIDDLE INITIAL (Optional)</label><input id="middle_initial" v-model="form.middle_initial" type="text" maxlength="8" placeholder="M.I." autocomplete="additional-name" /></div>
-        <div class="field"><label for="last_name">LAST NAME*</label><input id="last_name" v-model="form.last_name" type="text" required placeholder="Last name" autocomplete="family-name" /></div>
+        <div class="field"><label for="first_name">FIRST NAME</label><input id="first_name" v-model="form.first_name" type="text" required placeholder="First Name" autocomplete="given-name" /></div>
+        <div class="field"><label for="middle_initial">MIDDLE INITIAL (Optional)</label><input id="middle_initial" v-model="form.middle_initial" type="text" maxlength="8" placeholder="Middle Initial" autocomplete="additional-name" /></div>
+        <div class="field"><label for="last_name">LAST NAME</label><input id="last_name" v-model="form.last_name" type="text" required placeholder="Last Name" autocomplete="family-name" /></div>
       </div>
       <div ref="step2Panel" v-show="signupStep === 2" class="signup-step-panel">
         <div class="field">
-          <label for="position">POSITION IN COMPANY</label>
+          <label for="position">COMPANY POSITION</label>
           <select
             v-if="positionOptions.length"
             id="position"
@@ -186,13 +186,13 @@ async function onSubmit() {
             :disabled="positionsLoading"
           />
         </div>
-        <div class="field"><label for="empno">EMPLOYEE NO.</label><input id="empno" v-model="form.employee_no" type="text" required autocomplete="off" placeholder="Your employee number or ID" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
-        <div class="field"><label for="phone">PHONE NUMBER</label><input id="phone" v-model="form.phone_number" type="tel" required autocomplete="tel" placeholder="+63 9XX XXX XXXX" /></div>
-        <div class="field"><label for="email">COMPANY EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="company.email@pcworth.com" autocomplete="email" /></div>
+        <div class="field"><label for="empno">EMPLOYEE NO. (Enter N/A if not available)</label><input id="empno" v-model="form.employee_no" type="text" required autocomplete="off" placeholder="PCW00000" :maxlength="MAX_EMPLOYEE_IDENTIFIER_LENGTH" /></div>
+        <div class="field"><label for="phone">PHONE NUMBER</label><input id="phone" v-model="form.phone_number" type="tel" required autocomplete="tel" placeholder="09XXXXXXXXX" /></div>
+        <div class="field"><label for="email">EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="name@gmail.com" autocomplete="email" /></div>
       </div>
       <div v-show="signupStep === 3" class="signup-step-panel">
         <div class="field">
-          <label for="password">Password</label>
+          <label for="password">PASSWORD (Must be at least 6 characters)</label>
           <div class="input-with-icon">
             <input
               id="password"
@@ -200,7 +200,7 @@ async function onSubmit() {
               :type="showPassword ? 'text' : 'password'"
               required
               minlength="6"
-              placeholder="Minimum of 6 characters"
+              placeholder="Enter password"
               autocomplete="new-password"
             />
             <button
@@ -223,7 +223,7 @@ async function onSubmit() {
           </div>
         </div>
         <div class="field">
-          <label for="confirmPassword">Confirm password</label>
+          <label for="confirmPassword">CONFIRM PASSWORD</label>
           <div class="input-with-icon">
             <input
               id="confirmPassword"
@@ -231,7 +231,7 @@ async function onSubmit() {
               :type="showConfirmPassword ? 'text' : 'password'"
               required
               minlength="6"
-              placeholder="Confirm your password"
+              placeholder="Re-enter password"
               autocomplete="new-password"
             />
             <button

@@ -1,111 +1,111 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import AuthLayout from '../components/AuthLayout.vue'
-import { useAdminAuth } from '../composables/useAdminAuth'
-import {
-  validateEmployeeIdentifier,
-  MAX_EMPLOYEE_IDENTIFIER_LENGTH
-} from '../lib/employeeIdentifierValidation'
+  import { reactive, ref } from 'vue'
+  import { useRouter } from 'vue-router'
+  import AuthLayout from '../components/AuthLayout.vue'
+  import { useAdminAuth } from '../composables/useAdminAuth'
+  import {
+    validateEmployeeIdentifier,
+    MAX_EMPLOYEE_IDENTIFIER_LENGTH
+  } from '../lib/employeeIdentifierValidation'
 
-const router = useRouter()
-const { signUpAdmin } = useAdminAuth()
-const form = reactive({
-  first_name: '',
-  middle_initial: '',
-  last_name: '',
-  employeeid: '',
-  position_in_company: '',
-  email: '',
-  password: '',
-  confirmPassword: ''
-})
-const isLoading = ref(false)
-const error = ref<string | null>(null)
-
-/** UI only: 1 = Personal, 2 = Admin, 3 = Security */
-const signupStep = ref(1)
-const step1Panel = ref<HTMLElement | null>(null)
-const step2Panel = ref<HTMLElement | null>(null)
-
-const showPassword = ref(false)
-const showConfirmPassword = ref(false)
-
-/** Uses each control's existing HTML5 constraints (same as single-page form). */
-function validateStepPanel(el: HTMLElement | null): boolean {
-  if (!el) return true
-  const controls = el.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
-    'input:not([type=hidden]):not([type=button]):not([disabled]), select:not([disabled]), textarea:not([disabled])'
-  )
-  for (const c of controls) {
-    if (!c.checkValidity()) {
-      c.reportValidity()
-      return false
-    }
-  }
-  return true
-}
-
-function titleCasePart(s: string): string {
-  const t = s.trim()
-  if (!t) return ''
-  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
-}
-
-function combineFullName(): string {
-  const first = titleCasePart(form.first_name)
-  const mid = titleCasePart(form.middle_initial)
-  const last = titleCasePart(form.last_name)
-  const parts = [first, mid, last].filter(Boolean)
-  return parts.join(' ')
-}
-
-function goBack() {
-  router.push({ name: 'Home' })
-}
-
-function nextSignupStep() {
-  if (signupStep.value === 1) {
-    if (!validateStepPanel(step1Panel.value)) return
-  } else if (signupStep.value === 2) {
-    if (!validateStepPanel(step2Panel.value)) return
-  }
-  if (signupStep.value < 3) signupStep.value += 1
-}
-
-function prevSignupStep() {
-  if (signupStep.value > 1) signupStep.value -= 1
-  else goBack()
-}
-
-async function onSubmit() {
-  if (form.password !== form.confirmPassword) {
-    error.value = 'Passwords do not match'
-    return
-  }
-  const empIdErr = validateEmployeeIdentifier(form.employeeid, 'Employee ID')
-  if (empIdErr) {
-    error.value = empIdErr
-    return
-  }
-  isLoading.value = true
-  error.value = null
-  const r = await signUpAdmin({
-    name: combineFullName(),
-    employeeid: form.employeeid,
-    position_in_company: form.position_in_company,
-    email: form.email,
-    password: form.password
+  const router = useRouter()
+  const { signUpAdmin } = useAdminAuth()
+  const form = reactive({
+    first_name: '',
+    middle_initial: '',
+    last_name: '',
+    employeeid: '',
+    position_in_company: '',
+    email: '',
+    password: '',
+    confirmPassword: ''
   })
-  isLoading.value = false
-  if (r.error) { error.value = r.error; return }
-  router.push('/admin/login')
-}
+  const isLoading = ref(false)
+  const error = ref<string | null>(null)
+
+  /** UI only: 1 = Personal, 2 = Admin, 3 = Security */
+  const signupStep = ref(1)
+  const step1Panel = ref<HTMLElement | null>(null)
+  const step2Panel = ref<HTMLElement | null>(null)
+
+  const showPassword = ref(false)
+  const showConfirmPassword = ref(false)
+
+  /** Uses each control's existing HTML5 constraints (same as single-page form). */
+  function validateStepPanel(el: HTMLElement | null): boolean {
+    if (!el) return true
+    const controls = el.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
+      'input:not([type=hidden]):not([type=button]):not([disabled]), select:not([disabled]), textarea:not([disabled])'
+    )
+    for (const c of controls) {
+      if (!c.checkValidity()) {
+        c.reportValidity()
+        return false
+      }
+    }
+    return true
+  }
+
+  function titleCasePart(s: string): string {
+    const t = s.trim()
+    if (!t) return ''
+    return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
+  }
+
+  function combineFullName(): string {
+    const first = titleCasePart(form.first_name)
+    const mid = titleCasePart(form.middle_initial)
+    const last = titleCasePart(form.last_name)
+    const parts = [first, mid, last].filter(Boolean)
+    return parts.join(' ')
+  }
+
+  function goBack() {
+    router.push({ name: 'Home' })
+  }
+
+  function nextSignupStep() {
+    if (signupStep.value === 1) {
+      if (!validateStepPanel(step1Panel.value)) return
+    } else if (signupStep.value === 2) {
+      if (!validateStepPanel(step2Panel.value)) return
+    }
+    if (signupStep.value < 3) signupStep.value += 1
+  }
+
+  function prevSignupStep() {
+    if (signupStep.value > 1) signupStep.value -= 1
+    else goBack()
+  }
+
+  async function onSubmit() {
+    if (form.password !== form.confirmPassword) {
+      error.value = 'Passwords do not match'
+      return
+    }
+    const empIdErr = validateEmployeeIdentifier(form.employeeid, 'Employee ID')
+    if (empIdErr) {
+      error.value = empIdErr
+      return
+    }
+    isLoading.value = true
+    error.value = null
+    const r = await signUpAdmin({
+      name: combineFullName(),
+      employeeid: form.employeeid,
+      position_in_company: form.position_in_company,
+      email: form.email,
+      password: form.password
+    })
+    isLoading.value = false
+    if (r.error) { error.value = r.error; return }
+    router.push('/admin/login')
+  }
 </script>
 <template>
   <div class="signup-view">
     <AuthLayout>
-      <h2 class="auth-title"><strong>ADMIN SIGN UP</strong></h2>
+      <h3 class="auth-title"><strong>ADMIN SIGN UP</strong></h3>
       <p class="signup-step-label" aria-live="polite">
         <template v-if="signupStep === 1">Personal Information</template>
         <template v-else-if="signupStep === 2">Admin Information</template>
@@ -119,7 +119,7 @@ async function onSubmit() {
       <form class="auth-form signup-form-steps" @submit.prevent="onSubmit">
       <div ref="step1Panel" v-show="signupStep === 1" class="signup-step-panel">
         <div class="field">
-          <label for="first_name">First name</label>
+          <label for="first_name">FIRST NAME</label>
           <input
             id="first_name"
             v-model="form.first_name"
@@ -130,18 +130,18 @@ async function onSubmit() {
           />
         </div>
         <div class="field">
-          <label for="middle_initial">Middle initial</label>
+          <label for="middle_initial">MIDDLE INITIAL (optional)</label>
           <input
             id="middle_initial"
             v-model="form.middle_initial"
             type="text"
             maxlength="8"
-            placeholder="Optional"
+            placeholder="Middle initial"
             autocomplete="additional-name"
           />
         </div>
         <div class="field">
-          <label for="last_name">Last name</label>
+          <label for="last_name">LAST NAME</label>
           <input
             id="last_name"
             v-model="form.last_name"

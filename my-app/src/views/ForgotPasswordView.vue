@@ -19,11 +19,11 @@ const origin = computed(() => (route.query.from === 'admin' ? 'admin' : 'employe
 const isAdmin = computed(() => origin.value === 'admin')
 const backRoute = computed(() => (isAdmin.value ? '/admin/login' : '/login'))
 const badgeText = computed(() => 'Secure recovery')
-const title = computed(() => (isAdmin.value ? 'Reset your admin password' : 'Reset your employee password'))
+const title = computed(() => (isAdmin.value ? 'Reset Admin Password' : 'Reset Password'))
 const subtitle = computed(() => (
   isAdmin.value
     ? 'Enter the email linked to your admin account. A secure password reset link will be sent to you.'
-    : 'Enter the email you used to sign up for your account below. A secure link to reset your password will be sent to you.'
+    : 'Enter the email you used to sign up to receive a secure password recovery link.'
 ))
 const placeholder = computed(() => (
   isAdmin.value

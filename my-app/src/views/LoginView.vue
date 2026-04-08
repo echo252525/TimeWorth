@@ -138,18 +138,18 @@ function dismissAccountModal() {
           Your password has been changed. Sign in with your new password.
         </p>
       </div>
-      <h2 class="auth-title"><strong>LOG IN</strong></h2>
+      <h2 class="auth-title"><strong>EMPLOYEE LOGIN</strong></h2>
       <form class="auth-form" @submit.prevent="onSubmit">
-        <div class="field"><label for="email">EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="company.email@pcworth.com" autocomplete="email" /></div>
+        <div class="field"><label for="email">EMAIL</label><input id="email" v-model="form.email" type="email" required placeholder="name@gmail.com" autocomplete="email" /></div>
         <div class="field">
-          <label for="password">PASSWORD</label>
+          <label for="password">PASSWORD (Must be at least 6 characters)</label>
           <div class="input-with-icon">
             <input
               id="password"
               v-model="form.password"
               :type="showPassword ? 'text' : 'password'"
               required
-              placeholder="Minimum of 6 characters"
+              placeholder="Enter password"
               autocomplete="current-password"
             />
             <button
