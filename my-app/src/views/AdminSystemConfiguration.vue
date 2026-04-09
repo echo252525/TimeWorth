@@ -460,7 +460,7 @@ watch(activeSection, async (s) => {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page admin-system-config-page">
     <header class="sys-config-page-header">
       <h1>System configuration</h1>
       <p class="muted page-lead">
@@ -782,6 +782,17 @@ watch(activeSection, async (s) => {
   min-width: 0;
   box-sizing: border-box;
 }
+
+/* Reclaim AdminLayout .main-content horizontal padding (1.5rem) on narrow screens */
+@media (max-width: 767px) {
+  .page.admin-system-config-page {
+    margin-left: -0.75rem;
+    margin-right: -0.75rem;
+    width: calc(100% + 1.5rem);
+    max-width: none;
+  }
+}
+
 .sys-config-page-header .page-lead {
   max-width: 42rem;
 }
@@ -1334,5 +1345,208 @@ watch(activeSection, async (s) => {
 .geo-actions .btn-mini-danger {
   border-color: rgba(248, 113, 113, 0.35);
   color: var(--error, #f87171);
+}
+
+@media (max-width: 640px) {
+  .page h1 {
+    font-size: 1.25rem;
+    margin: 0 0 0.35rem;
+  }
+
+  .muted {
+    font-size: 0.8125rem;
+    margin: 0 0 0.65rem;
+    line-height: 1.4;
+  }
+
+  .sys-config-page-header .page-lead {
+    max-width: none;
+  }
+
+  .sys-config-shell {
+    flex-direction: column;
+    min-height: 0;
+    border-radius: 10px;
+  }
+
+  .sys-config-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    padding: 0.55rem 0.5rem;
+    gap: 0.2rem;
+  }
+
+  .sys-config-nav-item {
+    flex: 1 1 auto;
+    min-width: 44%;
+    flex-direction: row;
+    justify-content: center;
+    gap: 0.45rem;
+    padding: 0.55rem 0.45rem;
+    font-size: 0.7rem;
+  }
+
+  .sys-config-nav-label {
+    max-width: none;
+  }
+
+  .sys-config-main {
+    padding: 0.75rem 0.65rem 0.9rem;
+  }
+
+  .sys-config-panel-title {
+    font-size: 1rem;
+  }
+
+  .sys-config-panel-lead {
+    margin: 0 0 0.65rem;
+    font-size: 0.8125rem;
+  }
+
+  .sys-config-search {
+    margin-bottom: 0.85rem;
+    padding: 0.4rem 0.55rem;
+    max-width: none;
+  }
+
+  .sys-config-search-input {
+    font-size: 0.8125rem;
+  }
+
+  .config-item {
+    margin-bottom: 1rem;
+    padding: 0.75rem 0.65rem 0.85rem;
+    border-radius: 10px;
+  }
+
+  .config-item-title {
+    font-size: 0.9375rem;
+  }
+
+  .config-item-desc {
+    margin: 0 0 0.65rem;
+    font-size: 0.8125rem;
+  }
+
+  .config-item-control {
+    margin-bottom: 0.5rem;
+  }
+
+  .banner-error {
+    padding: 0.5rem 0.65rem;
+    margin-bottom: 0.65rem;
+    font-size: 0.8125rem;
+  }
+
+  .toolbar {
+    margin-bottom: 0.65rem;
+  }
+
+  .btn-add {
+    padding: 0.45rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+
+  .loading-state {
+    padding: 0.65rem 0;
+    font-size: 0.8125rem;
+  }
+
+  .new-row {
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .input {
+    min-width: 0;
+    padding: 0.45rem 0.65rem;
+    font-size: 0.875rem;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 0.45rem 0.5rem;
+    font-size: 0.8125rem;
+  }
+
+  .th-actions {
+    width: 6rem;
+  }
+
+  .empty-hint {
+    margin: 0.65rem 0 0;
+    font-size: 0.8125rem;
+  }
+
+  .btn-primary {
+    padding: 0.4rem 0.7rem;
+    font-size: 0.8125rem;
+  }
+
+  .btn-ghost {
+    padding: 0.4rem 0.7rem;
+    font-size: 0.8125rem;
+  }
+
+  .geofence-map {
+    height: 260px;
+  }
+
+  .geofence-map-wrap {
+    margin-bottom: 0.75rem;
+    border-radius: 8px;
+  }
+
+  .geo-locate-btn {
+    top: 8px;
+    right: 8px;
+    padding: 0.35rem 0.55rem;
+    font-size: 0.75rem;
+  }
+
+  .geofence-controls {
+    gap: 0.65rem;
+  }
+
+  .geo-table-header {
+    margin-bottom: 0.5rem;
+    gap: 0.5rem;
+  }
+
+  .btn-add-location {
+    padding: 0.38rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+
+  .geo-table-scroll {
+    max-height: min(50vh, 360px);
+  }
+
+  .geo-data-table .geo-name-cell {
+    max-width: 200px;
+    font-size: 0.75rem;
+  }
+
+  .geo-actions .btn-mini {
+    font-size: 0.6875rem;
+    padding: 0.25rem 0.4rem;
+    margin: 0.1rem 0.25rem 0.1rem 0;
+  }
+
+  .btn-icon {
+    padding: 0.3rem;
+    margin-left: 0.15rem;
+  }
+
+  .btn-save,
+  .btn-cancel {
+    font-size: 0.75rem;
+    padding: 0.3rem 0.5rem;
+    margin-left: 0.25rem;
+  }
 }
 </style>

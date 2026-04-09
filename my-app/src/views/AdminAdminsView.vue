@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { MagnifyingGlassIcon, ChevronDownIcon } from '@heroicons/vue/24/outline'
 import supabase from '../lib/supabaseClient'
 import { useAuth } from '../composables/useAuth'
@@ -16,6 +16,74 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 const searchQuery = ref('')
 const filterRole = ref<'all' | 'admin' | 'superadmin' | 'pending'>('all')
+
+/* Role column filter (same UX as AdminEmployeesView: chevron + teleported menu) */
+const showRoleFilterDropdown = ref(false)
+const roleFilterTriggerRef = ref<HTMLElement | null>(null)
+const roleDropdownStyle = ref<Record<string, string>>({})
+
+const roleFilterLabel = computed(() => {
+  switch (filterRole.value) {
+    case 'all':
+      return 'All'
+    case 'admin':
+      return 'Admin'
+    case 'superadmin':
+      return 'Superadmin'
+    case 'pending':
+      return 'Pending'
+    default:
+      return 'All'
+  }
+})
+
+function positionRoleDropdown() {
+  const el = roleFilterTriggerRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const minW = Math.max(r.width, 160)
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+  roleDropdownStyle.value = {
+    position: 'fixed',
+    top: `${r.bottom + 6}px`,
+    left: `${left}px`,
+    minWidth: `${minW}px`,
+    zIndex: '300'
+  }
+}
+
+function toggleRoleFilterMenu() {
+  const opening = !showRoleFilterDropdown.value
+  showRoleFilterDropdown.value = opening
+  if (opening) void nextTick(() => positionRoleDropdown())
+}
+
+function selectRoleFilter(v: 'all' | 'admin' | 'superadmin' | 'pending') {
+  showRoleFilterDropdown.value = false
+  filterRole.value = v
+}
+
+function handleRoleFilterClickOutside(event: MouseEvent) {
+  const target = event.target as HTMLElement
+  if (target.closest('.ts-filter-trigger-wrap') || target.closest('.ts-filter-dropdown-portal')) return
+  showRoleFilterDropdown.value = false
+}
+
+function repositionRoleDropdown() {
+  if (showRoleFilterDropdown.value) positionRoleDropdown()
+}
+
+watch(showRoleFilterDropdown, (open) => {
+  if (open) {
+    void nextTick(() => repositionRoleDropdown())
+    window.addEventListener('scroll', repositionRoleDropdown, true)
+    window.addEventListener('resize', repositionRoleDropdown)
+  } else {
+    window.removeEventListener('scroll', repositionRoleDropdown, true)
+    window.removeEventListener('resize', repositionRoleDropdown)
+  }
+})
+
 const statusUpdatingByUser = ref<Record<string, boolean>>({})
 const deletingByUser = ref<Record<string, boolean>>({})
 const actionError = ref<string | null>(null)
@@ -34,17 +102,34 @@ const totalRoles = computed(() => {
   return roles.size
 })
 
-const filteredList = computed(() => {
+/** Rows matching search only (counts for role filter menu exclude role filter). */
+const searchMatchedAdmins = computed(() => {
   let rows = list.value
   const q = searchQuery.value.trim().toLowerCase()
   if (q) {
-    rows = rows.filter((a) =>
-      a.name.toLowerCase().includes(q)
-      || a.email.toLowerCase().includes(q)
-      || a.employeeid.toLowerCase().includes(q)
-      || a.role.toLowerCase().includes(q)
+    rows = rows.filter(
+      (a) =>
+        a.name.toLowerCase().includes(q)
+        || a.email.toLowerCase().includes(q)
+        || a.employeeid.toLowerCase().includes(q)
+        || a.role.toLowerCase().includes(q)
     )
   }
+  return rows
+})
+
+const roleOptionCounts = computed(() => {
+  const rows = searchMatchedAdmins.value
+  return {
+    all: rows.length,
+    admin: rows.filter((a) => a.role === 'admin').length,
+    superadmin: rows.filter((a) => a.role === 'superadmin').length,
+    pending: rows.filter((a) => a.role === 'pending').length
+  }
+})
+
+const filteredList = computed(() => {
+  let rows = searchMatchedAdmins.value
   if (filterRole.value !== 'all') {
     rows = rows.filter((a) => a.role === filterRole.value)
   }
@@ -215,6 +300,13 @@ async function loadAdmins() {
 onMounted(() => {
   void fetchAdminProfile()
   void loadAdmins()
+  document.addEventListener('click', handleRoleFilterClickOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleRoleFilterClickOutside)
+  window.removeEventListener('scroll', repositionRoleDropdown, true)
+  window.removeEventListener('resize', repositionRoleDropdown)
 })
 
 watch(selectedAdmin, async (admin) => {
@@ -254,7 +346,7 @@ function formatDateTime(iso: string | null) {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page admin-admins-page">
     <p v-if="error" class="banner-error">{{ error }}</p>
 
     <template v-else-if="loading">
@@ -291,25 +383,102 @@ function formatDateTime(iso: string | null) {
             aria-label="Search admins"
           />
         </div>
-        <div class="select-wrap">
-          <select v-model="filterRole" class="filter-select" aria-label="Filter by role">
-            <option value="all">All roles</option>
-            <option value="admin">Admin</option>
-            <option value="superadmin">Superadmin</option>
-            <option value="pending">Pending</option>
-          </select>
-          <ChevronDownIcon class="select-chevron" aria-hidden="true" />
-        </div>
       </div>
 
       <div class="table-card">
         <div class="table-scroll">
           <table class="data-table">
+            <colgroup>
+              <col class="aa-col-user" />
+              <col class="aa-col-empid" />
+              <col class="aa-col-role" :class="{ 'aa-col--filtered': filterRole !== 'all' }" />
+              <col class="aa-col-email" />
+            </colgroup>
             <thead>
               <tr>
                 <th scope="col">User</th>
-                <th scope="col">Employee ID</th>
-                <th scope="col">Role</th>
+                <th class="th-empid" scope="col">Employee ID</th>
+                <th
+                  class="th-role"
+                  :class="{ 'th-col--filtered': filterRole !== 'all' }"
+                  scope="col"
+                  @click.stop
+                >
+                  <div class="th-role-wrap">
+                    <span class="th-column-label">
+                      Role
+                      <template v-if="filterRole !== 'all'">
+                        <span class="th-filter-selection"> · {{ roleFilterLabel }}</span>
+                      </template>
+                    </span>
+                    <div ref="roleFilterTriggerRef" class="ts-filter-trigger-wrap">
+                      <button
+                        type="button"
+                        class="period-btn ts-filter-period-btn"
+                        aria-haspopup="listbox"
+                        :aria-expanded="showRoleFilterDropdown"
+                        :aria-label="`Role filter, ${roleFilterLabel}`"
+                        @click.stop="toggleRoleFilterMenu"
+                      >
+                        <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+                      </button>
+                      <Teleport to="body">
+                        <div
+                          v-if="showRoleFilterDropdown"
+                          class="ts-filter-dropdown-portal period-dropdown"
+                          :style="roleDropdownStyle"
+                          role="listbox"
+                          @click.stop
+                        >
+                          <button
+                            type="button"
+                            class="period-option period-option--counted"
+                            :class="{ active: filterRole === 'all' }"
+                            role="option"
+                            :aria-selected="filterRole === 'all'"
+                            @click="selectRoleFilter('all')"
+                          >
+                            <span class="period-option__label">All</span>
+                            <span class="period-option__count">{{ roleOptionCounts.all }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="period-option period-option--counted"
+                            :class="{ active: filterRole === 'admin' }"
+                            role="option"
+                            :aria-selected="filterRole === 'admin'"
+                            @click="selectRoleFilter('admin')"
+                          >
+                            <span class="period-option__label">Admin</span>
+                            <span class="period-option__count">{{ roleOptionCounts.admin }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="period-option period-option--counted"
+                            :class="{ active: filterRole === 'superadmin' }"
+                            role="option"
+                            :aria-selected="filterRole === 'superadmin'"
+                            @click="selectRoleFilter('superadmin')"
+                          >
+                            <span class="period-option__label">Superadmin</span>
+                            <span class="period-option__count">{{ roleOptionCounts.superadmin }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="period-option period-option--counted"
+                            :class="{ active: filterRole === 'pending' }"
+                            role="option"
+                            :aria-selected="filterRole === 'pending'"
+                            @click="selectRoleFilter('pending')"
+                          >
+                            <span class="period-option__label">Pending</span>
+                            <span class="period-option__count">{{ roleOptionCounts.pending }}</span>
+                          </button>
+                        </div>
+                      </Teleport>
+                    </div>
+                  </div>
+                </th>
                 <th scope="col">Email</th>
               </tr>
             </thead>
@@ -442,7 +611,22 @@ function formatDateTime(iso: string | null) {
 </template>
 
 <style scoped>
-.page { width: 100%; max-width: 100%; }
+.page {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Reclaim AdminLayout .main-content horizontal padding (1.5rem) on narrow screens */
+@media (max-width: 767px) {
+  .page.admin-admins-page {
+    margin-left: -0.75rem;
+    margin-right: -0.75rem;
+    width: calc(100% + 1.5rem);
+    max-width: none;
+  }
+}
+
 .loading-state, .banner-error { color: var(--text-secondary); font-size: 0.9375rem; }
 .banner-error { color: var(--error); margin: 0 0 1rem; }
 
@@ -509,29 +693,6 @@ function formatDateTime(iso: string | null) {
   font-size: 0.9375rem;
 }
 .search-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15); }
-.select-wrap { position: relative; min-width: 160px; }
-.filter-select {
-  appearance: none;
-  width: 100%;
-  padding: 0.5rem 2rem 0.5rem 0.875rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-light);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-}
-.select-chevron {
-  position: absolute;
-  right: 0.65rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 1rem;
-  height: 1rem;
-  color: var(--text-tertiary);
-  pointer-events: none;
-}
 
 .table-card {
   border: 1px solid var(--border-light);
@@ -540,14 +701,190 @@ function formatDateTime(iso: string | null) {
   overflow: hidden;
 }
 .table-scroll { overflow-x: auto; }
-.data-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.data-table {
+  width: 100%;
+  min-width: 720px;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.aa-col-user {
+  width: 22%;
+}
+.aa-col-empid {
+  width: 13%;
+  min-width: 7.5rem;
+}
+.aa-col-role {
+  width: 14%;
+  min-width: 6.5rem;
+}
+.aa-col-role.aa-col--filtered {
+  min-width: 9rem;
+  width: 16%;
+}
+.aa-col-email {
+  width: 22%;
+  min-width: 10rem;
+}
 .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   text-align: left;
   padding: 0.75rem 1rem;
   font-weight: 600;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-color);
+  white-space: normal;
+  vertical-align: middle;
+  background: var(--bg-secondary);
+}
+.data-table thead th.th-empid {
   white-space: nowrap;
+}
+.th-role-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.th-role-wrap .th-column-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  word-break: break-word;
+}
+.th-role-wrap .ts-filter-trigger-wrap {
+  flex-shrink: 0;
+  align-self: center;
+}
+.th-column-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 0;
+  line-height: 1.35;
+}
+.th-filter-selection {
+  color: var(--accent);
+  font-weight: 600;
+}
+.th-role {
+  min-width: 0;
+}
+.ts-filter-trigger-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.ts-filter-period-btn.period-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 1.75rem;
+  padding: 0.3rem 0.35rem;
+  font-size: 0.75rem;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.ts-filter-period-btn.period-btn:hover,
+.ts-filter-period-btn.period-btn:focus,
+.ts-filter-period-btn.period-btn:focus-visible,
+.ts-filter-period-btn.period-btn:active {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+.period-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.period-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+.ts-period-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+}
+.period-btn:hover .ts-period-chevron {
+  color: var(--text-primary);
+  transform: translateY(1px);
+}
+.ts-filter-dropdown-portal.period-dropdown {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.375rem;
+  background: var(--bg-primary);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  min-width: 150px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.period-option {
+  display: block;
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  transition: all 0.2s ease;
+}
+.period-option:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.period-option.active {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent);
+}
+.period-option--counted {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.period-option__count {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+.period-option--counted:hover .period-option__count,
+.period-option--counted.active .period-option__count {
+  color: var(--accent);
 }
 .data-row { cursor: pointer; transition: background 0.12s ease; }
 .data-row:hover { background: var(--bg-hover); }
@@ -722,5 +1059,157 @@ function formatDateTime(iso: string | null) {
   color: var(--text-secondary);
   font-size: 0.92rem;
   line-height: 1.55;
+}
+
+@media (max-width: 640px) {
+  .banner-error {
+    margin: 0 0 0.5rem;
+  }
+
+  .kpi-row {
+    gap: 0.5rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .kpi-card {
+    padding: 0.85rem 0.9rem;
+    border-radius: 12px;
+  }
+
+  .kpi-icon-wrap {
+    width: 2.5rem;
+    height: 2.5rem;
+    margin-bottom: 0.65rem;
+  }
+
+  .kpi-value {
+    font-size: 1.65rem;
+  }
+
+  .controls {
+    margin-bottom: 0.75rem;
+    gap: 0.45rem;
+  }
+
+  .search-wrap {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .search-input {
+    padding: 0.5rem 0.75rem 0.5rem 2.25rem;
+    font-size: 0.875rem;
+    border-radius: 8px;
+  }
+
+  .search-icon {
+    left: 0.75rem;
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .table-card {
+    border-radius: 12px;
+  }
+
+  .data-table {
+    font-size: 0.8125rem;
+    min-width: 680px;
+  }
+
+  .th-role-wrap {
+    gap: 0.3rem;
+  }
+
+  .data-table thead th {
+    padding: 0.45rem 0.55rem;
+  }
+
+  .data-table tbody td {
+    padding: 0.45rem 0.55rem;
+  }
+
+  .user-cell {
+    gap: 0.5rem;
+  }
+
+  .avatar {
+    width: 36px;
+    height: 36px;
+  }
+
+  .empty-hint {
+    padding: 0.65rem 0.55rem;
+    font-size: 0.8125rem;
+  }
+
+  .modal-overlay {
+    padding: 0.35rem;
+    align-items: center;
+  }
+
+  .modal-panel {
+    max-height: 96vh;
+    border-radius: 14px;
+  }
+
+  .modal-close {
+    top: 0.5rem;
+    right: 0.5rem;
+  }
+
+  .modal-loading {
+    padding: 1.25rem;
+  }
+
+  .profile-section {
+    padding: 0.85rem 0.65rem 1rem;
+  }
+
+  .profile-name {
+    font-size: 1.05rem;
+    margin: 0 0 0.65rem;
+  }
+
+  .profile-details {
+    font-size: 0.8125rem;
+  }
+
+  .modal-actions {
+    margin-top: 0.6rem;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+  }
+
+  .action-btn {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+
+  .confirm-modal-panel {
+    padding: 0.75rem 0.8rem 0.85rem;
+    border-radius: 14px;
+  }
+
+  .confirm-modal-title {
+    font-size: 0.95rem;
+    margin: 0 0 0.45rem;
+  }
+
+  .confirm-modal-text {
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+}
+
+:root.light-mode .ts-filter-dropdown-portal.period-dropdown,
+body.light-mode .ts-filter-dropdown-portal.period-dropdown {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+:root.light-mode .period-option.active,
+body.light-mode .period-option.active {
+  background: rgba(56, 189, 248, 0.2);
+  color: #0284c7;
 }
 </style>

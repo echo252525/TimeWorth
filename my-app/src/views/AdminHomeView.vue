@@ -861,23 +861,17 @@ onUnmounted(() => {
             <p class="admin-kpi-hint">Employee signups awaiting approval</p>
             <span class="admin-kpi-link-hint">Open employees →</span>
           </router-link>
-        </section>
-
-        <section class="admin-kpis admin-kpis--face" aria-label="Face registration">
-          <div class="admin-kpi-card admin-kpi-card--face-wide">
-            <div class="admin-kpi-face-head">
-              <div class="admin-kpi-icon admin-kpi-icon-teal" aria-hidden="true">
-                <PhotoIcon class="admin-kpi-hero-icon" />
-              </div>
-              <div class="admin-kpi-face-head-text">
-                <div class="admin-kpi-value admin-kpi-value--ratio">
-                  <span class="admin-kpi-num">{{ kpiRegisteredFaceCount }}</span><span class="admin-kpi-slash">/</span><span class="admin-kpi-den">{{ kpiEmployeeTotal }}</span>
-                </div>
-                <div class="admin-kpi-label">Face registered</div>
-              </div>
+          <router-link class="admin-kpi-card admin-kpi-card--link" to="/admin/employees">
+            <div class="admin-kpi-icon admin-kpi-icon-teal" aria-hidden="true">
+              <PhotoIcon class="admin-kpi-hero-icon" />
             </div>
-            <router-link class="admin-kpi-link-hint admin-kpi-link-hint--block" to="/admin/employees">View employees →</router-link>
-          </div>
+            <div class="admin-kpi-value admin-kpi-value--ratio">
+              <span class="admin-kpi-num">{{ kpiRegisteredFaceCount }}</span><span class="admin-kpi-slash">/</span><span class="admin-kpi-den">{{ kpiEmployeeTotal }}</span>
+            </div>
+            <div class="admin-kpi-label">Face registered</div>
+            <p class="admin-kpi-hint">Employees who have registered their face data</p>
+            <span class="admin-kpi-link-hint">Open employees →</span>
+          </router-link>
         </section>
       </template>
     </div>
@@ -891,8 +885,14 @@ onUnmounted(() => {
             <span class="filter-label">Date</span>
             <input v-model="mapDate" type="date" class="hero-map-date" @change="fetchMapData" />
           </label>
+          <div class="hero-map-filters-pair">
           <div class="filter-group filter-group--map-menu">
-            <span class="filter-label">Status</span>
+            <span class="filter-label">
+              Status
+              <template v-if="filterLocationType !== 'both'">
+                <span class="filter-label-selection"> · {{ locationTypeFilterLabel }}</span>
+              </template>
+            </span>
             <div ref="locationTypeFilterTriggerRef" class="ts-filter-trigger-wrap">
               <button
                 type="button"
@@ -947,7 +947,12 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="filter-group filter-group--map-menu">
-            <span class="filter-label">Modality</span>
+            <span class="filter-label">
+              Modality
+              <template v-if="filterModality !== 'all'">
+                <span class="filter-label-selection"> · {{ mapModalityFilterLabel }}</span>
+              </template>
+            </span>
             <div ref="mapModalityFilterTriggerRef" class="ts-filter-trigger-wrap">
               <button
                 type="button"
@@ -1000,6 +1005,7 @@ onUnmounted(() => {
                 </div>
               </Teleport>
             </div>
+          </div>
           </div>
         </div>
       </div>
@@ -1124,17 +1130,19 @@ onUnmounted(() => {
 
 .admin-kpis--queue {
   margin-top: 0.85rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.admin-kpis--face {
-  margin-top: 0.85rem;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 @media (max-width: 960px) {
+  .admin-kpis {
+    gap: 0.65rem;
+  }
   .admin-kpis--queue {
-    grid-template-columns: 1fr;
+    margin-top: 0.65rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .admin-kpi-dashboard {
+    margin-bottom: 1.15rem;
   }
 }
 .admin-kpi-card { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 14px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.35rem; }
@@ -1146,26 +1154,6 @@ onUnmounted(() => {
 .admin-kpi-icon-orange { background: rgba(249, 115, 22, 0.22); border: 1px solid rgba(249, 115, 22, 0.45); color: #ea580c; }
 .admin-kpi-icon-sky { background: rgba(14, 165, 233, 0.2); border: 1px solid rgba(14, 165, 233, 0.45); color: #0284c7; }
 .admin-kpi-icon-teal { background: rgba(20, 184, 166, 0.2); border: 1px solid rgba(20, 184, 166, 0.45); color: #0d9488; }
-.admin-kpi-card--face-wide {
-  grid-column: 1 / -1;
-}
-.admin-kpi-face-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.85rem;
-}
-.admin-kpi-face-head-text {
-  flex: 1;
-  min-width: 0;
-}
-.admin-kpi-link-hint--block {
-  display: inline-block;
-  margin-top: 0.65rem;
-  text-decoration: none;
-}
-.admin-kpi-link-hint--block:hover {
-  text-decoration: underline;
-}
 .admin-kpi-hero-icon {
   width: 24px;
   height: 24px;
@@ -1222,14 +1210,86 @@ onUnmounted(() => {
 }
 
 @media (max-width: 560px) {
+  .admin-home-welcome {
+    margin-bottom: 0.75rem;
+    padding: 0.875rem 1rem;
+  }
+  .admin-home-welcome-title {
+    font-size: 1.25rem;
+  }
+  .admin-kpi-dashboard {
+    margin-bottom: 0.875rem;
+  }
+  .admin-kpi-dashboard .admin-kpis-loading {
+    padding: 1rem;
+  }
   .admin-kpis {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+  .admin-kpis--queue {
+    margin-top: 0.5rem;
+  }
+  .admin-kpi-card {
+    padding: 0.7rem 0.6rem;
+    gap: 0.25rem;
+    border-radius: 12px;
+  }
+  .admin-kpi-icon {
+    width: 38px;
+    height: 38px;
+  }
+  .admin-kpi-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+  .admin-kpi-hero-icon {
+    width: 20px;
+    height: 20px;
+  }
+  .admin-kpi-value {
+    font-size: 1.35rem;
+  }
+  .admin-kpi-num {
+    font-size: 1.45rem;
+  }
+  .admin-kpi-slash {
+    font-size: 1.2rem;
+  }
+  .admin-kpi-den {
+    font-size: 1.1rem;
+  }
+  .admin-kpi-label {
+    font-size: 0.8125rem;
+  }
+  .admin-kpi-hint {
+    font-size: 0.6875rem;
+    line-height: 1.25;
+  }
+  .admin-kpi-link-hint {
+    margin-top: 0.1rem;
+    font-size: 0.65rem;
   }
 }
 
 .hero-map-section { background: var(--bg-secondary); border: 1px solid var(--border-light); border-radius: 16px; padding: 1.25rem; margin-bottom: 1.5rem; }
 .hero-map-header { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-bottom: 1rem; }
 .hero-map-title { margin: 0; font-size: 1.125rem; font-weight: 600; color: var(--text-primary); }
+
+@media (max-width: 560px) {
+  .hero-map-section {
+    padding: 0.875rem;
+    margin-bottom: 1rem;
+    border-radius: 12px;
+  }
+  .hero-map-header {
+    gap: 0.65rem;
+    margin-bottom: 0.65rem;
+  }
+  .muted.intro {
+    margin-bottom: 0.35rem;
+  }
+}
 .hero-map-filters {
   display: flex;
   flex-wrap: wrap;
@@ -1251,6 +1311,18 @@ onUnmounted(() => {
 .filter-group.filter-check { gap: 0.5rem; }
 .filter-group--map-menu { flex-wrap: nowrap; }
 .filter-label { font-size: 0.8125rem; color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
+.filter-label-selection {
+  font-weight: 600;
+  color: var(--accent, #38bdf8);
+  white-space: nowrap;
+}
+
+.hero-map-filters-pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
 
 .ts-filter-trigger-wrap {
   position: relative;
@@ -1374,6 +1446,37 @@ onUnmounted(() => {
     width: 100%;
     min-width: 0;
     box-sizing: border-box;
+  }
+  .hero-map-filters-pair {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: 0.45rem;
+    width: 100%;
+  }
+  .hero-map-filters-pair .filter-group--map-menu {
+    flex: 1;
+    min-width: 0;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.25rem;
+  }
+  .hero-map-filters-pair .filter-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    white-space: normal;
+    line-height: 1.25;
+    font-size: 0.75rem;
+  }
+  .hero-map-filters-pair .filter-label-selection {
+    white-space: normal;
+  }
+  .hero-map-filters-pair .ts-filter-trigger-wrap {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
   }
   .filter-group--map-menu {
     flex-direction: row;

@@ -292,7 +292,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page admin-edit-requests-page">
     <h1>Edit requests</h1>
     <p class="muted">Review employee requests to change clock times, lunch, locations, or work modality.</p>
 
@@ -444,7 +444,19 @@ onUnmounted(() => {
 .page {
   width: 100%;
   max-width: 100%;
+  box-sizing: border-box;
 }
+
+/* Reclaim AdminLayout .main-content horizontal padding (1.5rem) on narrow screens */
+@media (max-width: 767px) {
+  .page.admin-edit-requests-page {
+    margin-left: -0.75rem;
+    margin-right: -0.75rem;
+    width: calc(100% + 1.5rem);
+    max-width: none;
+  }
+}
+
 .page h1 {
   margin: 0 0 0.5rem;
   font-size: 1.5rem;
@@ -743,5 +755,102 @@ body.light-mode .ts-filter-dropdown-portal.period-dropdown {
 body.light-mode .period-option.active {
   background: rgba(56, 189, 248, 0.2);
   color: #0284c7;
+}
+
+@media (max-width: 640px) {
+  .page h1 {
+    font-size: 1.25rem;
+    margin: 0 0 0.35rem;
+  }
+
+  .muted {
+    font-size: 0.8125rem;
+    margin: 0 0 0.65rem;
+    line-height: 1.4;
+  }
+
+  .banner-error {
+    padding: 0.5rem 0.65rem;
+    margin-bottom: 0.65rem;
+    font-size: 0.8125rem;
+    border-radius: 8px;
+  }
+
+  .controls {
+    gap: 0.45rem;
+    margin-bottom: 0.65rem;
+  }
+
+  .btn-ghost {
+    padding: 0.35rem 0.6rem;
+    font-size: 0.8125rem;
+    border-radius: 6px;
+  }
+
+  .loading-state {
+    padding: 1rem 0;
+    font-size: 0.8125rem;
+  }
+
+  .table-card {
+    border-radius: 10px;
+  }
+
+  .data-table {
+    font-size: 0.8125rem;
+  }
+
+  .data-table th {
+    padding: 0.45rem 0.55rem;
+  }
+
+  .data-table td {
+    padding: 0.45rem 0.55rem;
+  }
+
+  .th-status-wrap {
+    gap: 0.3rem;
+  }
+
+  .cell-email {
+    font-size: 0.75rem;
+    margin-top: 0.1rem;
+  }
+
+  .cell-compact {
+    font-size: 0.75rem;
+    max-width: 200px;
+  }
+
+  .cell-reason {
+    max-width: 160px;
+    font-size: 0.75rem;
+  }
+
+  .btn-approve,
+  .btn-decline {
+    padding: 0.3rem 0.5rem;
+    margin-right: 0.25rem;
+    font-size: 0.75rem;
+  }
+
+  .status-pill {
+    font-size: 0.6875rem;
+    padding: 0.15rem 0.4rem;
+  }
+
+  .empty-hint {
+    padding: 0.65rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+
+  .ts-filter-period-btn.period-btn {
+    padding: 0.28rem;
+  }
+
+  .period-option {
+    padding: 0.5rem 0.65rem;
+    font-size: 0.75rem;
+  }
 }
 </style>

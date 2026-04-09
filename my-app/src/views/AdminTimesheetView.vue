@@ -50,6 +50,11 @@ const analyticsLoading = ref(false)
 const analyticsError = ref<string | null>(null)
 /** Local calendar day (YYYY-MM-DD) for absentee snapshot. */
 const analyticsFocusDate = ref(getLocalDateString(new Date()))
+/** Who had ≥1 clock-in on `analyticsFocusDate` (local day). Loaded per-day — not from rolling `analyticsRows` (avoids wrong counts outside ~36d / 10k cap). */
+const focusPresenceUserIds = ref<Set<string>>(new Set())
+const focusPresenceLoading = ref(false)
+const focusPresenceError = ref<string | null>(null)
+let focusPresenceDebounceTimer: number | null = null
 
 const error = ref<string | null>(null)
 
@@ -123,6 +128,7 @@ function positionHistoryDateDropdown() {
 }
 
 function toggleHistoryDateMenu() {
+  showModalityDropdown.value = false
   showHistoryDateDropdown.value = !showHistoryDateDropdown.value
   if (showHistoryDateDropdown.value) void nextTick(() => positionHistoryDateDropdown())
 }
@@ -132,11 +138,12 @@ function selectHistoryDateFilter(v: HistoryDateFilter) {
   historyDateFilter.value = v
 }
 
-function handleHistoryDateFilterClickOutside(event: MouseEvent) {
-  if (!showHistoryDateDropdown.value) return
+function handleModalFilterDropdownClickOutside(event: MouseEvent) {
+  if (!showHistoryDateDropdown.value && !showModalityDropdown.value) return
   const target = event.target as HTMLElement
-  if (target.closest('.history-date-filter-trigger') || target.closest('.history-date-filter-portal')) return
+  if (target.closest('.ts-filter-trigger-wrap') || target.closest('.ts-filter-dropdown-portal')) return
   showHistoryDateDropdown.value = false
+  showModalityDropdown.value = false
 }
 
 watch(showHistoryDateDropdown, (open) => {
@@ -151,9 +158,6 @@ watch(showHistoryDateDropdown, (open) => {
 })
 
 const WFH_PHOTO_BUCKET = 'wfh_employee_picture'
-/** 8h target for undertime / on-time / overtime (per session). */
-const TARGET_WORK_SEC = 8 * 3600
-const ON_TIME_TOLERANCE_SEC = 120
 
 function formatTotalTimeForRow(r: AttendanceRow): string {
   if (!r.clock_out) return '—'
@@ -166,28 +170,72 @@ function formatTotalTimeForRow(r: AttendanceRow): string {
   return `${min}m`
 }
 
-type TimeCompliance = 'undertime' | 'enough' | 'overtime'
-
-function timeComplianceCategory(r: AttendanceRow): TimeCompliance {
-  const sec = effectiveWorkSecondsFromAttendance(r)
-  if (sec < TARGET_WORK_SEC - ON_TIME_TOLERANCE_SEC) return 'undertime'
-  if (sec > TARGET_WORK_SEC + ON_TIME_TOLERANCE_SEC) return 'overtime'
-  return 'enough'
-}
-
 type ModalityFilter = 'all' | 'office' | 'wfh'
-type TimeComplianceFilter = 'all' | TimeCompliance
 
 const modalityFilter = ref<ModalityFilter>('all')
-const timeComplianceFilter = ref<TimeComplianceFilter>('all')
+
+const modalityFilterLabel = computed(() => {
+  switch (modalityFilter.value) {
+    case 'all':
+      return 'All'
+    case 'office':
+      return 'Office'
+    case 'wfh':
+      return 'WFH'
+    default:
+      return 'All'
+  }
+})
+
+const showModalityDropdown = ref(false)
+const modalityFilterTriggerRef = ref<HTMLElement | null>(null)
+const modalityDropdownStyle = ref<Record<string, string>>({})
+
+function positionModalityDropdown() {
+  const el = modalityFilterTriggerRef.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const minW = Math.max(r.width, 160)
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+  const top = r.bottom + 6
+  const spaceBelow = window.innerHeight - top - 8
+  const estimatedH = 200
+  const openUp = spaceBelow < estimatedH && r.top > spaceBelow
+  modalityDropdownStyle.value = {
+    position: 'fixed',
+    top: openUp ? `${Math.max(8, r.top - 6 - estimatedH)}px` : `${top}px`,
+    left: `${left}px`,
+    minWidth: `${minW}px`,
+    zIndex: HISTORY_DATE_MENU_Z
+  }
+}
+
+function toggleModalityMenu() {
+  showHistoryDateDropdown.value = false
+  showModalityDropdown.value = !showModalityDropdown.value
+  if (showModalityDropdown.value) void nextTick(() => positionModalityDropdown())
+}
+
+function applyModalityFilter(v: ModalityFilter) {
+  showModalityDropdown.value = false
+  modalityFilter.value = v
+}
+
+watch(showModalityDropdown, (open) => {
+  if (open) {
+    void nextTick(() => positionModalityDropdown())
+    window.addEventListener('scroll', positionModalityDropdown, true)
+    window.addEventListener('resize', positionModalityDropdown)
+  } else {
+    window.removeEventListener('scroll', positionModalityDropdown, true)
+    window.removeEventListener('resize', positionModalityDropdown)
+  }
+})
 
 const filteredHistoryRows = computed(() => {
   let rows = historyRows.value
   if (modalityFilter.value !== 'all') {
     rows = rows.filter((r) => r.work_modality === modalityFilter.value)
-  }
-  if (timeComplianceFilter.value !== 'all') {
-    rows = rows.filter((r) => timeComplianceCategory(r) === timeComplianceFilter.value)
   }
   return rows
 })
@@ -226,6 +274,16 @@ const analyticsBarRef = ref<HTMLCanvasElement | null>(null)
 const analyticsPieRef = ref<HTMLCanvasElement | null>(null)
 let analyticsBarChart: Chart | null = null
 let analyticsPieChart: Chart | null = null
+let analyticsChartsResizeTimer: number | null = null
+
+function scheduleAnalyticsChartsOnResize() {
+  if (typeof window === 'undefined') return
+  if (analyticsChartsResizeTimer !== null) window.clearTimeout(analyticsChartsResizeTimer)
+  analyticsChartsResizeTimer = window.setTimeout(() => {
+    analyticsChartsResizeTimer = null
+    void nextTick(() => updateAnalyticsCharts())
+  }, 120)
+}
 
 function destroyDetailMap() {
   if (detailMapInstance) {
@@ -407,10 +465,17 @@ function updateAnalyticsCharts() {
   const a30 = employeesCompletedLast30.value
   const tot = totalEmployeesCount.value
 
+  const isNarrowCharts =
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
+
+  const barLabels = isNarrowCharts
+    ? ['7-day completion', '30-day completion', 'Directory total']
+    : ['With completion (7 days)', 'With completion (30 days)', 'Directory total']
+
   analyticsBarChart = new Chart(barEl, {
     type: 'bar',
     data: {
-      labels: ['With completion (7 days)', 'With completion (30 days)', 'Directory total'],
+      labels: barLabels,
       datasets: [
         {
           label: 'Employees',
@@ -424,34 +489,53 @@ function updateAnalyticsCharts() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      indexAxis: isNarrowCharts ? 'y' : 'x',
+      layout: {
+        padding: isNarrowCharts
+          ? { left: 2, right: 6, top: 2, bottom: 2 }
+          : { left: 0, right: 0, top: 0, bottom: 0 }
+      },
       plugins: {
         legend: { display: false },
         title: {
           display: true,
           text: 'Participation',
           color: '#334155',
-          font: { size: 14, weight: 'bold' }
+          font: { size: isNarrowCharts ? 12 : 14, weight: 'bold' }
         },
         tooltip: {
           callbacks: {
             label(ctx) {
-              const v = ctx.parsed.y
+              const idx = ctx.dataIndex
+              const v = Array.isArray(ctx.dataset.data) ? ctx.dataset.data[idx] : 0
               return `${ctx.dataset.label ?? ''}: ${v}`
             }
           }
         }
       },
-      scales: {
-        x: {
-          ticks: { color: '#64748b', maxRotation: 45, minRotation: 0, font: { size: 11 } },
-          grid: { display: false }
-        },
-        y: {
-          beginAtZero: true,
-          ticks: { precision: 0, color: '#64748b' },
-          grid: { color: 'rgba(148, 163, 184, 0.25)' }
-        }
-      }
+      scales: isNarrowCharts
+        ? {
+            x: {
+              beginAtZero: true,
+              ticks: { precision: 0, color: '#64748b', font: { size: 10 } },
+              grid: { color: 'rgba(148, 163, 184, 0.25)' }
+            },
+            y: {
+              ticks: { color: '#64748b', font: { size: 10 }, autoSkip: false },
+              grid: { display: false }
+            }
+          }
+        : {
+            x: {
+              ticks: { color: '#64748b', maxRotation: 45, minRotation: 0, font: { size: 11 } },
+              grid: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0, color: '#64748b' },
+              grid: { color: 'rgba(148, 163, 184, 0.25)' }
+            }
+          }
     }
   })
 
@@ -480,17 +564,28 @@ function updateAnalyticsCharts() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      cutout: '58%',
+      cutout: isNarrowCharts ? '52%' : '58%',
+      layout: {
+        padding: isNarrowCharts
+          ? { top: 4, bottom: 2, left: 4, right: 4 }
+          : { top: 0, bottom: 0, left: 0, right: 0 }
+      },
       plugins: {
         legend: {
           position: 'bottom',
-          labels: { color: '#64748b', padding: 12, font: { size: 12 } }
+          labels: {
+            color: '#64748b',
+            padding: isNarrowCharts ? 8 : 12,
+            font: { size: isNarrowCharts ? 10 : 12 },
+            boxWidth: isNarrowCharts ? 10 : 12,
+            usePointStyle: false
+          }
         },
         title: {
           display: true,
           text: `Day snapshot · ${analyticsFocusDate.value}`,
           color: '#334155',
-          font: { size: 13, weight: 'bold' }
+          font: { size: isNarrowCharts ? 11 : 13, weight: 'bold' }
         },
         tooltip: {
           callbacks: {
@@ -788,8 +883,6 @@ function buildAttendanceTableBodyFromRows(rows: AttendanceRow[]): string[][] {
       lunchIn: string
       lunchOut: string
       total: string
-      modality: string
-      output: string
     }>
   > = {}
 
@@ -802,31 +895,34 @@ function buildAttendanceTableBodyFromRows(rows: AttendanceRow[]): string[][] {
       clockOut: formatClockOutWithNextDay(r.clock_in, r.clock_out),
       lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
       lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
-      total: formatTotalTimeForRow(r),
-      modality: r.work_modality ? String(r.work_modality).toLowerCase() : '—',
-      output: (r.output && String(r.output).trim()) || '—'
+      total: formatTotalTimeForRow(r)
     })
   }
 
-  const exportRows: Array<[string, string, string, string, string, string, string, string]> = []
+  const exportRows: Array<[string, string, string, string, string, string]> = []
   for (const [dateKey, groupRows] of Object.entries(map).sort(([a], [b]) =>
     a === '—' ? 1 : b === '—' ? -1 : new Date(b).getTime() - new Date(a).getTime()
   )) {
     for (const r of groupRows) {
-      exportRows.push([dateKey, r.clockIn, r.clockOut, r.lunchIn, r.lunchOut, r.total, r.modality, r.output])
+      exportRows.push([dateKey, r.clockIn, r.lunchIn, r.lunchOut, r.clockOut, r.total])
     }
   }
 
-  return exportRows.map(([date, clockIn, clockOut, lunchIn, lunchOut, total, modality, output]) => [
-    date,
-    clockIn,
-    clockOut,
-    lunchIn,
-    lunchOut,
-    total,
-    modality,
-    output
-  ])
+  return exportRows
+}
+
+/** Min–max of YYYY-MM-DD dates actually present in the PDF (column 0); aligns with TimesheetView. */
+function formatPdfDateCoveredFromTableBody(tableBody: string[][]): string | null {
+  const unique = new Set<string>()
+  for (const row of tableBody) {
+    const d = row[0]
+    if (d && d !== '—') unique.add(d)
+  }
+  if (!unique.size) return null
+  const sorted = Array.from(unique).sort()
+  const a = sorted[0]!
+  const b = sorted[sorted.length - 1]!
+  return a === b ? a : `${a} - ${b}`
 }
 
 /** Letterhead copy for exported PDFs (matches company timesheet template). */
@@ -907,7 +1003,7 @@ function createTimesheetPdfDocument(
   const tableStartY = ey + 8
 
   autoTable(doc, {
-    head: [['Date', 'Clock in', 'Clock out', 'Lunch In', 'Lunch Out', 'Total Hours', 'Modality', 'Output']],
+    head: [['DATE', 'CLOCK IN', 'LUNCH IN', 'LUNCH OUT', 'CLOCK OUT', 'TOTAL HOURS']],
     body: tableBody,
     startY: tableStartY,
     styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', textColor: 0 },
@@ -1011,9 +1107,45 @@ async function loadAnalyticsData() {
   }
 }
 
+/**
+ * Distinct employees with any clock-in on the chosen local calendar day.
+ * Uses a ±1 calendar-day UTC window then filters by local date (same rule as elsewhere).
+ */
+async function loadFocusDayPresence() {
+  const day = analyticsFocusDate.value
+  if (!day) return
+  focusPresenceLoading.value = true
+  focusPresenceError.value = null
+  try {
+    const wideStart = addCalendarDaysYmd(day, -1)
+    const wideEnd = addCalendarDaysYmd(day, 1)
+    const { dbStart, dbEnd } = clockInDbZRange(wideStart, wideEnd)
+    const { data, error: err } = await supabase
+      .from('attendance')
+      .select('user_id, clock_in')
+      .gte('clock_in', dbStart)
+      .lte('clock_in', dbEnd)
+      .limit(10000)
+    if (err) throw err
+    const set = new Set<string>()
+    for (const r of (data ?? []) as { user_id: string; clock_in: string | null }[]) {
+      if (!r.clock_in) continue
+      const localDay = getLocalDateString(new Date(storedToRealInstant(r.clock_in)))
+      if (localDay === day) set.add(r.user_id)
+    }
+    focusPresenceUserIds.value = set
+  } catch (e) {
+    focusPresenceError.value = e instanceof Error ? e.message : 'Unable to load attendance for this day.'
+    focusPresenceUserIds.value = new Set()
+  } finally {
+    focusPresenceLoading.value = false
+  }
+}
+
 async function refreshEmployeesAndAnalytics() {
   await loadEmployees()
   await loadAnalyticsData()
+  await loadFocusDayPresence()
 }
 
 const filteredEmployees = computed(() => {
@@ -1167,16 +1299,7 @@ const mostAbsentLast30 = computed(() => {
   }
 })
 
-const presentUserIdsOnFocusDate = computed(() => {
-  const day = analyticsFocusDate.value
-  const set = new Set<string>()
-  for (const r of analyticsRows.value) {
-    if (!r.clock_in) continue
-    const d = getLocalDateString(new Date(storedToRealInstant(r.clock_in)))
-    if (d === day) set.add(r.user_id)
-  }
-  return set
-})
+const presentUserIdsOnFocusDate = computed(() => focusPresenceUserIds.value)
 
 const absentEmployeeCountOnFocusDate = computed(() =>
   employees.value.filter((e) => !presentUserIdsOnFocusDate.value.has(e.id)).length
@@ -1202,14 +1325,14 @@ function openSpotlightEmployee() {
   const id = spotlightConsistency.value?.employeeId
   if (!id) return
   const emp = employees.value.find((e) => e.id === id)
-  if (emp) void openEmployeeModal(emp)
+  if (emp) void openEmployeeModal(emp, true)
 }
 
 function openMostAbsentEmployee() {
   const id = mostAbsentLast30.value?.employeeId
   if (!id) return
   const emp = employees.value.find((e) => e.id === id)
-  if (emp) void openEmployeeModal(emp)
+  if (emp) void openEmployeeModal(emp, true)
 }
 
 const allVisibleOnPageSelected = computed(() => {
@@ -1248,17 +1371,32 @@ watch([filteredEmployees, employeeSearch], () => {
   employeePage.value = 1
 })
 
-async function openEmployeeModal(emp: EmpLite) {
+const employeeDetailPanelRef = ref<HTMLElement | null>(null)
+
+async function scrollEmployeeDetailIntoView() {
+  await nextTick()
+  await nextTick()
+  requestAnimationFrame(() => {
+    employeeDetailPanelRef.value?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+      inline: 'nearest'
+    })
+  })
+}
+
+async function openEmployeeModal(emp: EmpLite, scrollToDetail = false) {
   activeEmployee.value = emp
   historyError.value = null
   error.value = null
   historyRows.value = []
   activeProfileUrl.value = null
+  showHistoryDateDropdown.value = false
+  showModalityDropdown.value = false
   historyDateFilter.value = 'all'
   historyCustomStartDate.value = ''
   historyCustomEndDate.value = ''
   modalityFilter.value = 'all'
-  timeComplianceFilter.value = 'all'
   historyDayPage.value = 1
   wfhSignedUrls.value = {}
   destroyDetailMap()
@@ -1270,10 +1408,14 @@ async function openEmployeeModal(emp: EmpLite) {
     historyLoading.value = false
   }
   void loadActiveEmployeeHistory()
+  if (scrollToDetail) {
+    await scrollEmployeeDetailIntoView()
+  }
 }
 
 function closeEmployeeModal() {
   showHistoryDateDropdown.value = false
+  showModalityDropdown.value = false
   destroyDetailMap()
   detailAddrIn.value = null
   detailAddrOut.value = null
@@ -1331,7 +1473,9 @@ async function downloadActiveEmployeePdf() {
     ])
 
     const tableBody = buildAttendanceTableBodyFromRows(filteredHistoryRows.value)
-    const doc = createTimesheetPdfDocument(emp, tableBody, boundsPdf.label, pcDataUrl, twDataUrl)
+    const dateCovered =
+      formatPdfDateCoveredFromTableBody(tableBody) ?? boundsPdf.label
+    const doc = createTimesheetPdfDocument(emp, tableBody, dateCovered, pcDataUrl, twDataUrl)
 
     const today = new Date().toISOString().slice(0, 10)
     const rangeSlug = `${boundsPdf.startDay}_to_${boundsPdf.endDay}`
@@ -1364,13 +1508,14 @@ watch(
   { deep: true }
 )
 
-watch([sortedFilteredHistoryRows, modalityFilter, timeComplianceFilter], () => {
+watch([sortedFilteredHistoryRows, modalityFilter], () => {
   historyDayPage.value = 1
 })
 
 watch(
   [
     analyticsLoading,
+    focusPresenceLoading,
     employeesCompletedLast7,
     employeesCompletedLast30,
     totalEmployeesCount,
@@ -1384,20 +1529,37 @@ watch(
   { flush: 'post' }
 )
 
+watch(analyticsFocusDate, () => {
+  if (focusPresenceDebounceTimer !== null) window.clearTimeout(focusPresenceDebounceTimer)
+  focusPresenceDebounceTimer = window.setTimeout(() => {
+    focusPresenceDebounceTimer = null
+    void loadFocusDayPresence()
+  }, 200)
+})
+
 onMounted(async () => {
   await loadEmployees()
   await loadAnalyticsData()
+  await loadFocusDayPresence()
   await nextTick()
   updateAnalyticsCharts()
-  document.addEventListener('click', handleHistoryDateFilterClickOutside)
+  document.addEventListener('click', handleModalFilterDropdownClickOutside)
+  window.addEventListener('resize', scheduleAnalyticsChartsOnResize)
 })
 
 onUnmounted(() => {
+  if (analyticsChartsResizeTimer) clearTimeout(analyticsChartsResizeTimer)
+  analyticsChartsResizeTimer = null
+  if (focusPresenceDebounceTimer !== null) window.clearTimeout(focusPresenceDebounceTimer)
+  focusPresenceDebounceTimer = null
+  window.removeEventListener('resize', scheduleAnalyticsChartsOnResize)
   destroyAnalyticsCharts()
   destroyDetailMap()
-  document.removeEventListener('click', handleHistoryDateFilterClickOutside)
+  document.removeEventListener('click', handleModalFilterDropdownClickOutside)
   window.removeEventListener('scroll', positionHistoryDateDropdown, true)
   window.removeEventListener('resize', positionHistoryDateDropdown)
+  window.removeEventListener('scroll', positionModalityDropdown, true)
+  window.removeEventListener('resize', positionModalityDropdown)
 })
 </script>
 
@@ -1490,12 +1652,14 @@ onUnmounted(() => {
           <strong>{{ formatAnalyticsDateLabel(analyticsFocusDate) }}</strong>
           —
           <span v-if="analyticsLoading">Loading…</span>
+          <span v-else-if="focusPresenceLoading">Loading snapshot…</span>
           <template v-else>
             <span class="admin-ts-absent-num">{{ absentEmployeeCountOnFocusDate }}</span>
             absent
             <span class="admin-ts-absent-muted">({{ presentUserIdsOnFocusDate.size }} with a clock-in · {{ totalEmployeesCount }} total)</span>
           </template>
         </p>
+        <p v-if="focusPresenceError" class="admin-ts-absent-error">{{ focusPresenceError }}</p>
         <div
           v-if="mostAbsentLast30 && !analyticsLoading"
           class="admin-ts-absent-champ"
@@ -1576,7 +1740,7 @@ onUnmounted(() => {
           <div v-if="filteredEmployees.length > EMPLOYEES_PER_PAGE" class="pager admin-ts-pager">
             <button
               type="button"
-              class="btn btn-secondary"
+              class="btn btn-secondary pager-nav-btn"
               :disabled="employeePage <= 1"
               @click="employeePage = Math.max(1, employeePage - 1)"
             >
@@ -1587,7 +1751,7 @@ onUnmounted(() => {
             </span>
             <button
               type="button"
-              class="btn btn-secondary"
+              class="btn btn-secondary pager-nav-btn"
               :disabled="employeePage >= employeeTotalPages"
               @click="employeePage = Math.min(employeeTotalPages, employeePage + 1)"
             >
@@ -1622,7 +1786,7 @@ onUnmounted(() => {
           <p class="admin-ts-placeholder-text">Choose someone from the list to see their clock entries, dates, and output for the selected period.</p>
         </div>
 
-        <div v-else class="admin-ts-detail-card">
+        <div v-else ref="employeeDetailPanelRef" class="admin-ts-detail-card">
           <div class="admin-ts-detail-head">
             <div class="modal-head">
               <div class="modal-avatar">
@@ -1638,33 +1802,46 @@ onUnmounted(() => {
                 </p>
               </div>
             </div>
-            <button type="button" class="admin-ts-clear-btn" @click="closeEmployeeModal">Close</button>
+            <button
+              type="button"
+              class="admin-ts-clear-btn"
+              aria-label="Close"
+              @click="closeEmployeeModal"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">close</span>
+            </button>
           </div>
 
           <p v-if="historyError" class="banner-error admin-ts-banner-tight">{{ historyError }}</p>
 
           <div class="modal-controls">
-            <div class="control control--date-period">
-              <span class="control-label">Date</span>
-              <div ref="historyDateFilterTriggerRef" class="ts-filter-trigger-wrap history-date-filter-trigger">
-                <button
-                  type="button"
-                  class="period-btn ts-filter-period-btn"
-                  aria-haspopup="listbox"
-                  :aria-expanded="showHistoryDateDropdown"
-                  :aria-label="`Date range, ${historyDateFilterLabel}`"
-                  @click.stop="toggleHistoryDateMenu"
-                >
-                  <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
-                </button>
-                <Teleport to="body">
-                  <div
-                    v-if="showHistoryDateDropdown"
-                    class="history-date-filter-portal ts-filter-dropdown-portal period-dropdown"
-                    :style="historyDateDropdownStyle"
-                    role="listbox"
-                    @click.stop
+            <div class="admin-ts-filter-pair">
+              <div class="admin-ts-emp-filter-wrap">
+                <span class="admin-ts-emp-th-column-label">
+                  Date
+                  <template v-if="historyDateFilter !== 'all'">
+                    <span class="admin-ts-emp-th-filter-selection"> · {{ historyDateFilterLabel }}</span>
+                  </template>
+                </span>
+                <div ref="historyDateFilterTriggerRef" class="ts-filter-trigger-wrap">
+                  <button
+                    type="button"
+                    class="period-btn ts-filter-period-btn"
+                    aria-haspopup="listbox"
+                    :aria-expanded="showHistoryDateDropdown"
+                    :aria-label="`Date range, ${historyDateFilterLabel}`"
+                    @click.stop="toggleHistoryDateMenu"
                   >
+                    <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+                  </button>
+                  <Teleport to="body">
+                    <div
+                      v-if="showHistoryDateDropdown"
+                      class="ts-filter-dropdown-portal period-dropdown"
+                      :style="historyDateDropdownStyle"
+                      role="listbox"
+                      @click.stop
+                    >
                     <button
                       type="button"
                       class="period-option"
@@ -1727,37 +1904,81 @@ onUnmounted(() => {
                     </button>
                   </div>
                 </Teleport>
+                </div>
+              </div>
+              <div class="admin-ts-emp-filter-wrap">
+                <span class="admin-ts-emp-th-column-label">
+                  Modality
+                  <template v-if="modalityFilter !== 'all'">
+                    <span class="admin-ts-emp-th-filter-selection"> · {{ modalityFilterLabel }}</span>
+                  </template>
+                </span>
+                <div ref="modalityFilterTriggerRef" class="ts-filter-trigger-wrap">
+                  <button
+                    type="button"
+                    class="period-btn ts-filter-period-btn"
+                    aria-haspopup="listbox"
+                    :aria-expanded="showModalityDropdown"
+                    :aria-label="`Modality filter, ${modalityFilterLabel}`"
+                    @click.stop="toggleModalityMenu"
+                  >
+                    <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
+                  </button>
+                  <Teleport to="body">
+                    <div
+                      v-if="showModalityDropdown"
+                      class="ts-filter-dropdown-portal period-dropdown"
+                      :style="modalityDropdownStyle"
+                      role="listbox"
+                      @click.stop
+                    >
+                      <button
+                        type="button"
+                        class="period-option"
+                        :class="{ active: modalityFilter === 'all' }"
+                        role="option"
+                        :aria-selected="modalityFilter === 'all'"
+                        @click="applyModalityFilter('all')"
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        class="period-option"
+                        :class="{ active: modalityFilter === 'office' }"
+                        role="option"
+                        :aria-selected="modalityFilter === 'office'"
+                        @click="applyModalityFilter('office')"
+                      >
+                        Office
+                      </button>
+                      <button
+                        type="button"
+                        class="period-option"
+                        :class="{ active: modalityFilter === 'wfh' }"
+                        role="option"
+                        :aria-selected="modalityFilter === 'wfh'"
+                        @click="applyModalityFilter('wfh')"
+                      >
+                        WFH
+                      </button>
+                    </div>
+                  </Teleport>
+                </div>
               </div>
             </div>
             <template v-if="historyDateFilter === 'custom'">
-              <label class="control">
-                <span class="control-label">Start</span>
-                <input v-model="historyCustomStartDate" type="date" class="control-input" />
-              </label>
-              <label class="control">
-                <span class="control-label">End</span>
-                <input v-model="historyCustomEndDate" type="date" class="control-input" />
-              </label>
+              <div class="admin-ts-custom-range-row">
+                <label class="control">
+                  <span class="control-label">Start</span>
+                  <input v-model="historyCustomStartDate" type="date" class="control-input" />
+                </label>
+                <label class="control">
+                  <span class="control-label">End</span>
+                  <input v-model="historyCustomEndDate" type="date" class="control-input" />
+                </label>
+              </div>
             </template>
-          </div>
-          <div class="admin-ts-filters-row">
-            <label class="control control--inline">
-              <span class="control-label">Modality</span>
-              <select v-model="modalityFilter" class="control-input admin-ts-filter-select">
-                <option value="all">All</option>
-                <option value="office">Office</option>
-                <option value="wfh">WFH</option>
-              </select>
-            </label>
-            <label class="control control--inline">
-              <span class="control-label">Hours vs 8h</span>
-              <select v-model="timeComplianceFilter" class="control-input admin-ts-filter-select">
-                <option value="all">All</option>
-                <option value="undertime">Undertime</option>
-                <option value="enough">On time</option>
-                <option value="overtime">Overtime</option>
-              </select>
-            </label>
           </div>
           <p v-if="historyDateFilter === 'custom' && !historyDateRangeValid" class="muted modal-muted">
             Select a valid start and end date.
@@ -1788,7 +2009,7 @@ onUnmounted(() => {
               <div v-if="historyEntryTotalPages > 1" class="pager admin-ts-history-pager">
                 <button
                   type="button"
-                  class="btn btn-secondary"
+                  class="btn btn-secondary pager-nav-btn"
                   :disabled="historyDayPage <= 1"
                   @click="historyDayPage = Math.max(1, historyDayPage - 1)"
                 >
@@ -1799,7 +2020,7 @@ onUnmounted(() => {
                 </span>
                 <button
                   type="button"
-                  class="btn btn-secondary"
+                  class="btn btn-secondary pager-nav-btn"
                   :disabled="historyDayPage >= historyEntryTotalPages"
                   @click="historyDayPage = Math.min(historyEntryTotalPages, historyDayPage + 1)"
                 >
@@ -1952,6 +2173,17 @@ onUnmounted(() => {
 
 .admin-ts-page {
   min-height: calc(100vh - 120px);
+  box-sizing: border-box;
+}
+
+/* Match AdminLayout .main-content padding (1.5rem) — use full width on narrow screens */
+@media (max-width: 767px) {
+  .page.admin-ts-page {
+    margin-left: -0.75rem;
+    margin-right: -0.75rem;
+    width: calc(100% + 1.5rem);
+    max-width: none;
+  }
 }
 
 .admin-ts-analytics {
@@ -1981,6 +2213,12 @@ onUnmounted(() => {
 
 .admin-ts-hero--clickable {
   cursor: pointer;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.admin-ts-hero--clickable:hover {
+  box-shadow: 0 8px 28px rgba(14, 165, 233, 0.35);
+  border-color: rgba(255, 255, 255, 0.45);
 }
 
 .admin-ts-hero--clickable:focus-visible {
@@ -1993,6 +2231,11 @@ onUnmounted(() => {
   inset: 0;
   background: linear-gradient(120deg, #0ea5e9 0%, #2563eb 42%, #1d4ed8 100%);
   opacity: 0.92;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+}
+
+.admin-ts-hero--clickable:hover .admin-ts-hero-bg {
+  filter: brightness(1.08);
 }
 
 .admin-ts-hero-inner {
@@ -2003,6 +2246,18 @@ onUnmounted(() => {
   gap: 1rem;
   padding: 1.1rem 1.25rem;
   color: #fff;
+}
+
+.admin-ts-hero--clickable .admin-ts-hero-inner {
+  border-radius: 14px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.admin-ts-hero--clickable:hover .admin-ts-hero-inner {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.06);
 }
 
 .admin-ts-hero-icon-wrap {
@@ -2103,7 +2358,10 @@ onUnmounted(() => {
   background: var(--bg-secondary, #fff);
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
   min-height: 220px;
+  min-width: 0;
   padding: 0.5rem 0.65rem 0.75rem;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .admin-ts-chart-inner {
@@ -2111,10 +2369,13 @@ onUnmounted(() => {
   z-index: 1;
   height: 220px;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .admin-ts-chart-inner canvas {
   max-height: 220px;
+  max-width: 100%;
 }
 
 .admin-ts-chart-loading {
@@ -2221,6 +2482,13 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
+.admin-ts-absent-error {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--error, #f87171);
+  line-height: 1.35;
+}
+
 .admin-ts-absent-num {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -2232,25 +2500,29 @@ onUnmounted(() => {
   font-size: 0.8125rem;
 }
 
+/* Opaque fills only — transparent gradients pick up dark page bg and look nothing like the pale pink spec */
 .admin-ts-absent-champ {
+  color-scheme: light;
   padding: 0.75rem 0.85rem;
   border-radius: 10px;
-  background: var(--bg-tertiary, #f1f5f9);
-  border: 1px dashed var(--border-light);
+  background: #fdf2f2;
+  border: 1px solid #fecaca;
+  box-shadow: 0 1px 2px rgba(185, 28, 28, 0.08);
 }
 
 .admin-ts-absent-champ--click {
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 .admin-ts-absent-champ--click:hover {
-  background: rgba(56, 189, 248, 0.08);
-  border-color: rgba(56, 189, 248, 0.35);
+  background: #fee2e2;
+  border-color: #f87171;
+  box-shadow: 0 2px 8px rgba(185, 28, 28, 0.12);
 }
 
 .admin-ts-absent-champ--click:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid rgba(234, 88, 12, 0.85);
   outline-offset: 2px;
 }
 
@@ -2260,7 +2532,7 @@ onUnmounted(() => {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-tertiary);
+  color: #9b1c1c;
   margin-bottom: 0.25rem;
 }
 
@@ -2268,14 +2540,40 @@ onUnmounted(() => {
   display: block;
   font-size: 1.05rem;
   font-weight: 700;
-  color: var(--text-primary);
+  color: #111827;
 }
 
 .admin-ts-absent-champ-meta {
   display: block;
   font-size: 0.78rem;
-  color: var(--text-secondary);
+  color: #b83232;
   margin-top: 0.2rem;
+}
+
+/* Dark theme: deeper rose surface so the card sits with --bg-secondary instead of a bright pink patch */
+:global(body.dark-mode) .admin-ts-absent-champ {
+  color-scheme: dark;
+  background: #1f1416;
+  border-color: rgba(185, 28, 28, 0.42);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+:global(body.dark-mode) .admin-ts-absent-champ--click:hover {
+  background: #2a181b;
+  border-color: rgba(248, 113, 113, 0.45);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+:global(body.dark-mode) .admin-ts-absent-champ-lbl {
+  color: #fca5a5;
+}
+
+:global(body.dark-mode) .admin-ts-absent-champ-name {
+  color: #f1f5f9;
+}
+
+:global(body.dark-mode) .admin-ts-absent-champ-meta {
+  color: #f87171;
 }
 
 .sr-only {
@@ -2487,6 +2785,7 @@ onUnmounted(() => {
   border-radius: 14px;
   padding: 1rem 1.1rem 1.25rem;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  scroll-margin-top: 3.5rem;
 }
 
 .admin-ts-detail-head {
@@ -2499,14 +2798,20 @@ onUnmounted(() => {
 
 .admin-ts-clear-btn {
   flex-shrink: 0;
-  padding: 0.4rem 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem;
   border-radius: 8px;
   border: 1px solid var(--border-light);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 0.8125rem;
-  font-weight: 600;
+  line-height: 1;
   cursor: pointer;
+}
+
+.admin-ts-clear-btn .material-symbols-outlined {
+  font-size: 1.25rem;
 }
 
 .admin-ts-clear-btn:hover {
@@ -2578,18 +2883,6 @@ onUnmounted(() => {
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.admin-ts-filters-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem 1.25rem;
-  margin-top: 0.75rem;
-  align-items: flex-end;
-}
-
-.admin-ts-filter-select {
-  min-width: 10rem;
 }
 
 .control--inline {
@@ -2811,8 +3104,14 @@ onUnmounted(() => {
 }
 
 @media (max-width: 960px) {
+  .admin-ts-analytics {
+    margin-bottom: 0.65rem;
+    gap: 0.6rem;
+  }
+
   .admin-ts-layout {
     flex-direction: column;
+    gap: 0.5rem;
   }
 
   .admin-ts-sidebar {
@@ -3012,6 +3311,19 @@ onUnmounted(() => {
 .btn-secondary:hover:not(:disabled) {
   opacity: 0.9;
 }
+.pager .pager-nav-btn.btn-secondary {
+  font-weight: 400;
+  border: 1px solid var(--accent, #38bdf8);
+  background: var(--bg-secondary, #fff);
+  color: var(--accent, #38bdf8);
+  opacity: 1;
+}
+.pager .pager-nav-btn.btn-secondary:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.1);
+  color: var(--accent, #0ea5e9);
+  border-color: var(--accent, #38bdf8);
+  opacity: 1;
+}
 /* Match TimesheetView.vue "Download PDF" primary action */
 .btn-primary {
   padding: 0.5rem 1rem;
@@ -3187,16 +3499,62 @@ onUnmounted(() => {
 .modal-controls {
   margin-top: 1rem;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
 }
 
-.control--date-period {
+.admin-ts-filter-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem 1rem;
+  width: 100%;
+}
+
+/* Same header-filter layout as AdminEmployeesView (th-*-wrap + th-column-label + ts-filter-trigger-wrap) */
+.admin-ts-emp-filter-wrap {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 0.4rem;
+  justify-content: flex-start;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.admin-ts-emp-filter-wrap .admin-ts-emp-th-column-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.admin-ts-emp-filter-wrap .ts-filter-trigger-wrap {
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.admin-ts-emp-th-column-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.admin-ts-emp-th-filter-selection {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.admin-ts-custom-range-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  width: 100%;
+  margin-top: 0.65rem;
+}
+
+.admin-ts-custom-range-row .control {
+  flex: 1 1 10rem;
   min-width: 0;
 }
 
@@ -3206,10 +3564,12 @@ onUnmounted(() => {
 }
 
 .ts-filter-period-btn.period-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: auto;
   min-width: 1.75rem;
-  justify-content: center;
-  padding: 0.35rem;
+  padding: 0.3rem 0.35rem;
   font-size: 0.75rem;
   border-radius: 8px;
   border: none;
@@ -3342,16 +3702,16 @@ onUnmounted(() => {
 /* —— Mobile: tighter layout, readable data density —— */
 @media (max-width: 640px) {
   .employee-panel {
-    margin-bottom: 0.65rem;
-    padding: 0.6rem 0.65rem 0.7rem;
+    margin-bottom: 0.5rem;
+    padding: 0.5rem 0.55rem 0.6rem;
     border-radius: 12px;
   }
   .panel-head {
-    margin-bottom: 0.45rem;
+    margin-bottom: 0.35rem;
   }
   .panel-title-row {
-    margin-bottom: 0.3rem;
-    gap: 0.4rem 0.6rem;
+    margin-bottom: 0.25rem;
+    gap: 0.35rem 0.5rem;
   }
   .panel-title {
     font-size: 0.9375rem;
@@ -3365,8 +3725,8 @@ onUnmounted(() => {
     line-height: 1.35;
   }
   .employee-toolbar {
-    gap: 0.45rem;
-    margin-bottom: 0.45rem;
+    gap: 0.35rem;
+    margin-bottom: 0.35rem;
   }
   .employee-search {
     min-width: 0;
@@ -3377,9 +3737,9 @@ onUnmounted(() => {
     border-radius: 8px;
   }
   .employee-table-actions {
-    gap: 0.45rem;
-    margin-top: 0.45rem;
-    padding-top: 0.45rem;
+    gap: 0.35rem;
+    margin-top: 0.35rem;
+    padding-top: 0.35rem;
   }
   .employee-table-actions .btn,
   .employee-table-actions .btn-secondary {
@@ -3426,9 +3786,9 @@ onUnmounted(() => {
     height: 14px;
   }
   .pager {
-    gap: 0.45rem;
-    margin-top: 0.45rem;
-    padding-top: 0.45rem;
+    gap: 0.35rem;
+    margin-top: 0.35rem;
+    padding-top: 0.35rem;
   }
   .pager-info {
     font-size: 0.72rem;
@@ -3436,7 +3796,8 @@ onUnmounted(() => {
     width: 100%;
     order: -1;
   }
-  .pager .btn-secondary {
+  .pager .btn-secondary,
+  .pager .pager-nav-btn {
     flex: 1;
     min-width: 0;
   }
@@ -3449,18 +3810,172 @@ onUnmounted(() => {
     line-height: 1.35;
   }
   .banner-error {
-    margin: 0 0 0.6rem;
-    padding: 0.5rem 0.65rem;
+    margin: 0 0 0.45rem;
+    padding: 0.45rem 0.55rem;
     font-size: 0.8125rem;
     border-radius: 8px;
   }
   .loading-state {
-    padding: 0.65rem 0.6rem;
+    padding: 0.5rem 0.5rem;
     font-size: 0.8125rem;
   }
 
+  .admin-ts-page {
+    min-height: auto;
+  }
+  .admin-ts-analytics {
+    margin: 0 auto 0.35rem;
+    gap: 0.4rem;
+  }
+  .admin-ts-hero {
+    min-height: 0;
+    border-radius: 12px;
+  }
+  .admin-ts-hero-inner {
+    padding: 0.5rem 0.55rem;
+    gap: 0.5rem;
+  }
+  .admin-ts-hero-icon-wrap {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+  }
+  .admin-ts-hero-title {
+    font-size: 1.1rem;
+  }
+  .admin-ts-hero-sub {
+    font-size: 0.8125rem;
+  }
+  .admin-ts-charts-grid {
+    gap: 0.35rem;
+  }
+  .admin-ts-chart-card {
+    padding: 0.3rem 0.35rem 0.45rem;
+    border-radius: 10px;
+    min-height: 0;
+  }
+  .admin-ts-chart-inner {
+    height: 248px;
+  }
+  .admin-ts-chart-inner canvas {
+    max-height: 248px;
+  }
+  .admin-ts-kpi-row {
+    flex-wrap: nowrap;
+    justify-content: center;
+    gap: 0.3rem;
+    margin-bottom: 0.15rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .admin-ts-kpi-chip {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 0.26rem 0.45rem;
+    font-size: 0.68rem;
+  }
+  .admin-ts-kpi-chip strong {
+    font-size: 0.8125rem;
+  }
+  .admin-ts-absent-panel {
+    padding: 0.5rem 0.55rem;
+    border-radius: 10px;
+  }
+  .admin-ts-absent-head {
+    gap: 0.4rem 0.5rem;
+    margin-bottom: 0.35rem;
+  }
+  .admin-ts-absent-title {
+    font-size: 0.875rem;
+  }
+  .admin-ts-absent-desc {
+    font-size: 0.75rem;
+    line-height: 1.35;
+  }
+  .admin-ts-absent-line {
+    margin: 0 0 0.45rem;
+    font-size: 0.8125rem;
+  }
+  .admin-ts-absent-champ {
+    padding: 0.55rem 0.65rem;
+    border-radius: 8px;
+    text-align: center;
+  }
+  .admin-ts-layout {
+    gap: 0.45rem;
+  }
+  .admin-ts-sidebar-card {
+    padding: 0.65rem 0.7rem 0.75rem;
+    min-height: 0;
+    border-radius: 12px;
+    gap: 0.45rem;
+  }
+  .admin-ts-sidebar-title {
+    font-size: 1rem;
+  }
+  .admin-ts-sidebar-hint {
+    font-size: 0.7rem;
+    line-height: 1.35;
+  }
+  .admin-ts-emp-list {
+    max-height: min(38vh, 300px);
+  }
+  .admin-ts-emp-item {
+    padding: 0.38rem 0.35rem;
+    border-radius: 8px;
+  }
+  .admin-ts-pager {
+    padding-top: 0.35rem;
+  }
+  .admin-ts-sidebar-actions {
+    padding-top: 0.4rem;
+    gap: 0.35rem;
+  }
+  .admin-ts-placeholder {
+    padding: 0.75rem 0.5rem;
+    min-height: 160px;
+    border-radius: 12px;
+  }
+  .admin-ts-placeholder-title {
+    font-size: 0.95rem;
+  }
+  .admin-ts-placeholder-text {
+    font-size: 0.8125rem;
+  }
+  .admin-ts-detail-card {
+    padding: 0.55rem 0.55rem 0.65rem;
+    border-radius: 12px;
+  }
+  .admin-ts-detail-head {
+    margin-bottom: 0;
+    gap: 0.35rem;
+  }
+  .admin-ts-banner-tight {
+    margin: 0.25rem 0 0;
+  }
+  .admin-ts-filter-pair {
+    gap: 0.35rem 0.45rem;
+  }
+  .admin-ts-custom-range-row {
+    margin-top: 0.35rem;
+    gap: 0.35rem 0.45rem;
+  }
+  .admin-ts-entries-wrap {
+    margin-top: 0.45rem;
+    gap: 0.35rem;
+  }
+  .admin-ts-history-pager {
+    margin-top: 0.35rem;
+    padding-top: 0.35rem;
+  }
+  .admin-ts-detail-actions {
+    margin-top: 0.55rem;
+    padding-top: 0.5rem;
+  }
+
   .modal-overlay {
-    padding: 0.35rem;
+    padding: 0.2rem;
     align-items: center;
   }
   .modal-panel {
@@ -3468,8 +3983,8 @@ onUnmounted(() => {
     max-width: none;
     max-height: 96vh;
     margin: 0;
-    padding: 0.55rem 0.6rem 0.65rem;
-    padding-top: 2.5rem;
+    padding: 0.45rem 0.5rem 0.55rem;
+    padding-top: 2.35rem;
     border-radius: 14px;
     box-sizing: border-box;
   }
@@ -3501,8 +4016,8 @@ onUnmounted(() => {
     padding: 0.12rem 0.38rem;
   }
   .modal-controls {
-    margin-top: 0.55rem;
-    gap: 0.4rem;
+    margin-top: 0.45rem;
+    gap: 0.35rem;
   }
   .modal-controls .control {
     min-width: 0;

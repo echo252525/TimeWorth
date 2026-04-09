@@ -1024,16 +1024,21 @@ function formatClockOutWithNextDayHint(r: { clock_in: string | null; clock_out: 
         <div class="table-scroll">
           <table class="data-table">
             <colgroup>
-              <col class="ae-col-name" />
+              <col class="ae-col-name" :class="{ 'ae-col--filtered': filterAccountApproval !== 'all' }" />
               <col class="ae-col-empid" />
-              <col class="ae-col-modality" />
-              <col class="ae-col-status" />
+              <col class="ae-col-modality" :class="{ 'ae-col--filtered': filterModality !== 'all' }" />
+              <col class="ae-col-status" :class="{ 'ae-col--filtered': filterStatus !== 'all' }" />
               <col class="ae-col-email" />
-              <col class="ae-col-position" />
+              <col class="ae-col-position" :class="{ 'ae-col--filtered': filterPosition !== 'all' }" />
             </colgroup>
             <thead>
               <tr>
-                <th class="th-name" scope="col" @click.stop>
+                <th
+                  class="th-name"
+                  :class="{ 'th-col--filtered': filterAccountApproval !== 'all' }"
+                  scope="col"
+                  @click.stop
+                >
                   <div class="th-name-wrap">
                     <span class="th-column-label">
                       Name
@@ -1098,8 +1103,13 @@ function formatClockOutWithNextDayHint(r: { clock_in: string | null; clock_out: 
                     </div>
                   </div>
                 </th>
-                <th scope="col">Employee ID</th>
-                <th class="th-modality" scope="col" @click.stop>
+                <th class="th-empid" scope="col">Employee ID</th>
+                <th
+                  class="th-modality"
+                  :class="{ 'th-col--filtered': filterModality !== 'all' }"
+                  scope="col"
+                  @click.stop
+                >
                   <div class="th-modality-wrap">
                     <span class="th-column-label">
                       Modality
@@ -1161,7 +1171,12 @@ function formatClockOutWithNextDayHint(r: { clock_in: string | null; clock_out: 
                     </div>
                   </div>
                 </th>
-                <th class="th-status" scope="col" @click.stop>
+                <th
+                  class="th-status"
+                  :class="{ 'th-col--filtered': filterStatus !== 'all' }"
+                  scope="col"
+                  @click.stop
+                >
                   <div class="th-status-wrap">
                     <span class="th-column-label">
                       Status
@@ -1224,7 +1239,12 @@ function formatClockOutWithNextDayHint(r: { clock_in: string | null; clock_out: 
                   </div>
                 </th>
                 <th scope="col">Email</th>
-                <th class="th-position" scope="col" @click.stop>
+                <th
+                  class="th-position"
+                  :class="{ 'th-col--filtered': filterPosition !== 'all' }"
+                  scope="col"
+                  @click.stop
+                >
                   <div class="th-position-wrap">
                     <span class="th-column-label th-column-label--grow">
                       Position
@@ -1246,7 +1266,7 @@ function formatClockOutWithNextDayHint(r: { clock_in: string | null; clock_out: 
                       <Teleport to="body">
                         <div
                           v-if="showPositionFilterDropdown"
-                          class="ts-filter-dropdown-portal period-dropdown"
+                          class="ts-filter-dropdown-portal period-dropdown period-dropdown--scrollable"
                           :style="positionDropdownStyle"
                           role="listbox"
                           @click.stop
@@ -1315,7 +1335,7 @@ function formatClockOutWithNextDayHint(r: { clock_in: string | null; clock_out: 
                       <span class="user-name">{{ e.name }}</span>
                     </div>
                   </td>
-                  <td class="td-muted">{{ e.employee_no ?? '—' }}</td>
+                  <td class="td-muted td-empid">{{ e.employee_no ?? '—' }}</td>
                   <td class="td-muted">{{ currentWorkModalityLabel(e.id) }}</td>
                   <td class="td-muted td-status">
                     <div class="status-cell-wrap">
@@ -1643,29 +1663,48 @@ body.light-mode .kpi-card-pending .kpi-icon {
 }
 .data-table {
   width: 100%;
-  min-width: 720px;
+  min-width: 880px;
   table-layout: fixed;
   border-collapse: collapse;
   font-size: 0.875rem;
 }
 /* Fixed column widths so headers stay aligned with or without data rows (empty colspan row). */
 .ae-col-name {
-  width: 20%;
+  width: 18%;
+}
+.ae-col-name.ae-col--filtered {
+  min-width: 10rem;
+  width: 21%;
 }
 .ae-col-empid {
-  width: 11%;
+  width: 13%;
+  min-width: 7.5rem;
 }
+/* Modality needs a floor width — 10% alone collapses on narrow / mobile scroll views */
 .ae-col-modality {
-  width: 10%;
+  width: 12%;
+  min-width: 8rem;
 }
-.ae-col-status {
+.ae-col-modality.ae-col--filtered {
+  min-width: 9.5rem;
   width: 14%;
 }
+.ae-col-status {
+  width: 13%;
+}
+.ae-col-status.ae-col--filtered {
+  min-width: 9rem;
+  width: 15%;
+}
 .ae-col-email {
-  width: 24%;
+  width: 22%;
 }
 .ae-col-position {
-  width: 21%;
+  width: 22%;
+}
+.ae-col-position.ae-col--filtered {
+  min-width: 11rem;
+  width: 24%;
 }
 .data-table thead th {
   position: sticky;
@@ -1676,18 +1715,42 @@ body.light-mode .kpi-card-pending .kpi-icon {
   font-weight: 600;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-color);
-  white-space: nowrap;
+  white-space: normal;
+  vertical-align: middle;
   background: var(--bg-secondary);
+}
+.data-table thead th.th-empid {
+  white-space: nowrap;
 }
 .th-name {
   min-width: 0;
 }
-.th-name-wrap {
+.th-name-wrap,
+.th-modality-wrap,
+.th-status-wrap,
+.th-position-wrap {
   display: flex;
-  align-items: flex-start;
+  flex-direction: row;
+  align-items: center;
   justify-content: flex-start;
-  gap: 0.4rem;
+  gap: 0.35rem;
   min-width: 0;
+}
+.th-name-wrap .th-column-label,
+.th-modality-wrap .th-column-label,
+.th-status-wrap .th-column-label,
+.th-position-wrap .th-column-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  word-break: break-word;
+}
+.th-name-wrap .ts-filter-trigger-wrap,
+.th-modality-wrap .ts-filter-trigger-wrap,
+.th-status-wrap .ts-filter-trigger-wrap,
+.th-position-wrap .ts-filter-trigger-wrap {
+  flex-shrink: 0;
+  align-self: center;
 }
 
 .th-column-label {
@@ -1721,34 +1784,20 @@ body.light-mode .kpi-card-pending .kpi-icon {
   background: var(--bg-tertiary);
 }
 .th-status {
-  white-space: nowrap;
-}
-.th-status-wrap {
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 0.4rem;
   min-width: 0;
 }
 .th-modality {
-  min-width: 0;
-}
-.th-modality-wrap {
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 0.4rem;
-  min-width: 0;
+  min-width: 8rem;
 }
 .th-position {
   min-width: 0;
 }
-.th-position-wrap {
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 0.4rem;
-  min-width: 0;
+.th-empid {
+  min-width: 7.5rem;
+}
+.td-empid {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .ts-filter-trigger-wrap {
@@ -1830,6 +1879,15 @@ body.light-mode .kpi-card-pending .kpi-icon {
   border-radius: 10px;
   min-width: 150px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Long lists (e.g. many positions): cap height and scroll inside the menu */
+.ts-filter-dropdown-portal.period-dropdown--scrollable {
+  max-height: min(50vh, 20rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .period-option {
@@ -2270,6 +2328,134 @@ body.light-mode .kpi-card-pending .kpi-icon {
 .muted {
   color: var(--text-secondary);
   font-size: 0.875rem;
+}
+
+/* Tighter spacing on small screens */
+@media (max-width: 640px) {
+  .banner-error {
+    margin: 0 0 0.65rem;
+  }
+
+  .kpi-row {
+    gap: 0.5rem;
+    margin-bottom: 0.875rem;
+  }
+  .kpi-card {
+    padding: 0.75rem 0.85rem;
+    border-radius: 12px;
+  }
+  .kpi-icon-wrap {
+    width: 2.4rem;
+    height: 2.4rem;
+    margin-bottom: 0.5rem;
+  }
+  .kpi-icon {
+    font-size: 1.2rem;
+  }
+  .kpi-value {
+    font-size: 1.45rem;
+  }
+  .kpi-label {
+    margin-top: 0.15rem;
+    font-size: 0.75rem;
+  }
+
+  .controls {
+    margin-bottom: 0.75rem;
+    gap: 0.35rem;
+  }
+  .search-input {
+    padding: 0.5rem 0.65rem 0.5rem 2.25rem;
+    font-size: 0.875rem;
+    border-radius: 8px;
+  }
+  .search-icon {
+    left: 0.65rem;
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .filters-row {
+    gap: 0.35rem;
+  }
+
+  .table-card {
+    border-radius: 12px;
+  }
+  .table-scroll {
+    min-height: 160px;
+  }
+  .data-table {
+    font-size: 0.8125rem;
+    /* Wider floor so columns (esp. Modality) stay readable while scrolling horizontally */
+    min-width: 920px;
+  }
+  .ae-col-modality {
+    min-width: 8.5rem;
+  }
+  .data-table thead th {
+    padding: 0.5rem 0.65rem;
+  }
+  .data-table tbody td {
+    padding: 0.45rem 0.65rem;
+  }
+
+  .th-name-wrap,
+  .th-status-wrap,
+  .th-modality-wrap,
+  .th-position-wrap {
+    gap: 0.3rem;
+  }
+
+  .user-cell {
+    gap: 0.45rem;
+  }
+  .avatar {
+    width: 34px;
+    height: 34px;
+  }
+
+  .data-table-empty-inner {
+    min-height: 140px;
+    padding: 1rem 0.75rem;
+    gap: 0.45rem;
+  }
+  .data-table-empty-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+  .data-table-empty-msg {
+    font-size: 0.8125rem;
+  }
+
+  .modal-overlay {
+    padding: 0.65rem;
+  }
+  .modal-loading {
+    padding: 1.25rem;
+  }
+  .profile-section {
+    padding: 1rem 1rem 0.75rem;
+  }
+  .profile-name {
+    margin: 0 0 0.65rem;
+    font-size: 1.1rem;
+  }
+  .registered-face-section {
+    margin-top: 0.85rem;
+    padding-top: 0.75rem;
+  }
+  .history-section {
+    padding: 0.75rem 1rem 1rem;
+  }
+  .history-section h3 {
+    margin: 0 0 0.5rem;
+  }
+
+  .emp-hover-popover {
+    width: min(288px, calc(100vw - 1rem));
+    padding: 0.65rem 0.75rem;
+  }
 }
 
 :root.light-mode .ts-filter-dropdown-portal.period-dropdown,

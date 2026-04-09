@@ -141,7 +141,7 @@ function isActive(path: string) {
           <img src="/TimeWorthLogo.png" alt="TimeWorth" class="header-logo" />
           <div class="header-title-copy">
             <h1 class="app-title">TimeWorth</h1>
-            <p class="app-tagline">Welcome, Admin {{ adminProfile?.name ?? adminProfile?.email }}!</p>
+            <p class="app-tagline">Welcome, {{ adminProfile?.name ?? adminProfile?.email }}!</p>
           </div>
         </div>
       </header>
