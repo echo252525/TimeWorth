@@ -5,6 +5,8 @@ import { useAdminAuth, getSignedAdminProfileUrl, ADMIN_PROFILE_BUCKET, adminProf
 import type { AdminRow, AdminRole } from '../composables/useAdminAuth'
 import { useAuth } from '../composables/useAuth'
 import { validateEmployeeIdentifier } from '../lib/employeeIdentifierValidation'
+import Swal from 'sweetalert2'
+import 'sweetalert2/dist/sweetalert2.min.css'
 
 const { user } = useAuth()
 const { isSuperadmin, fetchAdminProfile } = useAdminAuth()
@@ -177,6 +179,15 @@ async function saveProfile() {
     showPersonalInfoForm.value = false
     personalBaseline.value = null
     window.dispatchEvent(new CustomEvent('profile-updated'))
+
+    await Swal.fire({
+      icon: 'success',
+      title: 'You have successfully edited your personal information!',
+      confirmButtonText: 'Okay',
+      allowOutsideClick: true,
+      allowEscapeKey: true
+    })
+
     setTimeout(() => { success.value = false }, 4000)
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to save'
@@ -277,6 +288,15 @@ async function changePassword() {
     showConfirmPassword.value = false
     showPasswordForm.value = false
     passwordSuccess.value = true
+
+    await Swal.fire({
+      icon: 'success',
+      title: 'You have successfully changed your password!',
+      confirmButtonText: 'Okay',
+      allowOutsideClick: true,
+      allowEscapeKey: true
+    })
+
     setTimeout(() => { passwordSuccess.value = false }, 4000)
   } catch (e) {
     passwordError.value = e instanceof Error ? e.message : 'Failed to change password'
@@ -427,7 +447,6 @@ async function updateRole(id: string, roleVal: string) {
             </div>
           </div>
           <p v-if="error" class="msg error">{{ error }}</p>
-          <p v-if="success" class="msg success">Profile saved.</p>
           <div v-if="!showPersonalInfoForm" class="personal-card__footer">
             <button type="button" class="btn settings-accent-action-btn" @click="startEditPersonalInfo">
               <span class="material-symbols-outlined" aria-hidden="true">person_edit</span>
@@ -453,7 +472,6 @@ async function updateRole(id: string, roleVal: string) {
           <h2 class="card-title">Security</h2>
           <template v-if="!showPasswordForm">
             <p class="security-intro">We recommend changing your password every 90 days to ensure the highest security.</p>
-            <p v-if="passwordSuccess" class="msg success">Password changed successfully.</p>
             <div class="security-card__footer">
               <button type="button" class="btn settings-accent-action-btn" @click="togglePasswordForm">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

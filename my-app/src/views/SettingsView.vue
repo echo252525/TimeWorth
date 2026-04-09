@@ -3,6 +3,8 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import supabase from '../lib/supabaseClient'
 import { validateEmployeeIdentifier } from '../lib/employeeIdentifierValidation'
 import { useAuth } from '../composables/useAuth'
+import Swal from 'sweetalert2'
+import 'sweetalert2/dist/sweetalert2.min.css'
 
 const BUCKET = 'employee_profile'
 const WFH_PICTURE_BUCKET = 'wfh_employee_picture'
@@ -225,6 +227,14 @@ async function changePassword() {
     showPasswordForm.value = false
     passwordSuccess.value = true
 
+    await Swal.fire({
+      icon: 'success',
+      title: 'You have successfully changed your password!',
+      confirmButtonText: 'Okay',
+      allowOutsideClick: true,
+      allowEscapeKey: true
+    })
+
     setTimeout(() => {
       passwordSuccess.value = false
     }, 4000)
@@ -393,6 +403,14 @@ async function deleteAccount() {
 
     await supabase.auth.signOut()
 
+    await Swal.fire({
+      icon: 'success',
+      title: 'Your account has been deleted, and your data erased.',
+      confirmButtonText: 'Okay',
+      allowOutsideClick: true,
+      allowEscapeKey: true
+    })
+
     window.location.href = '/login'
   } catch (e) {
     deleteError.value =
@@ -400,6 +418,19 @@ async function deleteAccount() {
   } finally {
     deletingAccount.value = false
   }
+}
+
+async function confirmDeleteAccount() {
+  const result = await Swal.fire({
+    icon: 'warning',
+    title: 'Are you sure you want to delete your account? This cannot be undone.',
+    showCancelButton: true,
+    confirmButtonText: 'Delete',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#dc2626'
+  })
+  if (!result.isConfirmed) return
+  await deleteAccount()
 }
 
 function openEditModal() {
@@ -721,6 +752,14 @@ async function save() {
     showPersonalInfoForm.value = false
     personalBaseline.value = null
     window.dispatchEvent(new CustomEvent('profile-updated'))
+
+    await Swal.fire({
+      icon: 'success',
+      title: 'You have successfully edited your personal information!',
+      confirmButtonText: 'Okay',
+      allowOutsideClick: true,
+      allowEscapeKey: true
+    })
   } catch (e) {
     error.value = formatProfileSaveError(e)
   } finally {
@@ -850,7 +889,6 @@ async function save() {
           </div>
         </div>
         <p v-if="error" class="msg error">{{ error }}</p>
-        <p v-if="success" class="msg success">Profile saved.</p>
         <div v-if="!showPersonalInfoForm" class="personal-card__footer">
           <button type="button" class="btn settings-accent-action-btn" @click="startEditPersonalInfo">
             <span class="material-symbols-outlined" aria-hidden="true">person_edit</span>
@@ -877,7 +915,6 @@ async function save() {
         <h2 class="card-title">Security</h2>
         <template v-if="!showPasswordForm">
           <p class="danger-text">We recommend changing your password every 90 days to ensure the highest security.</p>
-          <p v-if="passwordSuccess" class="msg success">Password changed successfully.</p>
           <div class="security-card__footer">
             <button type="button" class="btn settings-accent-action-btn" @click="togglePasswordForm">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1057,7 +1094,7 @@ async function save() {
                 type="button"
                 class="btn btn-danger"
                 :disabled="deletingAccount || deleteConfirmPassword.length === 0"
-                @click="deleteAccount"
+                @click="confirmDeleteAccount"
               >
                 {{ deletingAccount ? 'Deleting…' : 'Delete my account' }}
               </button>
