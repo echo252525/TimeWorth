@@ -159,7 +159,7 @@ function dismissEmailConfirmedModal() {
       <form class="auth-form" @submit.prevent="onSubmit">
         <div class="field"><label for="email">EMAIL <span class="required-asterisk">*</span></label><input id="email" v-model="form.email" type="email" required placeholder="name@gmail.com" autocomplete="email" /></div>
         <div class="field">
-          <label for="password">PASSWORD <span class="required-asterisk">*</span> (Must be at least 6 characters)</label>
+          <label for="password">PASSWORD <span class="required-asterisk">*</span></label>
           <div class="input-with-icon">
             <input
               id="password"

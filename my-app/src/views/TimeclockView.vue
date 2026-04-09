@@ -61,6 +61,74 @@ const wfhVideoRef = ref<HTMLVideoElement | null>(null)
 const wfhCameraStream = ref<MediaStream | null>(null)
 const wfhCameraStarting = ref(false)
 const wfhVideoMetaReady = ref(false)
+/** Available video inputs (filled after permission + enumerate). */
+const wfhVideoInputs = ref<MediaDeviceInfo[]>([])
+const wfhSelectedDeviceId = ref<string | null>(null)
+
+function wfhLabelSuggestsFront(label: string): boolean {
+  return /front|user|face|selfie/i.test(label)
+}
+function wfhLabelSuggestsBack(label: string): boolean {
+  return /back|rear|environment|wide|world/i.test(label)
+}
+
+async function refreshWfhVideoInputList(): Promise<void> {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    wfhVideoInputs.value = []
+    return
+  }
+  let list = (await navigator.mediaDevices.enumerateDevices()).filter(
+    (d) => d.kind === 'videoinput' && d.deviceId
+  )
+  if (list.length && !list.some((d) => d.label)) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      s.getTracks().forEach((t) => t.stop())
+      list = (await navigator.mediaDevices.enumerateDevices()).filter(
+        (d) => d.kind === 'videoinput' && d.deviceId
+      )
+    } catch {
+      /* keep unlabeled list */
+    }
+  }
+  wfhVideoInputs.value = list
+}
+
+function pickDefaultWfhDeviceId(inputs: MediaDeviceInfo[]): string | null {
+  if (!inputs.length) return null
+  if (inputs.length === 1) return inputs[0].deviceId
+  const front = inputs.find((d) => wfhLabelSuggestsFront(d.label))
+  if (front) return front.deviceId
+  return inputs[0].deviceId
+}
+
+const wfhShowCameraPicker = computed(() => {
+  if (wfhPhotoFile.value) return false
+  return wfhVideoInputs.value.length > 1
+})
+
+/** When labels distinguish front vs back, show two buttons; otherwise use dropdown. */
+const wfhFrontBackPair = computed(() => {
+  const inputs = wfhVideoInputs.value
+  if (inputs.length < 2) return null
+  const front = inputs.find((d) => wfhLabelSuggestsFront(d.label))
+  const back = inputs.find((d) => wfhLabelSuggestsBack(d.label))
+  if (front && back && front.deviceId !== back.deviceId) {
+    return { frontId: front.deviceId, backId: back.deviceId }
+  }
+  return null
+})
+
+function selectWfhCameraDevice(deviceId: string) {
+  if (!deviceId || wfhSelectedDeviceId.value === deviceId) return
+  wfhSelectedDeviceId.value = deviceId
+  void startWfhCamera()
+}
+
+function onWfhCameraSelectChange(ev: Event) {
+  const id = (ev.target as HTMLSelectElement).value
+  selectWfhCameraDevice(id)
+}
 // Liveness verification state
 const livenessVerificationId = ref<string | null>(null)
 const facialScanSuccess = ref(false)
@@ -122,9 +190,25 @@ interface OfficeGeofenceRow {
 }
 const officeGeofence = ref<OfficeGeofenceRow | null>(null)
 const officeGeofenceLoading = ref(true)
+/** Reverse-geocoded address for the active geofence center (geolocation row with `geolocation_status` true). Used for geofence circle hover only. */
+const officeGeofenceHoverAddress = ref<string | null>(null)
+
+async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+      { headers: { 'Accept-Language': 'en', 'User-Agent': 'TimeWorthApp/1.0' } }
+    )
+    const data = await res.json()
+    return data?.display_name ?? null
+  } catch {
+    return null
+  }
+}
 
 async function loadOfficeGeofence() {
   officeGeofenceLoading.value = true
+  officeGeofenceHoverAddress.value = null
   const { data, error } = await supabase
     .from('geolocation')
     .select('id, name, latitude, longitude, radius_meters')
@@ -136,6 +220,14 @@ async function loadOfficeGeofence() {
     return
   }
   officeGeofence.value = (data as OfficeGeofenceRow | null) ?? null
+  const row = officeGeofence.value
+  if (row) {
+    const addr = await reverseGeocode(row.latitude, row.longitude)
+    officeGeofenceHoverAddress.value = addr?.trim() || null
+  }
+  nextTick(() => {
+    if (map && circle) bindGeofenceCircleTooltip()
+  })
 }
 
 const centerIcon = L.divIcon({
@@ -236,18 +328,45 @@ async function startWfhCamera() {
   }
   wfhCameraStarting.value = true
   try {
-    const constraintsList: MediaStreamConstraints[] = [
-      { video: { facingMode: { ideal: 'environment' } }, audio: false },
-      { video: { facingMode: 'user' }, audio: false },
-      { video: true, audio: false }
-    ]
+    await refreshWfhVideoInputList()
+    const inputs = wfhVideoInputs.value
+    let deviceId = wfhSelectedDeviceId.value
+    if (!deviceId || !inputs.some((d) => d.deviceId === deviceId)) {
+      deviceId = pickDefaultWfhDeviceId(inputs)
+      wfhSelectedDeviceId.value = deviceId
+    }
     let stream: MediaStream | null = null
-    for (const c of constraintsList) {
+    if (deviceId) {
       try {
-        stream = await navigator.mediaDevices.getUserMedia(c)
-        break
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: deviceId } },
+          audio: false
+        })
       } catch {
-        /* try next */
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { ideal: deviceId } },
+            audio: false
+          })
+        } catch {
+          stream = null
+        }
+      }
+    }
+    if (!stream) {
+      const constraintsList: MediaStreamConstraints[] = [
+        { video: { facingMode: { ideal: 'user' } }, audio: false },
+        { video: { facingMode: 'user' }, audio: false },
+        { video: { facingMode: { ideal: 'environment' } }, audio: false },
+        { video: true, audio: false }
+      ]
+      for (const c of constraintsList) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(c)
+          break
+        } catch {
+          /* try next */
+        }
       }
     }
     if (!stream) throw new Error('Could not access camera.')
@@ -480,19 +599,6 @@ watch(
   }
 )
 
-async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-      { headers: { 'Accept-Language': 'en', 'User-Agent': 'TimeWorthApp/1.0' } }
-    )
-    const data = await res.json()
-    return data?.display_name ?? null
-  } catch {
-    return null
-  }
-}
-
 function initMap() {
   if (map) return
   if (!mapContainer.value) return
@@ -582,13 +688,19 @@ function syncGeofenceCircleStyle() {
   circle.setStyle(geofenceCircleLeafletStyle())
 }
 
-/** Full office site address for geofence circle tooltip (hover boundary only). */
+/** Full office site address for geofence circle tooltip (hover boundary only). When admin geofence exists, use reverse geocode of its lat/lng (not default branch). */
 function geofenceCircleTooltipText(): string | null {
   if (workModality.value !== 'office' || step.value === 'idle') return null
+  const g = officeGeofence.value
+  if (g) {
+    const resolved = officeGeofenceHoverAddress.value?.trim()
+    if (resolved) return resolved
+    const name = g.name?.trim()
+    if (name) return name
+    return `${g.latitude.toFixed(6)}, ${g.longitude.toFixed(6)}`
+  }
   const addr = activeBranch.value?.address?.trim()
   if (addr) return addr
-  const name = officeGeofence.value?.name?.trim()
-  if (name) return name
   return activeBranch.value?.name ?? null
 }
 
@@ -920,10 +1032,27 @@ function updateMapView(preserveViewport = false, animateUserMove = false) {
   nextTick(() => updateEdgeIndicators())
 }
 
-watch([mapCenter, workModality, activeBranch, step, locationIn, locationOut, wfhAddress, officeUserAddress, userProfileUrl, officeGeofence, isOnLunch], () => {
-  updateMapView()
-  nextTick(() => updateEdgeIndicators())
-}, { flush: 'post' })
+watch(
+  [
+    mapCenter,
+    workModality,
+    activeBranch,
+    step,
+    locationIn,
+    locationOut,
+    wfhAddress,
+    officeUserAddress,
+    userProfileUrl,
+    officeGeofence,
+    officeGeofenceHoverAddress,
+    isOnLunch
+  ],
+  () => {
+    updateMapView()
+    nextTick(() => updateEdgeIndicators())
+  },
+  { flush: 'post' }
+)
 
 function fetchLocationOnce() {
   if (locationFetchedOnMount.value) {
@@ -1593,21 +1722,34 @@ function cancelClockOutOutputPanel() {
   clockOutOutputDraft.value = ''
 }
 
+function beginOfficeClockOut() {
+  if (clockOutDisabledByGeofence.value) return
+  clockOutOutputDraft.value = ''
+  clockOutOutputToSave.value = null
+  showClockOutOutputPanel.value = false
+  clockOutLoading.value = true
+  try {
+    step.value = 'facial_out'
+  } finally {
+    clockOutLoading.value = false
+  }
+}
+
+/** WFH: open output panel first. Office: skip output and go straight to facial clock-out. */
+function onClockOutClick() {
+  if (clockOutDisabledByGeofence.value) return
+  if (todayRecord.value?.work_modality === 'wfh') {
+    openClockOutOutputPanel()
+    return
+  }
+  beginOfficeClockOut()
+}
+
 async function submitClockOutOutput() {
   if (clockOutDisabledByGeofence.value) return
   const out = clockOutOutputDraft.value.trim() || null
   clockOutOutputToSave.value = out
   showClockOutOutputPanel.value = false
-  const mod = todayRecord.value?.work_modality
-  if (mod === 'office') {
-    clockOutLoading.value = true
-    try {
-      step.value = 'facial_out'
-    } finally {
-      clockOutLoading.value = false
-    }
-    return
-  }
   await executeWfhClockOut()
 }
 
@@ -1728,7 +1870,10 @@ async function handleCancelFacial() {
         <template v-else>
           <!-- Active session -->
           <div v-if="todayRecord && !todayRecord.clock_out" class="hero-card hero-idle">
-            <div v-if="showClockOutOutputPanel" class="confirm-wrap clock-out-output-wrap">
+            <div
+              v-if="showClockOutOutputPanel && todayRecord?.work_modality === 'wfh'"
+              class="confirm-wrap clock-out-output-wrap"
+            >
               <p class="muted clock-out-output-label">What did you accomplish during this shift?</p>
               <textarea
                 v-model="clockOutOutputDraft"
@@ -1810,7 +1955,7 @@ async function handleCancelFacial() {
                   type="button"
                   class="btn primary btn-clockout"
                   :disabled="isLoading || clockOutLoading || clockOutDisabledByGeofence"
-                  @click="openClockOutOutputPanel"
+                  @click="onClockOutClick"
                 >
                   <span v-if="isLoading || clockOutLoading" class="btn-loading-wrap">
                     <span class="btn-loading-spinner" aria-hidden="true"></span>
@@ -1905,6 +2050,52 @@ async function handleCancelFacial() {
           </div>
           <div v-else-if="step === 'wfh_photo'" class="hero-card wfh-photo-card">
             <p class="muted">Use your camera to take a proof photo, then submit to clock in.</p>
+            <div
+              v-if="wfhFrontBackPair && wfhShowCameraPicker"
+              class="wfh-camera-switch wfh-camera-switch--front-back"
+              role="group"
+              aria-label="Choose camera"
+            >
+              <span class="wfh-camera-switch-label muted small">Camera</span>
+              <div class="wfh-camera-switch-btns">
+                <button
+                  type="button"
+                  class="btn secondary wfh-camera-switch-btn"
+                  :class="{ primary: wfhSelectedDeviceId === wfhFrontBackPair.frontId }"
+                  :disabled="wfhCameraStarting"
+                  @click="selectWfhCameraDevice(wfhFrontBackPair.frontId)"
+                >
+                  Front
+                </button>
+                <button
+                  type="button"
+                  class="btn secondary wfh-camera-switch-btn"
+                  :class="{ primary: wfhSelectedDeviceId === wfhFrontBackPair.backId }"
+                  :disabled="wfhCameraStarting"
+                  @click="selectWfhCameraDevice(wfhFrontBackPair.backId)"
+                >
+                  Back
+                </button>
+              </div>
+            </div>
+            <div v-else-if="wfhShowCameraPicker" class="wfh-camera-switch">
+              <label class="wfh-camera-switch-label muted small" for="wfh-camera-select">Camera</label>
+              <select
+                id="wfh-camera-select"
+                class="wfh-camera-select"
+                :value="wfhSelectedDeviceId ?? ''"
+                :disabled="wfhCameraStarting"
+                @change="onWfhCameraSelectChange"
+              >
+                <option
+                  v-for="(d, idx) in wfhVideoInputs"
+                  :key="d.deviceId"
+                  :value="d.deviceId"
+                >
+                  {{ d.label?.trim() || `Camera ${idx + 1}` }}
+                </option>
+              </select>
+            </div>
             <div class="wfh-photo-camera">
               <video
                 v-show="!wfhPhotoFile"
@@ -3325,6 +3516,47 @@ async function handleCancelFacial() {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+}
+
+.wfh-camera-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.wfh-camera-switch--front-back {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+}
+
+.wfh-camera-switch-label {
+  font-size: 0.8125rem;
+  margin: 0;
+}
+
+.wfh-camera-switch-btns {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.wfh-camera-switch-btn.primary {
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.35);
+}
+
+.wfh-camera-select {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.9rem;
 }
 
 .wfh-photo-video {
