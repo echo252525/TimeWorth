@@ -28,6 +28,7 @@
   const signupStep = ref(1)
   const step1Panel = ref<HTMLElement | null>(null)
   const step2Panel = ref<HTMLElement | null>(null)
+  const step3Panel = ref<HTMLElement | null>(null)
   /** True after signup when email must be verified before a session exists (typical Supabase flow). */
   const postSignupAwaitingEmail = ref(false)
 
@@ -104,7 +105,19 @@
     return s.replace(/\D/g, '')
   }
 
+  /** Returns an error message if the password does not meet policy, or null if valid. */
+  function validateSignupPassword(password: string): string | null {
+    if (password.length < 8) return 'Password must be at least 8 characters.'
+    if (!/[A-Z]/.test(password)) return 'Password must include at least one uppercase letter.'
+    if (!/[a-z]/.test(password)) return 'Password must include at least one lowercase letter.'
+    if (!/[0-9]/.test(password)) return 'Password must include at least one number.'
+    if (!/[^A-Za-z0-9]/.test(password)) return 'Password must include at least one special character.'
+    return null
+  }
+
   async function onSubmit() {
+    if (signupStep.value !== 3) return
+    if (!validateStepPanel(step3Panel.value)) return
     if (!form.first_name.trim() || !form.last_name.trim()) {
       error.value = 'First name and last name are required'
       return
@@ -121,6 +134,11 @@
       return
     }
     if (form.password !== form.confirmPassword) { error.value = 'Passwords do not match'; return }
+    const pwdErr = validateSignupPassword(form.password)
+    if (pwdErr) {
+      error.value = pwdErr
+      return
+    }
     const result = await signUp({
       name: combineFullName(),
       position_in_company: form.position_in_company,
@@ -197,16 +215,16 @@
         <div class="field"><label for="phone">PHONE NUMBER <span class="required-asterisk">*</span></label><input id="phone" v-model="form.phone_number" type="text" inputmode="numeric" pattern="[0-9]*" required autocomplete="tel" placeholder="09XXXXXXXXX" @input="form.phone_number = digitsOnly(form.phone_number)" /></div>
         <div class="field"><label for="email">EMAIL <span class="required-asterisk">*</span></label><input id="email" v-model="form.email" type="email" required placeholder="name@gmail.com" autocomplete="email" /></div>
       </div>
-      <div v-show="signupStep === 3" class="signup-step-panel">
+      <div ref="step3Panel" v-show="signupStep === 3" class="signup-step-panel">
         <div class="field">
-          <label for="password">PASSWORD <span class="required-asterisk">*</span> (Must be at least 6 characters)</label>
+          <label for="password">PASSWORD <span class="required-asterisk">*</span> (At least 8 characters, uppercase, lowercase, number, special character)</label>
           <div class="input-with-icon">
             <input
               id="password"
               v-model="form.password"
               :type="showPassword ? 'text' : 'password'"
               required
-              minlength="6"
+              minlength="8"
               placeholder="Enter password"
               autocomplete="new-password"
             />
@@ -237,7 +255,7 @@
               v-model="form.confirmPassword"
               :type="showConfirmPassword ? 'text' : 'password'"
               required
-              minlength="6"
+              minlength="8"
               placeholder="Re-enter password"
               autocomplete="new-password"
             />
