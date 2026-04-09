@@ -6,6 +6,8 @@ import { useAdminAuth } from '../composables/useAdminAuth'
 import { getSignedProfileUrl } from '../composables/useAuth'
 import {
   parseLocation,
+  parseTotalTimeIntervalToSeconds,
+  isClockOutNextLocalDay,
   type AttendanceRow
 } from '../composables/useAttendance'
 import supabase from '../lib/supabaseClient'
@@ -271,6 +273,12 @@ function fmtTime(t: string | null): string {
   return t ? new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '—'
 }
 
+function fmtClockOutPin(clockIn: string | null, clockOut: string | null): string {
+  const base = fmtTime(clockOut)
+  if (!clockOut || base === '—') return base
+  return isClockOutNextLocalDay(clockIn, clockOut) ? `${base} (Next day)` : base
+}
+
 function formatElapsedMs(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
   const h = Math.floor(s / 3600)
@@ -280,24 +288,17 @@ function formatElapsedMs(ms: number): string {
 }
 
 function parseIntervalToSeconds(interval: string | null): number {
-  if (!interval) return 0
-  const m = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (m) {
-    const [, h, min, sec] = m.map(Number)
-    return (h || 0) * 3600 + (min || 0) * 60 + (sec || 0)
-  }
-  return 0
+  return parseTotalTimeIntervalToSeconds(interval)
 }
 
 function formatTotalTime(interval: string | null): string {
   if (!interval) return '—'
-  const m = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (m) {
-    const [, h, min] = m.map(Number)
-    if (h) return `${h}h ${min}m`
-    return `${min}m`
-  }
-  return interval
+  const sec = parseTotalTimeIntervalToSeconds(interval)
+  if (sec <= 0) return '—'
+  const h = Math.floor(sec / 3600)
+  const min = Math.floor((sec % 3600) / 60)
+  if (h) return `${h}h ${min}m`
+  return `${min}m`
 }
 
 function formatSecondsAsTotal(seconds: number): string {
@@ -410,7 +411,7 @@ const filteredPins = computed((): MapPin[] => {
         name,
         pictureUrl: r.employee_picture_url ?? null,
         initial,
-        clockTime: fmtTime(lastOutRow.clock_out),
+        clockTime: fmtClockOutPin(lastOutRow.clock_in, lastOutRow.clock_out),
         timeLabel: totalDayLabel,
         address: addressCache.value[`${lastOutLoc.lat.toFixed(6)},${lastOutLoc.lng.toFixed(6)}`] ?? null,
         record: lastOutRow,
@@ -440,8 +441,8 @@ const filteredPins = computed((): MapPin[] => {
       name,
       pictureUrl: lastRow.employee_picture_url ?? null,
       initial,
-      clockTime: fmtTime(lastRow.clock_out),
-      timeLabel: `Last: ${fmtTime(lastRow.clock_out)}`,
+      clockTime: fmtClockOutPin(lastRow.clock_in, lastRow.clock_out),
+      timeLabel: `Last: ${fmtClockOutPin(lastRow.clock_in, lastRow.clock_out)}`,
       address: addressCache.value[`${outLoc.lat.toFixed(6)},${outLoc.lng.toFixed(6)}`] ?? null,
       record: lastRow,
       opacity: 0.5,

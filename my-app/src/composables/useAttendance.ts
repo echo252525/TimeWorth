@@ -92,16 +92,88 @@ const todayRecord = computed(() => todayRecords.value.find(r => !r.clock_out) ??
 const completedToday = computed(() => todayRecords.value.filter(r => r.clock_out))
 const OPEN_ROW_FETCH_GRACE_MS = 15000
 
+/** Persist as `H:MM:SS` so all clients can parse totals consistently (matches clock-out + edit approval). */
 function msToInterval(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
   const sec = s % 60
-  const parts = []
-  if (h) parts.push(`${h} hours`)
-  if (m) parts.push(`${m} minutes`)
-  if (sec || !parts.length) parts.push(`${sec} seconds`)
-  return parts.join(' ')
+  return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+}
+
+function parseLegacyHumanDurationChunk(t: string): number {
+  let sec = 0
+  const hMatch = t.match(/(\d+)\s*hours?/i)
+  const mMatch = t.match(/(\d+)\s*minutes?/i)
+  const sMatch = t.match(/(\d+)\s*seconds?/i)
+  if (hMatch) sec += Number(hMatch[1]) * 3600
+  if (mMatch) sec += Number(mMatch[1]) * 60
+  if (sMatch) sec += Number(sMatch[1])
+  return sec
+}
+
+/**
+ * Parse `total_time` from DB into seconds.
+ * - App format: `H:MM:SS` (from `msToInterval`); optional fractional seconds from Postgres (`:SS.ffffff`)
+ * - Postgres-style: `1 day 8:15:30` (hours in the time part may exceed 24)
+ * - Legacy: human-readable strings, e.g. "8 hours 15 minutes 30 seconds"
+ */
+export function parseTotalTimeIntervalToSeconds(interval: string | null): number {
+  if (!interval) return 0
+  const raw = interval.trim()
+  if (!raw) return 0
+
+  function tryColon(s: string): number | null {
+    const m = s.match(/^(\d+):(\d{1,2}):(\d{1,2})(?:\.\d+)?$/)
+    if (!m) return null
+    const h = Number(m[1])
+    const mm = Number(m[2])
+    const ss = Number(m[3])
+    if ([h, mm, ss].some((n) => Number.isNaN(n))) return null
+    return h * 3600 + mm * 60 + ss
+  }
+
+  const direct = tryColon(raw)
+  if (direct !== null) return direct
+
+  const dayPref = raw.match(/^(\d+)\s+days?\s+/i)
+  if (dayPref) {
+    const days = Number(dayPref[1])
+    const rest = raw.slice(dayPref[0].length).trim()
+    const c = tryColon(rest)
+    if (c !== null) return days * 86400 + c
+    return days * 86400 + parseLegacyHumanDurationChunk(rest)
+  }
+
+  return parseLegacyHumanDurationChunk(raw)
+}
+
+/**
+ * Prefer parsed `total_time` for same-calendar-day sessions. For **overnight** shifts (clock-out on a
+ * later local day than clock-in), the DB `total_time` is often wrong (legacy math or interval quirks),
+ * so we **always recompute** from clock in/out + lunch when that flag is true.
+ */
+export function effectiveWorkSecondsFromAttendance(
+  r: Pick<AttendanceRow, 'total_time' | 'clock_in' | 'clock_out' | 'lunch_break_start' | 'lunch_break_end'>
+): number {
+  const parsed = parseTotalTimeIntervalToSeconds(r.total_time)
+  if (!r.clock_in || !r.clock_out) return parsed
+
+  const recalculated = computeTotalTimeForEdit(
+    r.clock_in,
+    r.clock_out,
+    r.lunch_break_start ?? null,
+    r.lunch_break_end ?? null
+  )
+  const recSeconds = parseTotalTimeIntervalToSeconds(recalculated)
+
+  if (isClockOutNextLocalDay(r.clock_in, r.clock_out)) {
+    if (recSeconds > 0) return recSeconds
+    return parsed > 0 ? parsed : 0
+  }
+
+  if (parsed > 0) return parsed
+  return recSeconds
 }
 
 /** Same rules as clock-out: lunch window subtracted from clock_in→clock_out span. */
@@ -113,7 +185,17 @@ export function computeTotalTimeForEdit(
 ): string | null {
   if (!clockIn || !clockOut) return null
   const ci = storedToRealInstant(clockIn)
-  const co = storedToRealInstant(clockOut)
+  let co = storedToRealInstant(clockOut)
+  if (!ci || !co) return null
+  /** Next-day clock-out sometimes stored with the wrong calendar date (out time before in time). Roll forward by whole days until the span is positive (cap for pathological data). */
+  if (co <= ci) {
+    const dayMs = 24 * 60 * 60 * 1000
+    let guard = 0
+    while (co <= ci && guard < 14) {
+      co += dayMs
+      guard += 1
+    }
+  }
   let lunchMs = 0
   if (lunchStart && lunchEnd)
     lunchMs = storedToRealInstant(lunchEnd) - storedToRealInstant(lunchStart)
@@ -128,6 +210,24 @@ export function getLocalDateString(d: Date): string {
   const m = (d.getMonth() + 1).toString().padStart(2, '0')
   const day = d.getDate().toString().padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+/**
+ * True when clock-out should be labeled "Next day" (overnight shift).
+ * - Later local calendar date than clock-in, or
+ * - Same local date but clock-out instant is **before** clock-in (e.g. 8:00 A.M. vs 11:42 P.M. on the
+ *   same stored date) — common when the next-morning clock-out was saved with the wrong date.
+ */
+export function isClockOutNextLocalDay(clockIn: string | null, clockOut: string | null): boolean {
+  if (!clockIn || !clockOut) return false
+  const inMs = storedToRealInstant(clockIn)
+  const outMs = storedToRealInstant(clockOut)
+  if (!inMs || !outMs) return false
+  const inKey = getLocalDateString(new Date(inMs))
+  const outKey = getLocalDateString(new Date(outMs))
+  if (outKey > inKey) return true
+  if (inKey === outKey && outMs < inMs) return true
+  return false
 }
 
 /** Start and end of the given local date (YYYY-MM-DD) as ISO strings for DB query. */
@@ -317,15 +417,12 @@ export function useAttendance() {
       return localD === dayStr
     })
     const prevOpen = todayRecords.value.find((r) => !r.clock_out)
-    // If the range query misses the row (timezone / server lag) or returns before insert is visible,
-    // keep the in-memory open session so the timeclock still shows the ticking timer.
+    // Keep any still-open session in memory even when the calendar day changes.
+    // This prevents the timeclock timer from stopping if the user forgets to clock out
+    // and only clocks out the next day.
     if (prevOpen && !incoming.some((r) => r.attendance_id === prevOpen.attendance_id)) {
-      const anchor = prevOpen.updated_at || prevOpen.created_at || prevOpen.clock_in
-      const ageMs = anchor ? Math.max(0, Date.now() - storedToRealInstant(anchor)) : Number.MAX_SAFE_INTEGER
-      if (ageMs <= OPEN_ROW_FETCH_GRACE_MS) {
-        todayRecords.value = [prevOpen, ...incoming.filter((r) => r.attendance_id !== prevOpen.attendance_id)]
-        return
-      }
+      todayRecords.value = [prevOpen, ...incoming.filter((r) => r.attendance_id !== prevOpen.attendance_id)]
+      return
     }
     todayRecords.value = incoming
   }

@@ -12,6 +12,7 @@ import {
   isOutsideWfhRadius,
   distanceMeters,
   storedToRealInstant,
+  isClockOutNextLocalDay,
   type WorkModality,
   type Branch
 } from '../composables/useAttendance'
@@ -1810,7 +1811,7 @@ function formatWorkModalityLabel(m: string | null | undefined): string {
 
 /** Chronological events for today (clock in/out, lunch start/end) for the activity panel. */
 const todayTimelineEvents = computed(() => {
-  type Ev = { key: string; label: string; time: string; modality?: string }
+  type Ev = { key: string; label: string; time: string; displayTime: string; modality?: string }
   const raw: Ev[] = []
   for (const r of todayRecords.value) {
     if (r.clock_in) {
@@ -1818,6 +1819,7 @@ const todayTimelineEvents = computed(() => {
         key: `${r.attendance_id}-in`,
         label: 'Clock in',
         time: r.clock_in,
+        displayTime: fmtStored(r.clock_in),
         modality: formatWorkModalityLabel(r.work_modality)
       })
     }
@@ -1825,21 +1827,27 @@ const todayTimelineEvents = computed(() => {
       raw.push({
         key: `${r.attendance_id}-lunch-start`,
         label: 'Lunch break started',
-        time: r.lunch_break_start
+        time: r.lunch_break_start,
+        displayTime: fmtStored(r.lunch_break_start)
       })
     }
     if (r.lunch_break_end) {
       raw.push({
         key: `${r.attendance_id}-lunch-end`,
         label: 'Lunch break ended',
-        time: r.lunch_break_end
+        time: r.lunch_break_end,
+        displayTime: fmtStored(r.lunch_break_end)
       })
     }
     if (r.clock_out) {
+      const base = fmtStored(r.clock_out)
+      const displayTime =
+        isClockOutNextLocalDay(r.clock_in, r.clock_out) ? `${base} (Next day)` : base
       raw.push({
         key: `${r.attendance_id}-out`,
         label: 'Clock out',
         time: r.clock_out,
+        displayTime,
         modality: formatWorkModalityLabel(r.work_modality)
       })
     }
@@ -2041,7 +2049,7 @@ async function handleCancelFacial() {
                   <span class="today-activity-dot" aria-hidden="true"></span>
                   <div class="today-activity-body">
                     <span class="today-activity-label">{{ ev.label }}</span>
-                    <time class="today-activity-time" :datetime="ev.time">{{ fmtStored(ev.time) }}</time>
+                    <time class="today-activity-time" :datetime="ev.time">{{ ev.displayTime }}</time>
                     <span v-if="ev.modality" class="today-activity-modality">{{ ev.modality }}</span>
                   </div>
                 </li>
@@ -2158,7 +2166,7 @@ async function handleCancelFacial() {
                   <span class="today-activity-dot" aria-hidden="true"></span>
                   <div class="today-activity-body">
                     <span class="today-activity-label">{{ ev.label }}</span>
-                    <time class="today-activity-time" :datetime="ev.time">{{ fmtStored(ev.time) }}</time>
+                    <time class="today-activity-time" :datetime="ev.time">{{ ev.displayTime }}</time>
                     <span v-if="ev.modality" class="today-activity-modality">{{ ev.modality }}</span>
                   </div>
                 </li>
@@ -2642,6 +2650,32 @@ async function handleCancelFacial() {
   padding: 0.1rem 0.45rem;
   border-radius: 6px;
   background: rgba(14, 165, 233, 0.12);
+}
+
+/* Today's activity: hardcoded slate colors above are illegible on dark hero cards */
+body.dark-mode .timeclock-page .today-activity-panel {
+  border-top-color: var(--border-light);
+}
+
+body.dark-mode .timeclock-page .today-activity-panel-title {
+  color: var(--text-secondary);
+}
+
+body.dark-mode .timeclock-page .today-activity-label {
+  color: var(--text-primary);
+}
+
+body.dark-mode .timeclock-page .today-activity-time {
+  color: var(--text-secondary);
+}
+
+body.dark-mode .timeclock-page .today-activity-dot {
+  box-shadow: 0 0 0 2px var(--bg-secondary);
+}
+
+body.dark-mode .timeclock-page .today-activity-modality {
+  color: #7dd3fc;
+  background: rgba(56, 189, 248, 0.15);
 }
 
 .actions {

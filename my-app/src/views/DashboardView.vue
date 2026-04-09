@@ -5,7 +5,7 @@ import { useAuth } from '../composables/useAuth'
 import { useAttendance } from '../composables/useAttendance'
 import supabase from '../lib/supabaseClient'
 import type { AttendanceRow } from '../composables/useAttendance'
-import { getLocalDateString, storedToRealInstant } from '../composables/useAttendance'
+import { getLocalDateString, storedToRealInstant, parseTotalTimeIntervalToSeconds } from '../composables/useAttendance'
 
 const router = useRouter()
 const { user } = useAuth()
@@ -76,15 +76,7 @@ function checkMobile() {
 }
 
 function parseHours(interval: string | null): number {
-  if (!interval) return 0
-  const m = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (m) {
-    const h = Number(m[1])
-    const min = Number(m[2])
-    const s = Number(m[3])
-    return h + min / 60 + s / 3600
-  }
-  return 0
+  return parseTotalTimeIntervalToSeconds(interval) / 3600
 }
 
 const hoursToday = computed(() => {

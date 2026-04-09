@@ -4,7 +4,7 @@
   import autoTable from 'jspdf-autotable'
   import supabase from '../lib/supabaseClient'
   import { user } from '../composables/useAuth'
-  import { isTravelFlagged, getBranch, parseLocation, getLocalDateString, storedToRealInstant, type AttendanceRow, type WorkModality } from '../composables/useAttendance'
+  import { isTravelFlagged, getBranch, parseLocation, getLocalDateString, storedToRealInstant, effectiveWorkSecondsFromAttendance, isClockOutNextLocalDay, type AttendanceRow, type WorkModality } from '../composables/useAttendance'
   import Swal from 'sweetalert2'
   import 'sweetalert2/dist/sweetalert2.min.css'
   import {
@@ -610,6 +610,12 @@
     return formatTime12hApm(new Date(storedToRealInstant(stored)).toISOString())
   }
 
+  function formatClockOutWithNextDay(clockInStored: string | null, clockOutStored: string | null): string {
+    const base = formatTime12hApmFromStored(clockOutStored)
+    if (base === '—') return base
+    return isClockOutNextLocalDay(clockInStored, clockOutStored) ? `${base} (Next day)` : base
+  }
+
   /** Min–max of YYYY-MM-DD dates actually present in the PDF/CSV export rows */
   function formatExportTableDateCoveredRange(): string {
     const unique = new Set<string>()
@@ -690,16 +696,15 @@
     return imageToRoundedLogoPngDataUrl(img)
   }
 
-  /** PDF / export: same compact total as AdminTimesheetView. */
-  function formatTotalTimeCompact(interval: string | null): string {
-    if (!interval) return '—'
-    const m = interval.match(/^(\d+):(\d+):(\d+)/)
-    if (m) {
-      const [, h, min] = m.map(Number)
-      if (h) return `${h}h ${min}m`
-      return `${min}m`
-    }
-    return interval
+  /** PDF / export: same compact total as AdminTimesheetView (uses clock math when DB total is missing). */
+  function formatTotalTimeCompactForRow(r: AttendanceRow): string {
+    if (!r.clock_out) return '—'
+    const sec = effectiveWorkSecondsFromAttendance(r)
+    if (sec <= 0) return '—'
+    const h = Math.floor(sec / 3600)
+    const min = Math.floor((sec % 3600) / 60)
+    if (h) return `${h}h ${min}m`
+    return `${min}m`
   }
 
   /** Same labels as AdminTimesheetView PDF “Activity” column. */
@@ -757,10 +762,10 @@
       map[dateKey].push({
         date: dateKey,
         clockIn: formatTime12hApmFromStored(r.clock_in),
-        clockOut: formatTime12hApmFromStored(r.clock_out),
+        clockOut: formatClockOutWithNextDay(r.clock_in, r.clock_out),
         lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
         lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
-        total: formatTotalTimeCompact(r.total_time)
+        total: formatTotalTimeCompactForRow(r)
       })
     }
 
@@ -1012,29 +1017,25 @@
     return attendanceRow.work_modality === 'office' ? '—' : 'WFH'
   }
 
-  function formatTotalTime(interval: string | null): string {
-    if (!interval) return '—'
-    const timeMatch = interval.match(/^(\d+):(\d+):(\d+)/)
-    if (timeMatch) {
-      const [, h, m, s] = timeMatch.map(Number)
-      const totalSeconds = (h || 0) * 3600 + (m || 0) * 60 + (s || 0)
-      
-      if (totalSeconds === 0) return '0s'
-      
-      const hours = Math.floor(totalSeconds / 3600)
-      const minutes = Math.floor((totalSeconds % 3600) / 60)
-      const seconds = totalSeconds % 60
-      
-      if (hours > 0) {
-        return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
-      } else if (minutes > 0) {
-        return `${minutes}m`
-      } else if (seconds > 0) {
-        return `${seconds}s`
-      }
-      return '0s'
+  function formatDurationSecondsLabel(totalSeconds: number): string {
+    if (totalSeconds === 0) return '0s'
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+    if (hours > 0) {
+      return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
     }
-    return '—'
+    if (minutes > 0) return `${minutes}m`
+    if (seconds > 0) return `${seconds}s`
+    return '0s'
+  }
+
+  /** Uses DB `total_time` when parseable; otherwise recomputes from clock in/out + lunch (legacy / overnight rows). */
+  function formatTotalForAttendanceRow(r: AttendanceRow): string {
+    if (!r.clock_out) return '—'
+    const totalSeconds = effectiveWorkSecondsFromAttendance(r)
+    if (totalSeconds === 0) return '0s'
+    return formatDurationSecondsLabel(totalSeconds)
   }
 
   function lunchMinutes(row: AttendanceRow): number {
@@ -1096,16 +1097,7 @@
   }
 
   function entryWorkedSeconds(entry: AttendanceRow): number {
-    const t = entry.total_time
-    if (!t) return 0
-    const m = String(t).match(/^(\d+):(\d+):(\d+)/)
-    if (!m) return 0
-    const hours = Number(m[1])
-    const mins = Number(m[2])
-    const secs = Number(m[3])
-    const raw = hours * 3600 + mins * 60 + secs
-    const breakSeconds = lunchMinutes(entry) * 60
-    return Math.max(0, raw - breakSeconds)
+    return effectiveWorkSecondsFromAttendance(entry)
   }
 
   function timeComplianceLabelForEntry(entry: AttendanceRow): string {
@@ -1164,29 +1156,17 @@
         clockIn = formatTime12hApmFromStored(sorted[0].clock_in)
         const last = sorted[sorted.length - 1]
         if (last) {
-          clockOut = formatTime12hApmFromStored(last.clock_out)
+          clockOut = formatClockOutWithNextDay(sorted[0].clock_in, last.clock_out)
         }
         const firstLunchStart = sorted.find((e) => !!e.lunch_break_start)?.lunch_break_start ?? null
         const lastLunchEnd = [...sorted].reverse().find((e) => !!e.lunch_break_end)?.lunch_break_end ?? null
         lunchIn = formatTime12hApmFromStored(firstLunchStart)
         lunchOut = formatTime12hApmFromStored(lastLunchEnd)
-        // Calculate total seconds (excluding breaks)
+        /** Sum per-entry net work (`total_time` already excludes lunch). */
         for (const r of dayRows) {
-          const t = r.total_time
-          if (t) {
-            const m = t.match(/^(\d+):(\d+):(\d+)/)
-            if (m) {
-              const hours = Number(m[1])
-              const mins = Number(m[2])
-              const secs = Number(m[3])
-              totalSeconds += hours * 3600 + mins * 60 + secs
-            }
-          }
+          totalSeconds += effectiveWorkSecondsFromAttendance(r)
           breakMinutes += lunchMinutes(r)
         }
-        // Subtract break minutes from total to get actual worked time
-        const breakSeconds = breakMinutes * 60
-        totalSeconds = Math.max(0, totalSeconds - breakSeconds)
         totalMinutes = Math.floor(totalSeconds / 60)
         
         // Get all unique modalities
@@ -1357,10 +1337,10 @@
       map[dateKey].push({
         date: dateKey,
         clockIn: formatTime12hApmFromStored(r.clock_in),
-        clockOut: formatTime12hApmFromStored(r.clock_out),
+        clockOut: formatClockOutWithNextDay(r.clock_in, r.clock_out),
         lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
         lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
-        total: formatTotalTime(r.total_time),
+        total: formatTotalForAttendanceRow(r),
         modality: r.work_modality ? r.work_modality.toLowerCase() : '—',
         travel: attendanceActivityLabel(r),
         branch: branch?.name ?? '—',
@@ -1372,11 +1352,7 @@
       .map(([dateKey, rows]) => {
         let totalSeconds = 0
         for (const r of rows) {
-          const t = r.raw.total_time
-          if (t) {
-            const m = t.match(/^(\d+):(\d+):(\d+)/)
-            if (m) totalSeconds += Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
-          }
+          totalSeconds += effectiveWorkSecondsFromAttendance(r.raw)
         }
         const totalH = Math.floor(totalSeconds / 3600)
         const totalM = Math.floor((totalSeconds % 3600) / 60)
@@ -1917,8 +1893,8 @@
                   <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.clock_in) }}</td>
                   <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.lunch_break_start) }}</td>
                   <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.lunch_break_end) }}</td>
-                  <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.clock_out) }}</td>
-                  <td v-if="showTimes" class="ts-cell ts-total">{{ formatTotalTime(entry.total_time) }}</td>
+                  <td v-if="showTimes" class="ts-cell">{{ formatClockOutWithNextDay(entry.clock_in, entry.clock_out) }}</td>
+                  <td v-if="showTimes" class="ts-cell ts-total">{{ formatTotalForAttendanceRow(entry) }}</td>
                   <td class="ts-cell">{{ extractCity(entry) }}</td>
                   <td class="ts-cell td-muted">{{ entry.work_modality === 'office' ? 'Office' : entry.work_modality === 'wfh' ? 'WFH' : '—' }}</td>
                   <td class="ts-cell ts-output-cell td-muted">

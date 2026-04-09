@@ -13,6 +13,8 @@ import {
   getLocalDateString,
   getBranch,
   parseLocation,
+  effectiveWorkSecondsFromAttendance,
+  isClockOutNextLocalDay,
   type AttendanceRow
 } from '../composables/useAttendance'
 import { Chart, registerables } from 'chart.js'
@@ -153,35 +155,21 @@ const WFH_PHOTO_BUCKET = 'wfh_employee_picture'
 const TARGET_WORK_SEC = 8 * 3600
 const ON_TIME_TOLERANCE_SEC = 120
 
-function parseIntervalToSeconds(interval: string | null): number {
-  if (!interval) return 0
-  const m = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (m) {
-    const h = Number(m[1])
-    const min = Number(m[2])
-    const s = Number(m[3])
-    return h * 3600 + min * 60 + s
-  }
-  return 0
-}
-
-function formatTotalTime(interval: string | null): string {
-  if (!interval) return '—'
-  const sec = parseIntervalToSeconds(interval)
-  if (sec > 0 && sec < 60) return `${sec}s`
-  const m = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (m) {
-    const [, h, min] = m.map(Number)
-    if (h) return `${h}h ${min}m`
-    return `${min}m`
-  }
-  return interval
+function formatTotalTimeForRow(r: AttendanceRow): string {
+  if (!r.clock_out) return '—'
+  const sec = effectiveWorkSecondsFromAttendance(r)
+  if (sec <= 0) return '—'
+  if (sec < 60) return `${sec}s`
+  const h = Math.floor(sec / 3600)
+  const min = Math.floor((sec % 3600) / 60)
+  if (h) return `${h}h ${min}m`
+  return `${min}m`
 }
 
 type TimeCompliance = 'undertime' | 'enough' | 'overtime'
 
 function timeComplianceCategory(r: AttendanceRow): TimeCompliance {
-  const sec = parseIntervalToSeconds(r.total_time)
+  const sec = effectiveWorkSecondsFromAttendance(r)
   if (sec < TARGET_WORK_SEC - ON_TIME_TOLERANCE_SEC) return 'undertime'
   if (sec > TARGET_WORK_SEC + ON_TIME_TOLERANCE_SEC) return 'overtime'
   return 'enough'
@@ -536,6 +524,12 @@ function formatTime12hApmFromStored(stored: string | null): string {
   return formatTime12hApm(new Date(storedToRealInstant(stored)).toISOString())
 }
 
+function formatClockOutWithNextDay(clockInStored: string | null, clockOutStored: string | null): string {
+  const base = formatTime12hApmFromStored(clockOutStored)
+  if (base === '—') return base
+  return isClockOutNextLocalDay(clockInStored, clockOutStored) ? `${base} (Next day)` : base
+}
+
 function formatLocalDateFromStored(stored: string | null): string {
   if (!stored) return '—'
   const ms = storedToRealInstant(stored)
@@ -805,10 +799,10 @@ function buildAttendanceTableBodyFromRows(rows: AttendanceRow[]): string[][] {
     map[dateKey].push({
       date: dateKey,
       clockIn: formatTime12hApmFromStored(r.clock_in),
-      clockOut: formatTime12hApmFromStored(r.clock_out),
+      clockOut: formatClockOutWithNextDay(r.clock_in, r.clock_out),
       lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
       lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
-      total: formatTotalTime(r.total_time),
+      total: formatTotalTimeForRow(r),
       modality: r.work_modality ? String(r.work_modality).toLowerCase() : '—',
       output: (r.output && String(r.output).trim()) || '—'
     })
@@ -1788,7 +1782,7 @@ onUnmounted(() => {
                 >
                   <span class="admin-ts-entry-cell" role="cell">{{ formatLocalDateFromStored(r.clock_in) }}</span>
                   <span class="admin-ts-entry-cell" role="cell">{{ formatTime12hApmFromStored(r.clock_in) }}</span>
-                  <span class="admin-ts-entry-cell" role="cell">{{ formatTime12hApmFromStored(r.clock_out) }}</span>
+                  <span class="admin-ts-entry-cell" role="cell">{{ formatClockOutWithNextDay(r.clock_in, r.clock_out) }}</span>
                 </button>
               </div>
               <div v-if="historyEntryTotalPages > 1" class="pager admin-ts-history-pager">
@@ -1903,7 +1897,7 @@ onUnmounted(() => {
               </div>
               <div class="admin-entry-field">
                 <span class="admin-entry-lbl">Clock out</span>
-                <span class="admin-entry-val">{{ formatTime12hApmFromStored(detailAttendanceRow.clock_out) }}</span>
+                <span class="admin-entry-val">{{ formatClockOutWithNextDay(detailAttendanceRow.clock_in, detailAttendanceRow.clock_out) }}</span>
               </div>
               <div class="admin-entry-field">
                 <span class="admin-entry-lbl">Lunch in</span>
@@ -1915,7 +1909,7 @@ onUnmounted(() => {
               </div>
               <div class="admin-entry-field">
                 <span class="admin-entry-lbl">Total hours</span>
-                <span class="admin-entry-val">{{ formatTotalTime(detailAttendanceRow.total_time) }}</span>
+                <span class="admin-entry-val">{{ formatTotalTimeForRow(detailAttendanceRow) }}</span>
               </div>
               <div class="admin-entry-field">
                 <span class="admin-entry-lbl">Modality</span>

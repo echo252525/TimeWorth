@@ -20,6 +20,8 @@ import {
   getLocalDateString,
   parseLocation,
   getBranch,
+  parseTotalTimeIntervalToSeconds,
+  isClockOutNextLocalDay,
   type AttendanceRow
 } from '../composables/useAttendance'
 
@@ -926,13 +928,12 @@ function closeModal() {
 
 function formatTotalTime(interval: string | null): string {
   if (!interval) return '—'
-  const m = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (m) {
-    const [, h, min] = m.map(Number)
-    if (h) return `${h}h ${min}m`
-    return `${min}m`
-  }
-  return interval
+  const sec = parseTotalTimeIntervalToSeconds(interval)
+  if (sec <= 0) return '—'
+  const h = Math.floor(sec / 3600)
+  const min = Math.floor((sec % 3600) / 60)
+  if (h) return `${h}h ${min}m`
+  return `${min}m`
 }
 
 function formatDateTime(iso: string | null): string {
@@ -953,6 +954,12 @@ function formatDate(iso: string | null): string {
   const d = new Date(storedToRealInstant(iso))
   if (isNaN(d.getTime())) return '—'
   return d.toLocaleDateString()
+}
+
+function formatClockOutWithNextDayHint(r: { clock_in: string | null; clock_out: string | null }): string {
+  const t = formatDateTime(r.clock_out)
+  if (t === '—') return t
+  return isClockOutNextLocalDay(r.clock_in, r.clock_out) ? `${t} (Next day)` : t
 }
 </script>
 
@@ -1445,7 +1452,7 @@ function formatDate(iso: string | null): string {
                     <tr v-for="(r, i) in attendanceHistory" :key="i">
                       <td>{{ formatDate(r.clock_in) }}</td>
                       <td>{{ formatDateTime(r.clock_in) }}</td>
-                      <td>{{ formatDateTime(r.clock_out) }}</td>
+                      <td>{{ formatClockOutWithNextDayHint(r) }}</td>
                       <td>{{ formatTotalTime(r.total_time) }}</td>
                     </tr>
                   </tbody>
