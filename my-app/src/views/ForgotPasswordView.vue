@@ -27,8 +27,8 @@ const subtitle = computed(() => (
 ))
 const placeholder = computed(() => (
   isAdmin.value
-    ? 'Enter your admin email'
-    : 'company.email@pcworth.com'
+    ? 'name@gmail.com'
+    : 'name@gmail.com'
 ))
 const inputLabel = computed(() => (isAdmin.value ? 'ADMIN EMAIL' : 'EMAIL'))
 

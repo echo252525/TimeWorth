@@ -101,16 +101,16 @@ async function onSubmit() {
       >
         <div class="auth-modal-card">
           <div class="auth-modal-badge">
-            {{ accountModal === 'welcome' ? 'Welcome to TimeWorth' : 'Account update' }}
+            {{ accountModal === 'welcome' ? 'Welcome to TimeWorth' : 'Account Update' }}
           </div>
           <h3 class="auth-modal-title">
-            {{ accountModal === 'pending' ? 'Account under review' : 'Welcome admin' }}
+            {{ accountModal === 'pending' ? 'Account Under Review' : 'Welcome Admin' }}
           </h3>
           <p class="auth-modal-text">
             {{
               accountModal === 'pending'
-                ? 'Your account is being reviewed by a superadmin. You will be able to sign in once your role has been approved.'
-                : 'Welcome to the admin portal. Click okay to continue.'
+                ? 'Your account is being reviewed by the superadmin. You will be able to sign in once your role has been approved.'
+                : 'Welcome to the admin portal. Click "Okay" to continue.'
             }}
           </p>
           <button type="button" class="btn primary auth-modal-cta" @click="dismissAccountModal">Okay</button>
@@ -302,5 +302,16 @@ body.dark-mode .login-view .auth-modal-card {
 .login-view .auth-modal-cta {
   align-self: center;
   min-width: 140px;
+}
+
+body.dark-mode .login-view .auth-modal-card .auth-modal-cta.btn.primary {
+  background: #38bdf8 !important;
+  border-color: #38bdf8 !important;
+  color: #0b1220 !important;
+}
+
+body.dark-mode .login-view .auth-modal-card .auth-modal-cta.btn.primary:hover {
+  background: #0ea5e9 !important;
+  border-color: #0ea5e9 !important;
 }
 </style>

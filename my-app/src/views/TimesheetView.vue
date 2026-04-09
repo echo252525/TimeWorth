@@ -1,1457 +1,1490 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
-import { jsPDF } from 'jspdf'
-import autoTable from 'jspdf-autotable'
-import supabase from '../lib/supabaseClient'
-import { user } from '../composables/useAuth'
-import { isTravelFlagged, getBranch, parseLocation, getLocalDateString, storedToRealInstant, type AttendanceRow, type WorkModality } from '../composables/useAttendance'
-import {
-  ClockIcon,
-  PencilSquareIcon,
-  CheckCircleIcon,
-  XMarkIcon,
-  PhotoIcon,
-  ChevronDownIcon
-} from '@heroicons/vue/24/outline'
+  import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
+  import { jsPDF } from 'jspdf'
+  import autoTable from 'jspdf-autotable'
+  import supabase from '../lib/supabaseClient'
+  import { user } from '../composables/useAuth'
+  import { isTravelFlagged, getBranch, parseLocation, getLocalDateString, storedToRealInstant, type AttendanceRow, type WorkModality } from '../composables/useAttendance'
+  import {
+    ClockIcon,
+    PencilSquareIcon,
+    CheckCircleIcon,
+    XMarkIcon,
+    PhotoIcon,
+    ChevronDownIcon
+  } from '@heroicons/vue/24/outline'
 
-const ATTENDANCE_SELECT =
-  'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,created_at,updated_at,work_modality,facial_verifications_id,wfh_pic_url,output'
+  const ATTENDANCE_SELECT =
+    'attendance_id,user_id,clock_in,clock_out,facial_status,lunch_break_start,lunch_break_end,total_time,location_in,location_out,branch_location,created_at,updated_at,work_modality,facial_verifications_id,wfh_pic_url,output'
 
-const list = ref<AttendanceRow[]>([])
-const isLoading = ref(true)
-const error = ref<string | null>(null)
-const appliedModality = ref<WorkModality | ''>('')
-const appliedBranch = ref<string>('')
-const appliedShift = ref<'dayshift' | 'nightshift' | ''>('')
+  const list = ref<AttendanceRow[]>([])
+  const isLoading = ref(true)
+  const error = ref<string | null>(null)
+  const appliedModality = ref<WorkModality | ''>('')
+  const appliedBranch = ref<string>('')
+  const appliedShift = ref<'dayshift' | 'nightshift' | ''>('')
 
-const employeeName = ref<string | null>(null)
-const employeePosition = ref<string | null>(null)
-const employeeEmail = ref<string | null>(null)
-const employeeNo = ref<string | null>(null)
+  const employeeName = ref<string | null>(null)
+  const employeePosition = ref<string | null>(null)
+  const employeeEmail = ref<string | null>(null)
+  const employeeNo = ref<string | null>(null)
 
-// Time filter (Undertime, Enough Time, Overtime)
-type TimeFilter = 'all' | 'undertime' | 'enough' | 'overtime'
-const timeFilter = ref<TimeFilter>('all')
+  // Time filter (Undertime, Enough Time, Overtime)
+  type TimeFilter = 'all' | 'undertime' | 'enough' | 'overtime'
+  const timeFilter = ref<TimeFilter>('all')
 
-// Date filter (Today, Yesterday, Last 7 Days, Last Month, Custom)
-type DateFilter = 'all' | 'today' | 'yesterday' | 'last7Days' | 'lastMonth' | 'custom'
-const dateFilter = ref<DateFilter>('all')
-const customStartDate = ref<string>('')
-const customEndDate = ref<string>('')
-const showCustomDateModal = ref(false)
+  // Date filter (Today, Yesterday, Last 7 Days, Last Month, Custom)
+  type DateFilter = 'all' | 'today' | 'yesterday' | 'last7Days' | 'lastMonth' | 'custom'
+  const dateFilter = ref<DateFilter>('all')
+  const customStartDate = ref<string>('')
+  const customEndDate = ref<string>('')
+  const showCustomDateModal = ref(false)
 
-// Modality filter
-const modalityFilter = ref<'all' | 'office' | 'wfh'>('all')
+  // Modality filter
+  const modalityFilter = ref<'all' | 'office' | 'wfh'>('all')
 
-// Table header filter menus (Dashboard-style; teleported to avoid scroll clipping)
-const showDateFilterDropdown = ref(false)
-const showTimeFilterDropdown = ref(false)
-const showModalityFilterDropdown = ref(false)
-const dateFilterTriggerRef = ref<HTMLElement | null>(null)
-const timeFilterTriggerRef = ref<HTMLElement | null>(null)
-const modalityFilterTriggerRef = ref<HTMLElement | null>(null)
-const dateDropdownStyle = ref<Record<string, string>>({})
-const timeDropdownStyle = ref<Record<string, string>>({})
-const modalityDropdownStyle = ref<Record<string, string>>({})
+  // Table header filter menus (Dashboard-style; teleported to avoid scroll clipping)
+  const showDateFilterDropdown = ref(false)
+  const showTimeFilterDropdown = ref(false)
+  const showModalityFilterDropdown = ref(false)
+  const dateFilterTriggerRef = ref<HTMLElement | null>(null)
+  const timeFilterTriggerRef = ref<HTMLElement | null>(null)
+  const modalityFilterTriggerRef = ref<HTMLElement | null>(null)
+  const dateDropdownStyle = ref<Record<string, string>>({})
+  const timeDropdownStyle = ref<Record<string, string>>({})
+  const modalityDropdownStyle = ref<Record<string, string>>({})
 
-const timeFilterLabel = computed(() => {
-  switch (timeFilter.value) {
-    case 'all':
-      return 'All'
-    case 'undertime':
-      return 'Undertime'
-    case 'enough':
-      return 'On time'
-    case 'overtime':
-      return 'Overtime'
-    default:
-      return 'All'
-  }
-})
-
-const modalityFilterLabel = computed(() => {
-  switch (modalityFilter.value) {
-    case 'all':
-      return 'All'
-    case 'office':
-      return 'Office'
-    case 'wfh':
-      return 'WFH'
-    default:
-      return 'All'
-  }
-})
-
-function positionDateDropdown() {
-  const el = dateFilterTriggerRef.value
-  if (!el) return
-  const r = el.getBoundingClientRect()
-  const minW = Math.max(r.width, 160)
-  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
-  dateDropdownStyle.value = {
-    position: 'fixed',
-    top: `${r.bottom + 6}px`,
-    left: `${left}px`,
-    minWidth: `${minW}px`,
-    zIndex: '300'
-  }
-}
-
-function positionTimeDropdown() {
-  const el = timeFilterTriggerRef.value
-  if (!el) return
-  const r = el.getBoundingClientRect()
-  const minW = Math.max(r.width, 140)
-  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
-  timeDropdownStyle.value = {
-    position: 'fixed',
-    top: `${r.bottom + 6}px`,
-    left: `${left}px`,
-    minWidth: `${minW}px`,
-    zIndex: '300'
-  }
-}
-
-function positionModalityDropdown() {
-  const el = modalityFilterTriggerRef.value
-  if (!el) return
-  const r = el.getBoundingClientRect()
-  const minW = Math.max(r.width, 120)
-  const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
-  modalityDropdownStyle.value = {
-    position: 'fixed',
-    top: `${r.bottom + 6}px`,
-    left: `${left}px`,
-    minWidth: `${minW}px`,
-    zIndex: '300'
-  }
-}
-
-function repositionOpenTableFilterDropdowns() {
-  if (showDateFilterDropdown.value) positionDateDropdown()
-  if (showTimeFilterDropdown.value) positionTimeDropdown()
-  if (showModalityFilterDropdown.value) positionModalityDropdown()
-}
-
-function closeAllTableFilterDropdowns() {
-  showDateFilterDropdown.value = false
-  showTimeFilterDropdown.value = false
-  showModalityFilterDropdown.value = false
-}
-
-function toggleDateFilterMenu() {
-  const opening = !showDateFilterDropdown.value
-  showTimeFilterDropdown.value = false
-  showModalityFilterDropdown.value = false
-  showDateFilterDropdown.value = opening
-  if (opening) void nextTick(() => positionDateDropdown())
-}
-
-function toggleTimeFilterMenu() {
-  const opening = !showTimeFilterDropdown.value
-  showDateFilterDropdown.value = false
-  showModalityFilterDropdown.value = false
-  showTimeFilterDropdown.value = opening
-  if (opening) void nextTick(() => positionTimeDropdown())
-}
-
-function toggleModalityFilterMenu() {
-  const opening = !showModalityFilterDropdown.value
-  showDateFilterDropdown.value = false
-  showTimeFilterDropdown.value = false
-  showModalityFilterDropdown.value = opening
-  if (opening) void nextTick(() => positionModalityDropdown())
-}
-
-function selectDateFilter(v: DateFilter) {
-  showDateFilterDropdown.value = false
-  dateFilter.value = v
-}
-
-function selectTimeFilter(v: TimeFilter) {
-  showTimeFilterDropdown.value = false
-  timeFilter.value = v
-}
-
-function selectModalityFilter(v: 'all' | 'office' | 'wfh') {
-  showModalityFilterDropdown.value = false
-  modalityFilter.value = v
-}
-
-function handleTableFilterClickOutside(event: MouseEvent) {
-  const target = event.target as HTMLElement
-  if (target.closest('.ts-filter-trigger-wrap') || target.closest('.ts-filter-dropdown-portal')) return
-  closeAllTableFilterDropdowns()
-}
-
-const anyTableFilterMenuOpen = computed(
-  () =>
-    showDateFilterDropdown.value || showTimeFilterDropdown.value || showModalityFilterDropdown.value
-)
-
-// View toggles (clock columns & breaks; date/modality/time filters live in table headers)
-const showTimes = ref(true)
-const showBreaks = ref(true)
-
-// Expanded row state for multiple entries
-const expandedRow = ref<string | null>(null)
-
-// Edit request modal state
-const showEditModal = ref(false)
-const editTargetEntry = ref<AttendanceRow | null>(null)
-const editTargetDateLabel = ref<string>('')
-const editNewClockIn = ref<string>('')
-const editNewClockOut = ref<string>('')
-const editNewLunchStart = ref<string>('')
-const editNewLunchEnd = ref<string>('')
-const editReason = ref<string>('')
-
-// City cache for reverse geocoded locations
-const cityCache = ref<Record<string, string>>({})
-const WFH_PICTURE_BUCKET = 'wfh_employee_picture'
-const showWfhPhotoModal = ref(false)
-const wfhPhotoModalUrl = ref<string | null>(null)
-const wfhPhotoModalLoading = ref(false)
-const wfhPhotoModalError = ref<string | null>(null)
-
-/** Latest edit-request status per attendance_id for the current user */
-const editRequestStatusMap = ref<Record<string, 'pending' | 'approved' | 'rejected'>>({})
-
-async function openWfhPhotoModal(pathOrUrl: string | null) {
-  console.log('[Timesheet] openWfhPhotoModal called', { pathOrUrl })
-  if (!pathOrUrl) return
-  wfhPhotoModalLoading.value = true
-  wfhPhotoModalError.value = null
-  wfhPhotoModalUrl.value = null
-  showWfhPhotoModal.value = true
-  try {
-    if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
-      wfhPhotoModalUrl.value = pathOrUrl
-      console.log('[Timesheet] using direct photo URL', { url: pathOrUrl })
-      return
+  const timeFilterLabel = computed(() => {
+    switch (timeFilter.value) {
+      case 'all':
+        return 'All'
+      case 'undertime':
+        return 'Undertime'
+      case 'enough':
+        return 'On time'
+      case 'overtime':
+        return 'Overtime'
+      default:
+        return 'All'
     }
-    const { data, error: signedErr } = await supabase
-      .storage
-      .from(WFH_PICTURE_BUCKET)
-      .createSignedUrl(pathOrUrl, 60 * 60)
-    if (signedErr) throw signedErr
-    wfhPhotoModalUrl.value = data.signedUrl
-    console.log('[Timesheet] signed URL created', {
-      bucket: WFH_PICTURE_BUCKET,
-      storagePath: pathOrUrl,
-      hasSignedUrl: !!data.signedUrl
-    })
-  } catch (e) {
-    wfhPhotoModalError.value = e instanceof Error ? e.message : 'Unable to load WFH photo.'
-    console.error('[Timesheet] failed loading WFH photo', {
-      pathOrUrl,
-      error: wfhPhotoModalError.value
-    })
-  } finally {
-    wfhPhotoModalLoading.value = false
+  })
+
+  const modalityFilterLabel = computed(() => {
+    switch (modalityFilter.value) {
+      case 'all':
+        return 'All'
+      case 'office':
+        return 'Office'
+      case 'wfh':
+        return 'WFH'
+      default:
+        return 'All'
+    }
+  })
+
+  function positionDateDropdown() {
+    const el = dateFilterTriggerRef.value
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const minW = Math.max(r.width, 160)
+    const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+    dateDropdownStyle.value = {
+      position: 'fixed',
+      top: `${r.bottom + 6}px`,
+      left: `${left}px`,
+      minWidth: `${minW}px`,
+      zIndex: '300'
+    }
   }
-}
 
-function closeWfhPhotoModal() {
-  showWfhPhotoModal.value = false
-  wfhPhotoModalUrl.value = null
-  wfhPhotoModalError.value = null
-}
-
-function getDateRange() {
-  const end = new Date()
-  end.setHours(23, 59, 59, 999)
-  const start = new Date(end)
-
-  if (dateFilter.value === 'all') {
-    const allStart = new Date(0)
-    allStart.setHours(0, 0, 0, 0)
-    return { start: allStart.toISOString(), end: end.toISOString() }
+  function positionTimeDropdown() {
+    const el = timeFilterTriggerRef.value
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const minW = Math.max(r.width, 140)
+    const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+    timeDropdownStyle.value = {
+      position: 'fixed',
+      top: `${r.bottom + 6}px`,
+      left: `${left}px`,
+      minWidth: `${minW}px`,
+      zIndex: '300'
+    }
   }
-  
-  if (dateFilter.value === 'custom' && customStartDate.value && customEndDate.value) {
-    const customStart = new Date(customStartDate.value)
-    customStart.setHours(0, 0, 0, 0)
-    const customEnd = new Date(customEndDate.value)
-    customEnd.setHours(23, 59, 59, 999)
-    return { start: customStart.toISOString(), end: customEnd.toISOString() }
-  } else if (dateFilter.value === 'today') {
-    start.setHours(0, 0, 0, 0)
-    return { start: start.toISOString(), end: end.toISOString() }
-  } else if (dateFilter.value === 'yesterday') {
-    start.setDate(start.getDate() - 1)
-    start.setHours(0, 0, 0, 0)
-    const yesterdayEnd = new Date(start)
-    yesterdayEnd.setHours(23, 59, 59, 999)
-    return { start: start.toISOString(), end: yesterdayEnd.toISOString() }
-  } else if (dateFilter.value === 'last7Days') {
-    start.setDate(start.getDate() - 6)
-    start.setHours(0, 0, 0, 0)
-    return { start: start.toISOString(), end: end.toISOString() }
-  } else if (dateFilter.value === 'lastMonth') {
+
+  function positionModalityDropdown() {
+    const el = modalityFilterTriggerRef.value
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const minW = Math.max(r.width, 120)
+    const left = Math.min(Math.max(8, r.left), window.innerWidth - minW - 8)
+    modalityDropdownStyle.value = {
+      position: 'fixed',
+      top: `${r.bottom + 6}px`,
+      left: `${left}px`,
+      minWidth: `${minW}px`,
+      zIndex: '300'
+    }
+  }
+
+  function repositionOpenTableFilterDropdowns() {
+    if (showDateFilterDropdown.value) positionDateDropdown()
+    if (showTimeFilterDropdown.value) positionTimeDropdown()
+    if (showModalityFilterDropdown.value) positionModalityDropdown()
+  }
+
+  function closeAllTableFilterDropdowns() {
+    showDateFilterDropdown.value = false
+    showTimeFilterDropdown.value = false
+    showModalityFilterDropdown.value = false
+  }
+
+  function toggleDateFilterMenu() {
+    const opening = !showDateFilterDropdown.value
+    showTimeFilterDropdown.value = false
+    showModalityFilterDropdown.value = false
+    showDateFilterDropdown.value = opening
+    if (opening) void nextTick(() => positionDateDropdown())
+  }
+
+  function toggleTimeFilterMenu() {
+    const opening = !showTimeFilterDropdown.value
+    showDateFilterDropdown.value = false
+    showModalityFilterDropdown.value = false
+    showTimeFilterDropdown.value = opening
+    if (opening) void nextTick(() => positionTimeDropdown())
+  }
+
+  function toggleModalityFilterMenu() {
+    const opening = !showModalityFilterDropdown.value
+    showDateFilterDropdown.value = false
+    showTimeFilterDropdown.value = false
+    showModalityFilterDropdown.value = opening
+    if (opening) void nextTick(() => positionModalityDropdown())
+  }
+
+  function selectDateFilter(v: DateFilter) {
+    showDateFilterDropdown.value = false
+    dateFilter.value = v
+  }
+
+  function selectTimeFilter(v: TimeFilter) {
+    showTimeFilterDropdown.value = false
+    timeFilter.value = v
+  }
+
+  function selectModalityFilter(v: 'all' | 'office' | 'wfh') {
+    showModalityFilterDropdown.value = false
+    modalityFilter.value = v
+  }
+
+  function handleTableFilterClickOutside(event: MouseEvent) {
+    const target = event.target as HTMLElement
+    if (target.closest('.ts-filter-trigger-wrap') || target.closest('.ts-filter-dropdown-portal')) return
+    closeAllTableFilterDropdowns()
+  }
+
+  const anyTableFilterMenuOpen = computed(
+    () =>
+      showDateFilterDropdown.value || showTimeFilterDropdown.value || showModalityFilterDropdown.value
+  )
+
+  // View toggles (clock columns & breaks; date/modality/time filters live in table headers)
+  const showTimes = ref(true)
+  const showBreaks = ref(true)
+
+  // Expanded row state for multiple entries
+  const expandedRow = ref<string | null>(null)
+
+  // Edit request modal state
+  const showEditModal = ref(false)
+  const editTargetEntry = ref<AttendanceRow | null>(null)
+  const editTargetDateLabel = ref<string>('')
+  const editNewClockIn = ref<string>('')
+  const editNewClockOut = ref<string>('')
+  const editNewLunchStart = ref<string>('')
+  const editNewLunchEnd = ref<string>('')
+  const editReason = ref<string>('')
+
+  // City cache for reverse geocoded locations
+  const cityCache = ref<Record<string, string>>({})
+  const WFH_PICTURE_BUCKET = 'wfh_employee_picture'
+  const showWfhPhotoModal = ref(false)
+  const wfhPhotoModalUrl = ref<string | null>(null)
+  const wfhPhotoModalLoading = ref(false)
+  const wfhPhotoModalError = ref<string | null>(null)
+
+  /** Latest edit-request status per attendance_id for the current user */
+  const editRequestStatusMap = ref<Record<string, 'pending' | 'approved' | 'rejected'>>({})
+
+  async function openWfhPhotoModal(pathOrUrl: string | null) {
+    console.log('[Timesheet] openWfhPhotoModal called', { pathOrUrl })
+    if (!pathOrUrl) return
+    wfhPhotoModalLoading.value = true
+    wfhPhotoModalError.value = null
+    wfhPhotoModalUrl.value = null
+    showWfhPhotoModal.value = true
+    try {
+      if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+        wfhPhotoModalUrl.value = pathOrUrl
+        console.log('[Timesheet] using direct photo URL', { url: pathOrUrl })
+        return
+      }
+      const { data, error: signedErr } = await supabase
+        .storage
+        .from(WFH_PICTURE_BUCKET)
+        .createSignedUrl(pathOrUrl, 60 * 60)
+      if (signedErr) throw signedErr
+      wfhPhotoModalUrl.value = data.signedUrl
+      console.log('[Timesheet] signed URL created', {
+        bucket: WFH_PICTURE_BUCKET,
+        storagePath: pathOrUrl,
+        hasSignedUrl: !!data.signedUrl
+      })
+    } catch (e) {
+      wfhPhotoModalError.value = e instanceof Error ? e.message : 'Unable to load WFH photo.'
+      console.error('[Timesheet] failed loading WFH photo', {
+        pathOrUrl,
+        error: wfhPhotoModalError.value
+      })
+    } finally {
+      wfhPhotoModalLoading.value = false
+    }
+  }
+
+  function closeWfhPhotoModal() {
+    showWfhPhotoModal.value = false
+    wfhPhotoModalUrl.value = null
+    wfhPhotoModalError.value = null
+  }
+
+  function getDateRange() {
+    const end = new Date()
+    end.setHours(23, 59, 59, 999)
+    const start = new Date(end)
+
+    if (dateFilter.value === 'all') {
+      const allStart = new Date(0)
+      allStart.setHours(0, 0, 0, 0)
+      return { start: allStart.toISOString(), end: end.toISOString() }
+    }
+    
+    if (dateFilter.value === 'custom' && customStartDate.value && customEndDate.value) {
+      const customStart = new Date(customStartDate.value)
+      customStart.setHours(0, 0, 0, 0)
+      const customEnd = new Date(customEndDate.value)
+      customEnd.setHours(23, 59, 59, 999)
+      return { start: customStart.toISOString(), end: customEnd.toISOString() }
+    } else if (dateFilter.value === 'today') {
+      start.setHours(0, 0, 0, 0)
+      return { start: start.toISOString(), end: end.toISOString() }
+    } else if (dateFilter.value === 'yesterday') {
+      start.setDate(start.getDate() - 1)
+      start.setHours(0, 0, 0, 0)
+      const yesterdayEnd = new Date(start)
+      yesterdayEnd.setHours(23, 59, 59, 999)
+      return { start: start.toISOString(), end: yesterdayEnd.toISOString() }
+    } else if (dateFilter.value === 'last7Days') {
+      start.setDate(start.getDate() - 6)
+      start.setHours(0, 0, 0, 0)
+      return { start: start.toISOString(), end: end.toISOString() }
+    } else if (dateFilter.value === 'lastMonth') {
+      start.setMonth(start.getMonth() - 1)
+      start.setDate(1)
+      start.setHours(0, 0, 0, 0)
+      return { start: start.toISOString(), end: end.toISOString() }
+    }
+    // Fallback: last month
     start.setMonth(start.getMonth() - 1)
     start.setDate(1)
     start.setHours(0, 0, 0, 0)
     return { start: start.toISOString(), end: end.toISOString() }
   }
-  // Fallback: last month
-  start.setMonth(start.getMonth() - 1)
-  start.setDate(1)
-  start.setHours(0, 0, 0, 0)
-  return { start: start.toISOString(), end: end.toISOString() }
-}
 
-function formatDateRange(): string {
-  if (dateFilter.value === 'custom' && customStartDate.value && customEndDate.value) {
-    const start = new Date(customStartDate.value)
-    const end = new Date(customEndDate.value)
-    const startMonth = start.toLocaleDateString('en-US', { month: 'long' })
-    const endMonth = end.toLocaleDateString('en-US', { month: 'long' })
-    const startDay = start.getDate()
-    const endDay = end.getDate()
-    
-    if (startMonth === endMonth) {
-      return `${startMonth} ${startDay} - ${endDay}`
-    } else {
-      return `${startMonth} ${startDay} - ${endMonth} ${endDay}`
+  function formatDateRange(): string {
+    if (dateFilter.value === 'custom' && customStartDate.value && customEndDate.value) {
+      const start = new Date(customStartDate.value)
+      const end = new Date(customEndDate.value)
+      const startMonth = start.toLocaleDateString('en-US', { month: 'long' })
+      const endMonth = end.toLocaleDateString('en-US', { month: 'long' })
+      const startDay = start.getDate()
+      const endDay = end.getDate()
+      
+      if (startMonth === endMonth) {
+        return `${startMonth} ${startDay} - ${endDay}`
+      } else {
+        return `${startMonth} ${startDay} - ${endMonth} ${endDay}`
+      }
+    }
+    return ''
+  }
+
+  const dateFilterLabel = computed(() => {
+    switch (dateFilter.value) {
+      case 'all':
+        return 'All'
+      case 'today':
+        return 'Today'
+      case 'yesterday':
+        return 'Yesterday'
+      case 'last7Days':
+        return 'Last 7 Days'
+      case 'lastMonth':
+        return 'Last Month'
+      case 'custom':
+        return formatDateRange() || 'Custom Range'
+      default:
+        return 'All'
+    }
+  })
+
+  function openCustomDateModal() {
+    showCustomDateModal.value = true
+  }
+
+  function closeCustomDateModal() {
+    showCustomDateModal.value = false
+  }
+
+  function applyCustomDateRange() {
+    if (customStartDate.value && customEndDate.value) {
+      fetchData()
+      closeCustomDateModal()
     }
   }
-  return ''
-}
 
-const dateFilterLabel = computed(() => {
-  switch (dateFilter.value) {
-    case 'all':
-      return 'All'
-    case 'today':
-      return 'Today'
-    case 'yesterday':
-      return 'Yesterday'
-    case 'last7Days':
-      return 'Last 7 Days'
-    case 'lastMonth':
-      return 'Last Month'
-    case 'custom':
-      return formatDateRange() || 'Custom Range'
-    default:
-      return 'All'
+  async function fetchData() {
+    if (!user.value?.id) return
+    isLoading.value = true
+    error.value = null
+    const { start, end } = getDateRange()
+    const startMs = new Date(start).getTime()
+    const endMs = new Date(end).getTime()
+    // Same strategy as timeclock: widen DB bounds so locally-stored wall-time timestamps
+    // (saved with trailing Z) are not excluded before client-side normalization.
+    const padMs = 36 * 60 * 60 * 1000
+    const startWide = new Date(startMs - padMs).toISOString()
+    const endWide = new Date(endMs + padMs).toISOString()
+    console.log('[Timesheet] fetchData start', {
+      userId: user.value.id,
+      start,
+      startWide,
+      end,
+      endWide,
+      modalityFilter: modalityFilter.value
+    })
+    const { data, error: err } = await supabase
+      .from('attendance')
+      .select(ATTENDANCE_SELECT)
+      .eq('user_id', user.value.id)
+      .gte('clock_in', startWide)
+      .lte('clock_in', endWide)
+      .order('clock_in', { ascending: false })
+    isLoading.value = false
+    if (err) {
+      error.value = err.message
+      console.error('[Timesheet] fetchData error', { message: err.message, details: err })
+      return
+    }
+    const raw = (data ?? []) as AttendanceRow[]
+    list.value = raw.filter((row) => {
+      if (!row.clock_in) return false
+      const realMs = storedToRealInstant(row.clock_in)
+      return realMs >= startMs && realMs <= endMs
+    })
+    console.log('[Timesheet] fetchData result', {
+      rawRows: raw.length,
+      totalRows: list.value.length,
+      wfhRows: list.value.filter((r) => r.work_modality === 'wfh').length,
+      rowsWithWfhPic: list.value.filter((r) => !!r.wfh_pic_url).length,
+      sample: list.value.slice(0, 5).map((r) => ({
+        attendance_id: r.attendance_id,
+        work_modality: r.work_modality,
+        wfh_pic_url: r.wfh_pic_url
+      }))
+    })
+
+    await loadEditRequestStatuses()
   }
-})
 
-function openCustomDateModal() {
-  showCustomDateModal.value = true
-}
+  watch(dateFilter, (newVal) => {
+    if (newVal === 'custom') {
+      openCustomDateModal()
+    } else {
+      fetchData()
+    }
+  }, { immediate: false })
 
-function closeCustomDateModal() {
-  showCustomDateModal.value = false
-}
+  watch([customStartDate, customEndDate], () => {
+    if (dateFilter.value === 'custom' && customStartDate.value && customEndDate.value) {
+      fetchData()
+    }
+  }, { immediate: false })
 
-function applyCustomDateRange() {
-  if (customStartDate.value && customEndDate.value) {
-    fetchData()
-    closeCustomDateModal()
-  }
-}
+  watch([() => appliedModality.value, () => appliedBranch.value, () => appliedShift.value], () => { /* filters applied below via filteredRows */ })
 
-async function fetchData() {
-  if (!user.value?.id) return
-  isLoading.value = true
-  error.value = null
-  const { start, end } = getDateRange()
-  const startMs = new Date(start).getTime()
-  const endMs = new Date(end).getTime()
-  // Same strategy as timeclock: widen DB bounds so locally-stored wall-time timestamps
-  // (saved with trailing Z) are not excluded before client-side normalization.
-  const padMs = 36 * 60 * 60 * 1000
-  const startWide = new Date(startMs - padMs).toISOString()
-  const endWide = new Date(endMs + padMs).toISOString()
-  console.log('[Timesheet] fetchData start', {
-    userId: user.value.id,
-    start,
-    startWide,
-    end,
-    endWide,
-    modalityFilter: modalityFilter.value
-  })
-  const { data, error: err } = await supabase
-    .from('attendance')
-    .select(ATTENDANCE_SELECT)
-    .eq('user_id', user.value.id)
-    .gte('clock_in', startWide)
-    .lte('clock_in', endWide)
-    .order('clock_in', { ascending: false })
-  isLoading.value = false
-  if (err) {
-    error.value = err.message
-    console.error('[Timesheet] fetchData error', { message: err.message, details: err })
-    return
-  }
-  const raw = (data ?? []) as AttendanceRow[]
-  list.value = raw.filter((row) => {
-    if (!row.clock_in) return false
-    const realMs = storedToRealInstant(row.clock_in)
-    return realMs >= startMs && realMs <= endMs
-  })
-  console.log('[Timesheet] fetchData result', {
-    rawRows: raw.length,
-    totalRows: list.value.length,
-    wfhRows: list.value.filter((r) => r.work_modality === 'wfh').length,
-    rowsWithWfhPic: list.value.filter((r) => !!r.wfh_pic_url).length,
-    sample: list.value.slice(0, 5).map((r) => ({
-      attendance_id: r.attendance_id,
-      work_modality: r.work_modality,
-      wfh_pic_url: r.wfh_pic_url
-    }))
+  watch(anyTableFilterMenuOpen, (open) => {
+    if (open) {
+      void nextTick(() => repositionOpenTableFilterDropdowns())
+      window.addEventListener('scroll', repositionOpenTableFilterDropdowns, true)
+      window.addEventListener('resize', repositionOpenTableFilterDropdowns)
+    } else {
+      window.removeEventListener('scroll', repositionOpenTableFilterDropdowns, true)
+      window.removeEventListener('resize', repositionOpenTableFilterDropdowns)
+    }
   })
 
-  await loadEditRequestStatuses()
-}
-
-watch(dateFilter, (newVal) => {
-  if (newVal === 'custom') {
-    openCustomDateModal()
-  } else {
-    fetchData()
+  async function loadEmployeeData() {
+    if (!user.value?.id) return
+    const { data } = await supabase
+      .from('employee')
+      .select('name, position_in_company, email, employee_no')
+      .eq('id', user.value.id)
+      .maybeSingle()
+    if (data) {
+      const row = data as {
+        name: string | null
+        position_in_company: string | null
+        email: string | null
+        employee_no: string | null
+      }
+      employeeName.value = row.name
+      employeePosition.value = row.position_in_company
+      employeeEmail.value = row.email
+      employeeNo.value = row.employee_no
+    }
   }
-}, { immediate: false })
 
-watch([customStartDate, customEndDate], () => {
-  if (dateFilter.value === 'custom' && customStartDate.value && customEndDate.value) {
-    fetchData()
+  async function loadEditRequestStatuses() {
+    try {
+      if (!user.value?.id) return
+      const ids = Array.from(
+        new Set(
+          list.value
+            .map(r => r.attendance_id)
+            .filter((id): id is string => Boolean(id))
+        )
+      )
+      if (!ids.length) {
+        editRequestStatusMap.value = {}
+        return
+      }
+      const { data, error: reqErr } = await supabase
+        .from('attendance_edit_requests')
+        .select('attendance_id, status, created_at')
+        .eq('requested_by', user.value.id)
+        .in('attendance_id', ids)
+        .order('created_at', { ascending: false })
+      if (reqErr) {
+        console.error('Load edit request statuses error:', reqErr.message)
+        return
+      }
+      const map: Record<string, 'pending' | 'approved' | 'rejected'> = {}
+      const normalize = (s: string): 'pending' | 'approved' | 'rejected' | null => {
+        if (s === 'pending' || s === 'approved' || s === 'rejected') return s
+        if (s === 'declined') return 'rejected'
+        return null
+      }
+      for (const row of (data ?? []) as { attendance_id: string | null; status: string }[]) {
+        const aid = row.attendance_id
+        if (!aid || map[aid] !== undefined) continue
+        const st = normalize(row.status)
+        if (st) map[aid] = st
+      }
+      editRequestStatusMap.value = map
+    } catch (e) {
+      console.error('Unexpected edit status load error:', e)
+    }
   }
-}, { immediate: false })
 
-watch([() => appliedModality.value, () => appliedBranch.value, () => appliedShift.value], () => { /* filters applied below via filteredRows */ })
+  onMounted(() => {
+    // Initialize custom date range to last month if not set
+    if (!customStartDate.value || !customEndDate.value) {
+      const end = new Date()
+      const start = new Date(end)
+      start.setMonth(start.getMonth() - 1)
+      start.setDate(1)
+      customEndDate.value = end.toISOString().slice(0, 10)
+      customStartDate.value = start.toISOString().slice(0, 10)
+    }
+    fetchData()
+    loadEmployeeData()
+    document.addEventListener('click', handleTableFilterClickOutside)
+  })
 
-watch(anyTableFilterMenuOpen, (open) => {
-  if (open) {
-    void nextTick(() => repositionOpenTableFilterDropdowns())
-    window.addEventListener('scroll', repositionOpenTableFilterDropdowns, true)
-    window.addEventListener('resize', repositionOpenTableFilterDropdowns)
-  } else {
+  onUnmounted(() => {
+    document.removeEventListener('click', handleTableFilterClickOutside)
     window.removeEventListener('scroll', repositionOpenTableFilterDropdowns, true)
     window.removeEventListener('resize', repositionOpenTableFilterDropdowns)
-  }
-})
+  })
 
-async function loadEmployeeData() {
-  if (!user.value?.id) return
-  const { data } = await supabase
-    .from('employee')
-    .select('name, position_in_company, email, employee_no')
-    .eq('id', user.value.id)
-    .maybeSingle()
-  if (data) {
-    const row = data as {
-      name: string | null
-      position_in_company: string | null
-      email: string | null
-      employee_no: string | null
+  /** 12-hour times for PDF/CSV export: `H:MM A.M.` / `P.M.` */
+  function formatTime12hApm(iso: string | null): string {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    const h = d.getHours()
+    const m = d.getMinutes()
+    const isAm = h < 12
+    const h12 = h % 12 || 12
+    return `${h12}:${m.toString().padStart(2, '0')} ${isAm ? 'A.M.' : 'P.M.'}`
+  }
+
+  function formatTime12hApmFromStored(stored: string | null): string {
+    if (!stored) return '—'
+    return formatTime12hApm(new Date(storedToRealInstant(stored)).toISOString())
+  }
+
+  /** Min–max of YYYY-MM-DD dates actually present in the PDF/CSV export rows */
+  function formatExportTableDateCoveredRange(): string {
+    const unique = new Set<string>()
+    for (const row of exportRows.value) {
+      const d = row[0]
+      if (d && d !== '—') unique.add(d)
     }
-    employeeName.value = row.name
-    employeePosition.value = row.position_in_company
-    employeeEmail.value = row.email
-    employeeNo.value = row.employee_no
+    if (!unique.size) return '—'
+    const sorted = Array.from(unique).sort()
+    const a = sorted[0]!
+    const b = sorted[sorted.length - 1]!
+    return a === b ? a : `${a} - ${b}`
   }
-}
 
-async function loadEditRequestStatuses() {
-  try {
-    if (!user.value?.id) return
-    const ids = Array.from(
-      new Set(
-        list.value
-          .map(r => r.attendance_id)
-          .filter((id): id is string => Boolean(id))
-      )
+  function publicAssetUrl(file: string): string {
+    return `/${file}`.replace(/\/{2,}/g, '/')
+  }
+
+  function loadImageElement(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error(`Failed to load: ${src}`))
+      img.src = src
+    })
+  }
+
+  /** Rounded-rectangle clip (~5px radius) with object-fit cover for jsPDF letterhead logos. */
+  function imageToRoundedLogoPngDataUrl(
+    img: HTMLImageElement,
+    pixelSize = 256,
+    cornerRadiusPx = 5
+  ): string {
+    const canvas = document.createElement('canvas')
+    canvas.width = pixelSize
+    canvas.height = pixelSize
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('Could not read logo image')
+    const rad = Math.min(cornerRadiusPx, pixelSize / 2 - 0.5)
+    ctx.clearRect(0, 0, pixelSize, pixelSize)
+    ctx.save()
+    ctx.beginPath()
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(0, 0, pixelSize, pixelSize, rad)
+    } else {
+      const x = 0
+      const y = 0
+      const w = pixelSize
+      const h = pixelSize
+      const r = rad
+      ctx.moveTo(x + r, y)
+      ctx.lineTo(x + w - r, y)
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+      ctx.lineTo(x + w, y + h - r)
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+      ctx.lineTo(x + r, y + h)
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+      ctx.lineTo(x, y + r)
+      ctx.quadraticCurveTo(x, y, x + r, y)
+    }
+    ctx.closePath()
+    ctx.clip()
+    const iw = img.naturalWidth
+    const ih = img.naturalHeight
+    const scale = Math.max(pixelSize / iw, pixelSize / ih)
+    const dw = iw * scale
+    const dh = ih * scale
+    const dx = (pixelSize - dw) / 2
+    const dy = (pixelSize - dh) / 2
+    ctx.drawImage(img, dx, dy, dw, dh)
+    ctx.restore()
+    return canvas.toDataURL('image/png')
+  }
+
+  async function loadRoundedLogoDataUrl(src: string): Promise<string> {
+    const img = await loadImageElement(src)
+    return imageToRoundedLogoPngDataUrl(img)
+  }
+
+  /** PDF / export: same compact total as AdminTimesheetView. */
+  function formatTotalTimeCompact(interval: string | null): string {
+    if (!interval) return '—'
+    const m = interval.match(/^(\d+):(\d+):(\d+)/)
+    if (m) {
+      const [, h, min] = m.map(Number)
+      if (h) return `${h}h ${min}m`
+      return `${min}m`
+    }
+    return interval
+  }
+
+  /** Same labels as AdminTimesheetView PDF “Activity” column. */
+  function attendanceActivityLabel(r: AttendanceRow): string {
+    const v = isTravelFlagged(r)
+    return v === 'travel'
+      ? 'Suspicious location activity'
+      : v === 'possible_travel'
+        ? 'Possible suspicious location activity'
+        : '—'
+  }
+
+  function safeFileSlug(s: string): string {
+    return (
+      s
+        .trim()
+        .replace(/[\\/:*?"<>|]+/g, '')
+        .replace(/\s+/g, '-')
+        .slice(0, 80) || 'timesheet'
     )
-    if (!ids.length) {
-      editRequestStatusMap.value = {}
-      return
+  }
+
+  interface TimesheetPdfEmp {
+    id: string
+    name: string | null
+    email: string | null
+    position_in_company: string | null
+    employee_no: string | null
+  }
+
+  /** Letterhead copy for exported PDFs (matches AdminTimesheetView). */
+  const PDF_LETTERHEAD = {
+    brand: 'PC Worth',
+    ownedByLabel: 'Owned and Operated by:',
+    legalName: 'DRJ TECHNOLOGIES TRADING CORP.',
+    address: '618 M Earnshaw Street, Sampaloc, Manila, Metro Manila 1008'
+  } as const
+
+  function buildPdfTableBodyFromRows(rows: AttendanceRow[]): string[][] {
+    const map: Record<
+      string,
+      Array<{
+        date: string
+        clockIn: string
+        clockOut: string
+        lunchIn: string
+        lunchOut: string
+        total: string
+      }>
+    > = {}
+
+    for (const r of rows) {
+      const dateKey = r.clock_in ? getLocalDateString(new Date(storedToRealInstant(r.clock_in))) : '—'
+      if (!map[dateKey]) map[dateKey] = []
+      map[dateKey].push({
+        date: dateKey,
+        clockIn: formatTime12hApmFromStored(r.clock_in),
+        clockOut: formatTime12hApmFromStored(r.clock_out),
+        lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
+        lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
+        total: formatTotalTimeCompact(r.total_time)
+      })
     }
-    const { data, error: reqErr } = await supabase
-      .from('attendance_edit_requests')
-      .select('attendance_id, status, created_at')
-      .eq('requested_by', user.value.id)
-      .in('attendance_id', ids)
-      .order('created_at', { ascending: false })
-    if (reqErr) {
-      console.error('Load edit request statuses error:', reqErr.message)
-      return
+
+    const flat: Array<[string, string, string, string, string, string]> = []
+    for (const [dateKey, groupRows] of Object.entries(map).sort(([a], [b]) =>
+      a === '—' ? 1 : b === '—' ? -1 : new Date(b).getTime() - new Date(a).getTime()
+    )) {
+      for (const r of groupRows) {
+        flat.push([
+          dateKey,
+          r.clockIn,
+          r.lunchIn,
+          r.lunchOut,
+          r.clockOut,
+          r.total
+        ])
+      }
     }
-    const map: Record<string, 'pending' | 'approved' | 'rejected'> = {}
-    const normalize = (s: string): 'pending' | 'approved' | 'rejected' | null => {
-      if (s === 'pending' || s === 'approved' || s === 'rejected') return s
-      if (s === 'declined') return 'rejected'
+
+    return flat.map(([date, clockIn, lunchIn, lunchOut, clockOut, total]) => [
+      date,
+      clockIn,
+      lunchIn,
+      lunchOut,
+      clockOut,
+      total
+    ])
+  }
+
+  function createTimesheetPdfDocument(
+    emp: TimesheetPdfEmp,
+    tableBody: string[][],
+    dateCoveredLabel: string,
+    pcDataUrl: string,
+    twDataUrl: string
+  ): jsPDF {
+    const marginMm = 14
+    const logoMm = 20
+    const logoTopMm = 8
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const pageW = doc.internal.pageSize.getWidth()
+    const cx = pageW / 2
+
+    doc.setTextColor(0, 0, 0)
+    doc.addImage(pcDataUrl, 'PNG', marginMm, logoTopMm, logoMm, logoMm)
+    doc.addImage(twDataUrl, 'PNG', pageW - marginMm - logoMm, logoTopMm, logoMm, logoMm)
+
+    const addressMaxW = pageW - marginMm * 2 - logoMm * 2 - 8
+    const letterLineMm = 3.6
+    const titleTopGapMm = 12
+    const titleBottomGapMm = 10
+
+    let hy = logoTopMm + 3
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(12)
+    doc.text(PDF_LETTERHEAD.brand, cx, hy, { align: 'center' })
+    hy += letterLineMm
+
+    doc.setFontSize(9)
+    doc.text(PDF_LETTERHEAD.ownedByLabel, cx, hy, { align: 'center' })
+    hy += letterLineMm
+
+    doc.setFontSize(10)
+    doc.text(PDF_LETTERHEAD.legalName, cx, hy, { align: 'center' })
+    hy += letterLineMm
+
+    doc.setFontSize(8.5)
+    for (const line of doc.splitTextToSize(PDF_LETTERHEAD.address, addressMaxW)) {
+      doc.text(line, cx, hy, { align: 'center' })
+      hy += letterLineMm
+    }
+
+    const headerBottomY = Math.max(logoTopMm + logoMm, hy) + titleTopGapMm
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(14)
+    doc.text('EMPLOYEE TIMESHEET', cx, headerBottomY, { align: 'center' })
+
+    const col1X = marginMm
+    const col2X = cx + 6
+    const empId = emp.employee_no?.trim() || emp.id
+    const position = emp.position_in_company?.trim() || '—'
+    let ey = headerBottomY + titleBottomGapMm
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.text(`Name: ${emp.name?.trim() || '—'}`, col1X, ey)
+    doc.text(`Position: ${position}`, col2X, ey)
+    ey += 6
+    doc.text(`Email: ${emp.email?.trim() || '—'}`, col1X, ey)
+    doc.text(`Date Covered: ${dateCoveredLabel}`, col2X, ey)
+    ey += 6
+    doc.text(`Employee ID: ${empId}`, col1X, ey)
+
+    const tableStartY = ey + 8
+
+    autoTable(doc, {
+      head: [
+        ['DATE', 'CLOCK IN', 'LUNCH IN', 'LUNCH OUT', 'CLOCK OUT', 'TOTAL HOURS']
+      ],
+      body: tableBody,
+      startY: tableStartY,
+      styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', textColor: 0 },
+      headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      margin: { left: marginMm, right: marginMm },
+      tableWidth: pageW - marginMm * 2
+    })
+
+    return doc
+  }
+
+  async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+    const key = `${lat.toFixed(6)},${lng.toFixed(6)}`
+    if (cityCache.value[key]) return cityCache.value[key]
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+        { headers: { 'Accept-Language': 'en', 'User-Agent': 'TimeWorthApp/1.0' } }
+      )
+      const data = await res.json()
+      const addr = data?.display_name ?? null
+      if (addr) {
+        // Extract city from address
+        const city = extractCityFromAddress(addr)
+        if (city) {
+          cityCache.value[key] = city
+          return city
+        }
+      }
+      return null
+    } catch {
       return null
     }
-    for (const row of (data ?? []) as { attendance_id: string | null; status: string }[]) {
-      const aid = row.attendance_id
-      if (!aid || map[aid] !== undefined) continue
-      const st = normalize(row.status)
-      if (st) map[aid] = st
-    }
-    editRequestStatusMap.value = map
-  } catch (e) {
-    console.error('Unexpected edit status load error:', e)
-  }
-}
-
-onMounted(() => {
-  // Initialize custom date range to last month if not set
-  if (!customStartDate.value || !customEndDate.value) {
-    const end = new Date()
-    const start = new Date(end)
-    start.setMonth(start.getMonth() - 1)
-    start.setDate(1)
-    customEndDate.value = end.toISOString().slice(0, 10)
-    customStartDate.value = start.toISOString().slice(0, 10)
-  }
-  fetchData()
-  loadEmployeeData()
-  document.addEventListener('click', handleTableFilterClickOutside)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', handleTableFilterClickOutside)
-  window.removeEventListener('scroll', repositionOpenTableFilterDropdowns, true)
-  window.removeEventListener('resize', repositionOpenTableFilterDropdowns)
-})
-
-/** 12-hour times for PDF/CSV export: `H:MM A.M.` / `P.M.` */
-function formatTime12hApm(iso: string | null): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  const h = d.getHours()
-  const m = d.getMinutes()
-  const isAm = h < 12
-  const h12 = h % 12 || 12
-  return `${h12}:${m.toString().padStart(2, '0')} ${isAm ? 'A.M.' : 'P.M.'}`
-}
-
-function formatTime12hApmFromStored(stored: string | null): string {
-  if (!stored) return '—'
-  return formatTime12hApm(new Date(storedToRealInstant(stored)).toISOString())
-}
-
-/** Min–max of YYYY-MM-DD dates actually present in the PDF/CSV export rows */
-function formatExportTableDateCoveredRange(): string {
-  const unique = new Set<string>()
-  for (const row of exportRows.value) {
-    const d = row[0]
-    if (d && d !== '—') unique.add(d)
-  }
-  if (!unique.size) return '—'
-  const sorted = Array.from(unique).sort()
-  const a = sorted[0]!
-  const b = sorted[sorted.length - 1]!
-  return a === b ? a : `${a} - ${b}`
-}
-
-function publicAssetUrl(file: string): string {
-  return `/${file}`.replace(/\/{2,}/g, '/')
-}
-
-function loadImageElement(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error(`Failed to load: ${src}`))
-    img.src = src
-  })
-}
-
-/** Rounded-rectangle clip (~5px radius) with object-fit cover for jsPDF letterhead logos. */
-function imageToRoundedLogoPngDataUrl(
-  img: HTMLImageElement,
-  pixelSize = 256,
-  cornerRadiusPx = 5
-): string {
-  const canvas = document.createElement('canvas')
-  canvas.width = pixelSize
-  canvas.height = pixelSize
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('Could not read logo image')
-  const rad = Math.min(cornerRadiusPx, pixelSize / 2 - 0.5)
-  ctx.clearRect(0, 0, pixelSize, pixelSize)
-  ctx.save()
-  ctx.beginPath()
-  if (typeof ctx.roundRect === 'function') {
-    ctx.roundRect(0, 0, pixelSize, pixelSize, rad)
-  } else {
-    const x = 0
-    const y = 0
-    const w = pixelSize
-    const h = pixelSize
-    const r = rad
-    ctx.moveTo(x + r, y)
-    ctx.lineTo(x + w - r, y)
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r)
-    ctx.lineTo(x + w, y + h - r)
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
-    ctx.lineTo(x + r, y + h)
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r)
-    ctx.lineTo(x, y + r)
-    ctx.quadraticCurveTo(x, y, x + r, y)
-  }
-  ctx.closePath()
-  ctx.clip()
-  const iw = img.naturalWidth
-  const ih = img.naturalHeight
-  const scale = Math.max(pixelSize / iw, pixelSize / ih)
-  const dw = iw * scale
-  const dh = ih * scale
-  const dx = (pixelSize - dw) / 2
-  const dy = (pixelSize - dh) / 2
-  ctx.drawImage(img, dx, dy, dw, dh)
-  ctx.restore()
-  return canvas.toDataURL('image/png')
-}
-
-async function loadRoundedLogoDataUrl(src: string): Promise<string> {
-  const img = await loadImageElement(src)
-  return imageToRoundedLogoPngDataUrl(img)
-}
-
-/** PDF / export: same compact total as AdminTimesheetView. */
-function formatTotalTimeCompact(interval: string | null): string {
-  if (!interval) return '—'
-  const m = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (m) {
-    const [, h, min] = m.map(Number)
-    if (h) return `${h}h ${min}m`
-    return `${min}m`
-  }
-  return interval
-}
-
-/** Same labels as AdminTimesheetView PDF “Activity” column. */
-function attendanceActivityLabel(r: AttendanceRow): string {
-  const v = isTravelFlagged(r)
-  return v === 'travel'
-    ? 'Suspicious location activity'
-    : v === 'possible_travel'
-      ? 'Possible suspicious location activity'
-      : '—'
-}
-
-function safeFileSlug(s: string): string {
-  return (
-    s
-      .trim()
-      .replace(/[\\/:*?"<>|]+/g, '')
-      .replace(/\s+/g, '-')
-      .slice(0, 80) || 'timesheet'
-  )
-}
-
-interface TimesheetPdfEmp {
-  id: string
-  name: string | null
-  email: string | null
-  position_in_company: string | null
-  employee_no: string | null
-}
-
-/** Letterhead copy for exported PDFs (matches AdminTimesheetView). */
-const PDF_LETTERHEAD = {
-  brand: 'PC Worth',
-  ownedByLabel: 'Owned and Operated by:',
-  legalName: 'DRJ TECHNOLOGIES TRADING CORP.',
-  address: '618 M Earnshaw Street, Sampaloc, Manila, Metro Manila 1008'
-} as const
-
-function buildPdfTableBodyFromRows(rows: AttendanceRow[]): string[][] {
-  const map: Record<
-    string,
-    Array<{
-      date: string
-      clockIn: string
-      clockOut: string
-      lunchIn: string
-      lunchOut: string
-      total: string
-    }>
-  > = {}
-
-  for (const r of rows) {
-    const dateKey = r.clock_in ? getLocalDateString(new Date(storedToRealInstant(r.clock_in))) : '—'
-    if (!map[dateKey]) map[dateKey] = []
-    map[dateKey].push({
-      date: dateKey,
-      clockIn: formatTime12hApmFromStored(r.clock_in),
-      clockOut: formatTime12hApmFromStored(r.clock_out),
-      lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
-      lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
-      total: formatTotalTimeCompact(r.total_time)
-    })
   }
 
-  const flat: Array<[string, string, string, string, string, string]> = []
-  for (const [dateKey, groupRows] of Object.entries(map).sort(([a], [b]) =>
-    a === '—' ? 1 : b === '—' ? -1 : new Date(b).getTime() - new Date(a).getTime()
-  )) {
-    for (const r of groupRows) {
-      flat.push([
-        dateKey,
-        r.clockIn,
-        r.lunchIn,
-        r.lunchOut,
-        r.clockOut,
-        r.total
-      ])
-    }
-  }
-
-  return flat.map(([date, clockIn, lunchIn, lunchOut, clockOut, total]) => [
-    date,
-    clockIn,
-    lunchIn,
-    lunchOut,
-    clockOut,
-    total
-  ])
-}
-
-function createTimesheetPdfDocument(
-  emp: TimesheetPdfEmp,
-  tableBody: string[][],
-  dateCoveredLabel: string,
-  pcDataUrl: string,
-  twDataUrl: string
-): jsPDF {
-  const marginMm = 14
-  const logoMm = 20
-  const logoTopMm = 8
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  const pageW = doc.internal.pageSize.getWidth()
-  const cx = pageW / 2
-
-  doc.setTextColor(0, 0, 0)
-  doc.addImage(pcDataUrl, 'PNG', marginMm, logoTopMm, logoMm, logoMm)
-  doc.addImage(twDataUrl, 'PNG', pageW - marginMm - logoMm, logoTopMm, logoMm, logoMm)
-
-  const addressMaxW = pageW - marginMm * 2 - logoMm * 2 - 8
-  const letterLineMm = 3.6
-  const titleTopGapMm = 12
-  const titleBottomGapMm = 10
-
-  let hy = logoTopMm + 3
-
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(12)
-  doc.text(PDF_LETTERHEAD.brand, cx, hy, { align: 'center' })
-  hy += letterLineMm
-
-  doc.setFontSize(9)
-  doc.text(PDF_LETTERHEAD.ownedByLabel, cx, hy, { align: 'center' })
-  hy += letterLineMm
-
-  doc.setFontSize(10)
-  doc.text(PDF_LETTERHEAD.legalName, cx, hy, { align: 'center' })
-  hy += letterLineMm
-
-  doc.setFontSize(8.5)
-  for (const line of doc.splitTextToSize(PDF_LETTERHEAD.address, addressMaxW)) {
-    doc.text(line, cx, hy, { align: 'center' })
-    hy += letterLineMm
-  }
-
-  const headerBottomY = Math.max(logoTopMm + logoMm, hy) + titleTopGapMm
-
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(14)
-  doc.text('EMPLOYEE TIMESHEET', cx, headerBottomY, { align: 'center' })
-
-  const col1X = marginMm
-  const col2X = cx + 6
-  const empId = emp.employee_no?.trim() || emp.id
-  const position = emp.position_in_company?.trim() || '—'
-  let ey = headerBottomY + titleBottomGapMm
-
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(10)
-  doc.text(`Name: ${emp.name?.trim() || '—'}`, col1X, ey)
-  doc.text(`Position: ${position}`, col2X, ey)
-  ey += 6
-  doc.text(`Email: ${emp.email?.trim() || '—'}`, col1X, ey)
-  doc.text(`Date Covered: ${dateCoveredLabel}`, col2X, ey)
-  ey += 6
-  doc.text(`Employee ID: ${empId}`, col1X, ey)
-
-  const tableStartY = ey + 8
-
-  autoTable(doc, {
-    head: [
-      ['DATE', 'CLOCK IN', 'LUNCH IN', 'LUNCH OUT', 'CLOCK OUT', 'TOTAL HOURS']
-    ],
-    body: tableBody,
-    startY: tableStartY,
-    styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', textColor: 0 },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7 },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-    margin: { left: marginMm, right: marginMm },
-    tableWidth: pageW - marginMm * 2
-  })
-
-  return doc
-}
-
-async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
-  const key = `${lat.toFixed(6)},${lng.toFixed(6)}`
-  if (cityCache.value[key]) return cityCache.value[key]
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-      { headers: { 'Accept-Language': 'en', 'User-Agent': 'TimeWorthApp/1.0' } }
-    )
-    const data = await res.json()
-    const addr = data?.display_name ?? null
-    if (addr) {
-      // Extract city from address
-      const city = extractCityFromAddress(addr)
-      if (city) {
-        cityCache.value[key] = city
-        return city
+  function extractCityFromAddress(address: string): string | null {
+    // Try to extract city from reverse geocoded address
+    // Format is usually: "Street, City, Region, Country"
+    const parts = address.split(',').map(s => s.trim())
+    
+    // Look for common city patterns (usually 2nd or 3rd from end)
+    for (let i = parts.length - 2; i >= Math.max(0, parts.length - 4); i--) {
+      const part = parts[i]
+      if (part && (part.includes('City') || part.includes('Manila') || part.includes('Quezon') || part.includes('Las Piñas'))) {
+        return part
       }
+    }
+    
+    // Fallback: return second to last part (usually city)
+    if (parts.length >= 2) {
+      return parts[parts.length - 2] || null
     }
     return null
-  } catch {
-    return null
   }
-}
 
-function extractCityFromAddress(address: string): string | null {
-  // Try to extract city from reverse geocoded address
-  // Format is usually: "Street, City, Region, Country"
-  const parts = address.split(',').map(s => s.trim())
-  
-  // Look for common city patterns (usually 2nd or 3rd from end)
-  for (let i = parts.length - 2; i >= Math.max(0, parts.length - 4); i--) {
-    const part = parts[i]
-    if (part && (part.includes('City') || part.includes('Manila') || part.includes('Quezon') || part.includes('Las Piñas'))) {
-      return part
-    }
-  }
-  
-  // Fallback: return second to last part (usually city)
-  if (parts.length >= 2) {
-    return parts[parts.length - 2] || null
-  }
-  return null
-}
-
-function extractCity(attendanceRow: AttendanceRow): string {
-  // If office work, extract city from branch address
-  if (attendanceRow.work_modality === 'office' && attendanceRow.branch_location) {
-    const branch = getBranch(attendanceRow.branch_location)
-    if (branch?.address) {
-      // Extract city from address (usually last part before country)
-      // Examples: "Sampaloc Manila", "Las Piñas City", "Quezon City"
-      const parts = branch.address.split(',').map(s => s.trim()).filter(s => s.length > 0)
-      // Look for common city patterns
-      for (let i = parts.length - 1; i >= 0; i--) {
-        const part = parts[i]
-        if (part && (part.includes('City') || part.includes('Manila') || part === 'Las Piñas' || part === 'Quezon City')) {
-          return part
-        }
-      }
-      // Fallback: return last part
-      if (parts.length > 0) {
-        const lastPart = parts[parts.length - 1]
-        if (lastPart) return lastPart
-      }
-      return branch.name
-    }
-    return branch?.name || '—'
-  }
-  // For WFH, extract city from last clock out location
-  if (attendanceRow.work_modality === 'wfh' && attendanceRow.location_out) {
-    const coords = parseLocation(attendanceRow.location_out)
-    if (coords) {
-      const key = `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`
-      // Check cache first
-      if (cityCache.value[key]) {
-        return cityCache.value[key]
-      }
-      // If not in cache, return WFH as fallback (will update when reverse geocode completes)
-      return 'WFH'
-    }
-  }
-  return 'WFH'
-}
-
-function formatTotalTime(interval: string | null): string {
-  if (!interval) return '—'
-  const timeMatch = interval.match(/^(\d+):(\d+):(\d+)/)
-  if (timeMatch) {
-    const [, h, m, s] = timeMatch.map(Number)
-    const totalSeconds = (h || 0) * 3600 + (m || 0) * 60 + (s || 0)
-    
-    if (totalSeconds === 0) return '0s'
-    
-    const hours = Math.floor(totalSeconds / 3600)
-    const minutes = Math.floor((totalSeconds % 3600) / 60)
-    const seconds = totalSeconds % 60
-    
-    if (hours > 0) {
-      return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
-    } else if (minutes > 0) {
-      return `${minutes}m`
-    } else if (seconds > 0) {
-      return `${seconds}s`
-    }
-    return '0s'
-  }
-  return '—'
-}
-
-function lunchMinutes(row: AttendanceRow): number {
-  if (!row.lunch_break_start) return 0
-  const start = storedToRealInstant(row.lunch_break_start)
-  const end = row.lunch_break_end ? storedToRealInstant(row.lunch_break_end) : Date.now()
-  return Math.max(0, Math.floor((end - start) / 60000))
-}
-
-const filteredRows = computed(() => {
-  let filtered = list.value
-  // Apply modality filter
-  if (modalityFilter.value === 'office') filtered = filtered.filter(r => r.work_modality === 'office')
-  if (modalityFilter.value === 'wfh') filtered = filtered.filter(r => r.work_modality === 'wfh')
-  // Legacy filters (if still needed)
-  if (appliedModality.value) filtered = filtered.filter(r => r.work_modality === appliedModality.value)
-  if (appliedBranch.value) filtered = filtered.filter(r => r.branch_location === appliedBranch.value)
-  if (appliedShift.value) {
-    filtered = filtered.filter(r => {
-      if (!r.clock_in) return false
-      const hour = new Date(r.clock_in).getHours()
-      if (appliedShift.value === 'dayshift') return hour >= 6 && hour < 22
-      if (appliedShift.value === 'nightshift') return hour >= 22 || hour < 6
-      return true
-    })
-  }
-  return filtered
-})
-
-interface DayRow {
-  dateKey: string
-  clockIn: string
-  clockOut: string
-  total: string
-  totalMinutes: number
-  totalSeconds: number
-  plannedBreaks: string
-  breakMinutes: number
-  modality: string
-  city: string
-  citySummary: string
-  hasMultipleEntries: boolean
-  entryCount: number
-  entries: AttendanceRow[]
-  hasWfhPhoto: boolean
-  firstWfhPhotoPath: string | null
-}
-
-/** Same bands as the Time column filter (8h target day). */
-function timeComplianceLabel(row: DayRow): string {
-  if (row.totalSeconds <= 0) return '—'
-  const hours = row.totalSeconds / 3600
-  if (hours < 8) return 'Undertime'
-  if (hours >= 7.9 && hours <= 8.1) return 'On time'
-  if (hours > 8.1) return 'Overtime'
-  return '—'
-}
-
-/** Colspan for expanded detail row (all columns after Date). */
-const timesheetExpandedColspan = computed(
-  () => (showTimes.value ? 4 : 0) + (showBreaks.value ? 1 : 0) + 4
-)
-
-// Get all unique dates from filtered rows (local date for correct grouping)
-const allDates = computed(() => {
-  const dateSet = new Set<string>()
-  for (const r of filteredRows.value) {
-    const key = r.clock_in ? getLocalDateString(new Date(storedToRealInstant(r.clock_in))) : ''
-    if (key) dateSet.add(key)
-  }
-  return Array.from(dateSet).sort().reverse() // Most recent first
-})
-
-const weekDays = computed(() => allDates.value.map(dateKey => ({ dateKey })))
-
-const tableRows = computed(() => {
-  // Access cityCache to make this computed reactive to cache updates
-  void cityCache.value
-  const byDate: Record<string, AttendanceRow[]> = {}
-  for (const r of filteredRows.value) {
-    const key = r.clock_in ? getLocalDateString(new Date(storedToRealInstant(r.clock_in))) : ''
-    if (!key) continue
-    if (!byDate[key]) byDate[key] = []
-    byDate[key].push(r)
-  }
-  return weekDays.value.map(({ dateKey }) => {
-    const dayRows = byDate[dateKey] ?? []
-    let clockIn = '—'
-    let clockOut = '—'
-    let totalSeconds = 0
-    let totalMinutes = 0
-    let breakMinutes = 0
-    let modality = '—'
-    const hasMultipleEntries = dayRows.length > 1
-    const entryCount = dayRows.length
-    const sorted = dayRows.length ? [...dayRows].sort((a, b) => storedToRealInstant(a.clock_in!) - storedToRealInstant(b.clock_in!)) : []
-    const firstWfhWithPhoto = sorted.find(
-      (entry) => entry.work_modality === 'wfh' && !!entry.wfh_pic_url
-    ) ?? null
-
-    if (dayRows.length && sorted.length > 0 && sorted[0]) {
-      clockIn = formatTime12hApmFromStored(sorted[0].clock_in)
-      const last = sorted[sorted.length - 1]
-      if (last) {
-        clockOut = formatTime12hApmFromStored(last.clock_out)
-      }
-      // Calculate total seconds (excluding breaks)
-      for (const r of dayRows) {
-        const t = r.total_time
-        if (t) {
-          const m = t.match(/^(\d+):(\d+):(\d+)/)
-          if (m) {
-            const hours = Number(m[1])
-            const mins = Number(m[2])
-            const secs = Number(m[3])
-            totalSeconds += hours * 3600 + mins * 60 + secs
+  function extractCity(attendanceRow: AttendanceRow): string {
+    // If office work, extract city from branch address
+    if (attendanceRow.work_modality === 'office' && attendanceRow.branch_location) {
+      const branch = getBranch(attendanceRow.branch_location)
+      if (branch?.address) {
+        // Extract city from address (usually last part before country)
+        // Examples: "Sampaloc Manila", "Las Piñas City", "Quezon City"
+        const parts = branch.address.split(',').map(s => s.trim()).filter(s => s.length > 0)
+        // Look for common city patterns
+        for (let i = parts.length - 1; i >= 0; i--) {
+          const part = parts[i]
+          if (part && (part.includes('City') || part.includes('Manila') || part === 'Las Piñas' || part === 'Quezon City')) {
+            return part
           }
         }
-        breakMinutes += lunchMinutes(r)
-      }
-      // Subtract break minutes from total to get actual worked time
-      const breakSeconds = breakMinutes * 60
-      totalSeconds = Math.max(0, totalSeconds - breakSeconds)
-      totalMinutes = Math.floor(totalSeconds / 60)
-      
-      // Get all unique modalities
-      const modalities = new Set<string>()
-      for (const r of dayRows) {
-        if (r.work_modality === 'office') modalities.add('Office')
-        else if (r.work_modality === 'wfh') modalities.add('WFH')
-      }
-      const modalityArray = Array.from(modalities)
-      modality = modalityArray.length > 0 ? modalityArray.join(', ') : '—'
-    }
-    // Extract city/cities for location display
-    let city = '—'
-    let citySummary = '—'
-    if (dayRows.length > 0 && sorted.length > 0) {
-      const cities = new Set<string>()
-      // Collect all unique cities from all entries
-      for (const entry of sorted) {
-        const entryCity = extractCity(entry)
-        if (entryCity && entryCity !== 'WFH' && entryCity !== '—') {
-          cities.add(entryCity)
-        } else if (entryCity === 'WFH') {
-          cities.add('WFH')
+        // Fallback: return last part
+        if (parts.length > 0) {
+          const lastPart = parts[parts.length - 1]
+          if (lastPart) return lastPart
         }
-        // Trigger reverse geocoding for WFH if needed
-        if (entry.work_modality === 'wfh' && entry.location_out) {
-          const coords = parseLocation(entry.location_out)
-          if (coords) {
-            const key = `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`
-            if (!cityCache.value[key]) {
-              reverseGeocode(coords.lat, coords.lng).then(cityName => {
-                if (cityName) {
-                  cityCache.value[key] = cityName
-                }
-              })
+        return branch.name
+      }
+      return branch?.name || '—'
+    }
+    // For WFH, extract city from last clock out location
+    if (attendanceRow.work_modality === 'wfh' && attendanceRow.location_out) {
+      const coords = parseLocation(attendanceRow.location_out)
+      if (coords) {
+        const key = `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`
+        // Check cache first
+        if (cityCache.value[key]) {
+          return cityCache.value[key]
+        }
+        // If not in cache, return WFH as fallback (will update when reverse geocode completes)
+        return 'WFH'
+      }
+    }
+    return 'WFH'
+  }
+
+  function formatTotalTime(interval: string | null): string {
+    if (!interval) return '—'
+    const timeMatch = interval.match(/^(\d+):(\d+):(\d+)/)
+    if (timeMatch) {
+      const [, h, m, s] = timeMatch.map(Number)
+      const totalSeconds = (h || 0) * 3600 + (m || 0) * 60 + (s || 0)
+      
+      if (totalSeconds === 0) return '0s'
+      
+      const hours = Math.floor(totalSeconds / 3600)
+      const minutes = Math.floor((totalSeconds % 3600) / 60)
+      const seconds = totalSeconds % 60
+      
+      if (hours > 0) {
+        return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+      } else if (minutes > 0) {
+        return `${minutes}m`
+      } else if (seconds > 0) {
+        return `${seconds}s`
+      }
+      return '0s'
+    }
+    return '—'
+  }
+
+  function lunchMinutes(row: AttendanceRow): number {
+    if (!row.lunch_break_start) return 0
+    const start = storedToRealInstant(row.lunch_break_start)
+    const end = row.lunch_break_end ? storedToRealInstant(row.lunch_break_end) : Date.now()
+    return Math.max(0, Math.floor((end - start) / 60000))
+  }
+
+  const filteredRows = computed(() => {
+    let filtered = list.value
+    // Apply modality filter
+    if (modalityFilter.value === 'office') filtered = filtered.filter(r => r.work_modality === 'office')
+    if (modalityFilter.value === 'wfh') filtered = filtered.filter(r => r.work_modality === 'wfh')
+    // Legacy filters (if still needed)
+    if (appliedModality.value) filtered = filtered.filter(r => r.work_modality === appliedModality.value)
+    if (appliedBranch.value) filtered = filtered.filter(r => r.branch_location === appliedBranch.value)
+    if (appliedShift.value) {
+      filtered = filtered.filter(r => {
+        if (!r.clock_in) return false
+        const hour = new Date(r.clock_in).getHours()
+        if (appliedShift.value === 'dayshift') return hour >= 6 && hour < 22
+        if (appliedShift.value === 'nightshift') return hour >= 22 || hour < 6
+        return true
+      })
+    }
+    return filtered
+  })
+
+  interface DayRow {
+    dateKey: string
+    clockIn: string
+    clockOut: string
+    lunchIn: string
+    lunchOut: string
+    total: string
+    totalMinutes: number
+    totalSeconds: number
+    plannedBreaks: string
+    breakMinutes: number
+    modality: string
+    city: string
+    citySummary: string
+    hasMultipleEntries: boolean
+    entryCount: number
+    entries: AttendanceRow[]
+    hasWfhPhoto: boolean
+    firstWfhPhotoPath: string | null
+  }
+
+  /** Same bands as the Time column filter (8h target day). */
+  function timeComplianceLabel(row: DayRow): string {
+    if (row.totalSeconds <= 0) return '—'
+    const hours = row.totalSeconds / 3600
+    if (hours < 8) return 'Undertime'
+    if (hours >= 7.9 && hours <= 8.1) return 'On time'
+    if (hours > 8.1) return 'Overtime'
+    return '—'
+  }
+
+  function entryWorkedSeconds(entry: AttendanceRow): number {
+    const t = entry.total_time
+    if (!t) return 0
+    const m = String(t).match(/^(\d+):(\d+):(\d+)/)
+    if (!m) return 0
+    const hours = Number(m[1])
+    const mins = Number(m[2])
+    const secs = Number(m[3])
+    const raw = hours * 3600 + mins * 60 + secs
+    const breakSeconds = lunchMinutes(entry) * 60
+    return Math.max(0, raw - breakSeconds)
+  }
+
+  function timeComplianceLabelForEntry(entry: AttendanceRow): string {
+    const secs = entryWorkedSeconds(entry)
+    if (secs <= 0) return '—'
+    const hours = secs / 3600
+    if (hours < 8) return 'Undertime'
+    if (hours >= 7.9 && hours <= 8.1) return 'On time'
+    if (hours > 8.1) return 'Overtime'
+    return '—'
+  }
+
+  /** Colspan for expanded detail row (all columns after Date). */
+  const timesheetExpandedColspan = computed(
+    () => (showTimes.value ? 5 : 0) + 5
+  )
+
+  // Get all unique dates from filtered rows (local date for correct grouping)
+  const allDates = computed(() => {
+    const dateSet = new Set<string>()
+    for (const r of filteredRows.value) {
+      const key = r.clock_in ? getLocalDateString(new Date(storedToRealInstant(r.clock_in))) : ''
+      if (key) dateSet.add(key)
+    }
+    return Array.from(dateSet).sort().reverse() // Most recent first
+  })
+
+  const weekDays = computed(() => allDates.value.map(dateKey => ({ dateKey })))
+
+  const tableRows = computed(() => {
+    // Access cityCache to make this computed reactive to cache updates
+    void cityCache.value
+    const byDate: Record<string, AttendanceRow[]> = {}
+    for (const r of filteredRows.value) {
+      const key = r.clock_in ? getLocalDateString(new Date(storedToRealInstant(r.clock_in))) : ''
+      if (!key) continue
+      if (!byDate[key]) byDate[key] = []
+      byDate[key].push(r)
+    }
+    return weekDays.value.map(({ dateKey }) => {
+      const dayRows = byDate[dateKey] ?? []
+      let clockIn = '—'
+      let clockOut = '—'
+      let lunchIn = '—'
+      let lunchOut = '—'
+      let totalSeconds = 0
+      let totalMinutes = 0
+      let breakMinutes = 0
+      let modality = '—'
+      const hasMultipleEntries = dayRows.length > 1
+      const entryCount = dayRows.length
+      const sorted = dayRows.length ? [...dayRows].sort((a, b) => storedToRealInstant(a.clock_in!) - storedToRealInstant(b.clock_in!)) : []
+      const firstWfhWithPhoto = sorted.find(
+        (entry) => entry.work_modality === 'wfh' && !!entry.wfh_pic_url
+      ) ?? null
+
+      if (dayRows.length && sorted.length > 0 && sorted[0]) {
+        clockIn = formatTime12hApmFromStored(sorted[0].clock_in)
+        const last = sorted[sorted.length - 1]
+        if (last) {
+          clockOut = formatTime12hApmFromStored(last.clock_out)
+        }
+        const firstLunchStart = sorted.find((e) => !!e.lunch_break_start)?.lunch_break_start ?? null
+        const lastLunchEnd = [...sorted].reverse().find((e) => !!e.lunch_break_end)?.lunch_break_end ?? null
+        lunchIn = formatTime12hApmFromStored(firstLunchStart)
+        lunchOut = formatTime12hApmFromStored(lastLunchEnd)
+        // Calculate total seconds (excluding breaks)
+        for (const r of dayRows) {
+          const t = r.total_time
+          if (t) {
+            const m = t.match(/^(\d+):(\d+):(\d+)/)
+            if (m) {
+              const hours = Number(m[1])
+              const mins = Number(m[2])
+              const secs = Number(m[3])
+              totalSeconds += hours * 3600 + mins * 60 + secs
+            }
+          }
+          breakMinutes += lunchMinutes(r)
+        }
+        // Subtract break minutes from total to get actual worked time
+        const breakSeconds = breakMinutes * 60
+        totalSeconds = Math.max(0, totalSeconds - breakSeconds)
+        totalMinutes = Math.floor(totalSeconds / 60)
+        
+        // Get all unique modalities
+        const modalities = new Set<string>()
+        for (const r of dayRows) {
+          if (r.work_modality === 'office') modalities.add('Office')
+          else if (r.work_modality === 'wfh') modalities.add('WFH')
+        }
+        const modalityArray = Array.from(modalities)
+        modality = modalityArray.length > 0 ? modalityArray.join(', ') : '—'
+      }
+      // Extract city/cities for location display
+      let city = '—'
+      let citySummary = '—'
+      if (dayRows.length > 0 && sorted.length > 0) {
+        const cities = new Set<string>()
+        // Collect all unique cities from all entries
+        for (const entry of sorted) {
+          const entryCity = extractCity(entry)
+          if (entryCity && entryCity !== 'WFH' && entryCity !== '—') {
+            cities.add(entryCity)
+          } else if (entryCity === 'WFH') {
+            cities.add('WFH')
+          }
+          // Trigger reverse geocoding for WFH if needed
+          if (entry.work_modality === 'wfh' && entry.location_out) {
+            const coords = parseLocation(entry.location_out)
+            if (coords) {
+              const key = `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`
+              if (!cityCache.value[key]) {
+                reverseGeocode(coords.lat, coords.lng).then(cityName => {
+                  if (cityName) {
+                    cityCache.value[key] = cityName
+                  }
+                })
+              }
             }
           }
         }
-      }
-      
-      const cityArray = Array.from(cities)
-      if (cityArray.length > 0) {
-        if (hasMultipleEntries && cityArray.length > 1) {
-          // Multiple locations: show count summary
-          citySummary = `${cityArray.length} locations`
-          city = cityArray.join(', ')
+        
+        const cityArray = Array.from(cities)
+        if (cityArray.length > 0) {
+          if (hasMultipleEntries && cityArray.length > 1) {
+            // Multiple locations: show count summary
+            citySummary = `${cityArray.length} locations`
+            city = cityArray.join(', ')
+          } else {
+            // Single location or all same
+            const firstCity = cityArray[0]
+            city = firstCity || '—'
+            citySummary = firstCity || '—'
+          }
         } else {
-          // Single location or all same
-          const firstCity = cityArray[0]
-          city = firstCity || '—'
-          citySummary = firstCity || '—'
+          city = '—'
+          citySummary = '—'
         }
-      } else {
-        city = '—'
-        citySummary = '—'
       }
-    }
-    // Format total: show seconds if < 1 min, minutes if < 1 hour, otherwise hours and minutes
-    let total = '—'
-    if (totalSeconds > 0) {
-      const totalH = Math.floor(totalSeconds / 3600)
-      const totalM = Math.floor((totalSeconds % 3600) / 60)
-      const totalS = totalSeconds % 60
-      
-      if (totalH > 0) {
-        total = totalM > 0 ? `${totalH}h ${totalM}m` : `${totalH}h`
-      } else if (totalM > 0) {
-        total = `${totalM}m`
-      } else if (totalS > 0) {
-        total = `${totalS}s`
+      // Format total: show seconds if < 1 min, minutes if < 1 hour, otherwise hours and minutes
+      let total = '—'
+      if (totalSeconds > 0) {
+        const totalH = Math.floor(totalSeconds / 3600)
+        const totalM = Math.floor((totalSeconds % 3600) / 60)
+        const totalS = totalSeconds % 60
+        
+        if (totalH > 0) {
+          total = totalM > 0 ? `${totalH}h ${totalM}m` : `${totalH}h`
+        } else if (totalM > 0) {
+          total = `${totalM}m`
+        } else if (totalS > 0) {
+          total = `${totalS}s`
+        } else {
+          total = '0s'
+        }
       } else {
         total = '0s'
       }
-    } else {
-      total = '0s'
-    }
-    // Format planned breaks: show seconds if < 1 min, minutes if < 1 hour, otherwise hours and minutes
-    const breakSeconds = breakMinutes * 60
-    let plannedBreaks = '—'
-    if (breakSeconds > 0) {
-      const breakH = Math.floor(breakSeconds / 3600)
-      const breakM = Math.floor((breakSeconds % 3600) / 60)
-      const breakS = breakSeconds % 60
-      
-      if (breakH > 0) {
-        plannedBreaks = breakM > 0 ? `${breakH}h ${breakM}m` : `${breakH}h`
-      } else if (breakM > 0) {
-        plannedBreaks = `${breakM}m`
-      } else if (breakS > 0) {
-        plannedBreaks = `${breakS}s`
+      // Format planned breaks: show seconds if < 1 min, minutes if < 1 hour, otherwise hours and minutes
+      const breakSeconds = breakMinutes * 60
+      let plannedBreaks = '—'
+      if (breakSeconds > 0) {
+        const breakH = Math.floor(breakSeconds / 3600)
+        const breakM = Math.floor((breakSeconds % 3600) / 60)
+        const breakS = breakSeconds % 60
+        
+        if (breakH > 0) {
+          plannedBreaks = breakM > 0 ? `${breakH}h ${breakM}m` : `${breakH}h`
+        } else if (breakM > 0) {
+          plannedBreaks = `${breakM}m`
+        } else if (breakS > 0) {
+          plannedBreaks = `${breakS}s`
+        } else {
+          plannedBreaks = '0s'
+        }
       } else {
         plannedBreaks = '0s'
       }
-    } else {
-      plannedBreaks = '0s'
-    }
-    return {
-      dateKey,
-      clockIn,
-      clockOut,
-      total,
-      totalMinutes,
-      totalSeconds,
-      plannedBreaks,
-      breakMinutes,
-      modality,
-      city,
-      citySummary,
-      hasMultipleEntries,
-      entryCount,
-      entries: sorted,
-      hasWfhPhoto: !!firstWfhWithPhoto?.wfh_pic_url,
-      firstWfhPhotoPath: firstWfhWithPhoto?.wfh_pic_url ?? null
-    } as DayRow
-  }).filter(row => {
-    // Apply time filter from dropdown
-    if (timeFilter.value === 'all') return true
-    const hours = row.totalSeconds / 3600
-    if (timeFilter.value === 'undertime') return hours < 8
-    if (timeFilter.value === 'enough') return hours >= 7.9 && hours <= 8.1
-    if (timeFilter.value === 'overtime') return hours > 8.1
-    return true
-  })
-})
-
-watch(tableRows, (rows) => {
-  console.log('[Timesheet] tableRows computed', {
-    rowCount: rows.length,
-    rowsWithWfhPhoto: rows.filter((r) => r.hasWfhPhoto).length,
-    firstRows: rows.slice(0, 5).map((r) => ({
-      dateKey: r.dateKey,
-      modality: r.modality,
-      hasWfhPhoto: r.hasWfhPhoto,
-      firstWfhPhotoPath: r.firstWfhPhotoPath
-    }))
-  })
-}, { immediate: true })
-
-// Legacy dayGroups for PDF/Excel (grouped by day with multiple rows per day)
-interface DisplayRow {
-  date: string
-  clockIn: string
-  clockOut: string
-  lunchIn: string
-  lunchOut: string
-  total: string
-  modality: string
-  travel: string
-  branch: string
-  raw: AttendanceRow
-}
-const dayGroups = computed(() => {
-  const map: Record<string, DisplayRow[]> = {}
-  for (const r of filteredRows.value) {
-    const dateKey = r.clock_in ? getLocalDateString(new Date(storedToRealInstant(r.clock_in))) : '—'
-    if (!map[dateKey]) map[dateKey] = []
-    const branch = r.branch_location ? getBranch(r.branch_location) : null
-    map[dateKey].push({
-      date: dateKey,
-      clockIn: formatTime12hApmFromStored(r.clock_in),
-      clockOut: formatTime12hApmFromStored(r.clock_out),
-      lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
-      lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
-      total: formatTotalTime(r.total_time),
-      modality: r.work_modality ? r.work_modality.toLowerCase() : '—',
-      travel: attendanceActivityLabel(r),
-      branch: branch?.name ?? '—',
-      raw: r
-    })
-  }
-  return Object.entries(map)
-    .sort(([a], [b]) => (a === '—' ? 1 : b === '—' ? -1 : new Date(b).getTime() - new Date(a).getTime()))
-    .map(([dateKey, rows]) => {
-      let totalSeconds = 0
-      for (const r of rows) {
-        const t = r.raw.total_time
-        if (t) {
-          const m = t.match(/^(\d+):(\d+):(\d+)/)
-          if (m) totalSeconds += Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
-        }
-      }
-      const totalH = Math.floor(totalSeconds / 3600)
-      const totalM = Math.floor((totalSeconds % 3600) / 60)
-      const dailyTotal = totalH || totalM ? `${totalH}h ${totalM}m` : '0h'
       return {
-        date: dateKey,
-        rows,
-        dailyTotal
-      }
+        dateKey,
+        clockIn,
+        clockOut,
+        lunchIn,
+        lunchOut,
+        total,
+        totalMinutes,
+        totalSeconds,
+        plannedBreaks,
+        breakMinutes,
+        modality,
+        city,
+        citySummary,
+        hasMultipleEntries,
+        entryCount,
+        entries: sorted,
+        hasWfhPhoto: !!firstWfhWithPhoto?.wfh_pic_url,
+        firstWfhPhotoPath: firstWfhWithPhoto?.wfh_pic_url ?? null
+      } as DayRow
+    }).filter(row => {
+      // Apply time filter from dropdown
+      if (timeFilter.value === 'all') return true
+      const hours = row.totalSeconds / 3600
+      if (timeFilter.value === 'undertime') return hours < 8
+      if (timeFilter.value === 'enough') return hours >= 7.9 && hours <= 8.1
+      if (timeFilter.value === 'overtime') return hours > 8.1
+      return true
     })
-})
+  })
 
-const exportRows = computed(() => {
-  const flat: Array<[string, string, string, string, string, string, string, string, string]> = []
-  for (const group of dayGroups.value) {
-    for (const row of group.rows) {
-      flat.push([
-        group.date,
-        row.clockIn,
-        row.clockOut,
-        row.lunchIn,
-        row.lunchOut,
-        row.total,
-        row.modality,
-        row.branch,
-        row.travel
-      ])
+  watch(tableRows, (rows) => {
+    console.log('[Timesheet] tableRows computed', {
+      rowCount: rows.length,
+      rowsWithWfhPhoto: rows.filter((r) => r.hasWfhPhoto).length,
+      firstRows: rows.slice(0, 5).map((r) => ({
+        dateKey: r.dateKey,
+        modality: r.modality,
+        hasWfhPhoto: r.hasWfhPhoto,
+        firstWfhPhotoPath: r.firstWfhPhotoPath
+      }))
+    })
+  }, { immediate: true })
+
+  // Legacy dayGroups for PDF/Excel (grouped by day with multiple rows per day)
+  interface DisplayRow {
+    date: string
+    clockIn: string
+    clockOut: string
+    lunchIn: string
+    lunchOut: string
+    total: string
+    modality: string
+    travel: string
+    branch: string
+    raw: AttendanceRow
+  }
+  const dayGroups = computed(() => {
+    const map: Record<string, DisplayRow[]> = {}
+    for (const r of filteredRows.value) {
+      const dateKey = r.clock_in ? getLocalDateString(new Date(storedToRealInstant(r.clock_in))) : '—'
+      if (!map[dateKey]) map[dateKey] = []
+      const branch = r.branch_location ? getBranch(r.branch_location) : null
+      map[dateKey].push({
+        date: dateKey,
+        clockIn: formatTime12hApmFromStored(r.clock_in),
+        clockOut: formatTime12hApmFromStored(r.clock_out),
+        lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
+        lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
+        total: formatTotalTime(r.total_time),
+        modality: r.work_modality ? r.work_modality.toLowerCase() : '—',
+        travel: attendanceActivityLabel(r),
+        branch: branch?.name ?? '—',
+        raw: r
+      })
     }
-  }
-  return flat
-})
+    return Object.entries(map)
+      .sort(([a], [b]) => (a === '—' ? 1 : b === '—' ? -1 : new Date(b).getTime() - new Date(a).getTime()))
+      .map(([dateKey, rows]) => {
+        let totalSeconds = 0
+        for (const r of rows) {
+          const t = r.raw.total_time
+          if (t) {
+            const m = t.match(/^(\d+):(\d+):(\d+)/)
+            if (m) totalSeconds += Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
+          }
+        }
+        const totalH = Math.floor(totalSeconds / 3600)
+        const totalM = Math.floor((totalSeconds % 3600) / 60)
+        const dailyTotal = totalH || totalM ? `${totalH}h ${totalM}m` : '0h'
+        return {
+          date: dateKey,
+          rows,
+          dailyTotal
+        }
+      })
+  })
 
-async function downloadPDF() {
-  if (!user.value?.id) return
+  const exportRows = computed(() => {
+    const flat: Array<[string, string, string, string, string, string, string, string, string]> = []
+    for (const group of dayGroups.value) {
+      for (const row of group.rows) {
+        flat.push([
+          group.date,
+          row.clockIn,
+          row.clockOut,
+          row.lunchIn,
+          row.lunchOut,
+          row.total,
+          row.modality,
+          row.branch,
+          row.travel
+        ])
+      }
+    }
+    return flat
+  })
 
-  let pcDataUrl: string
-  let twDataUrl: string
-  try {
-    ;[pcDataUrl, twDataUrl] = await Promise.all([
-      loadRoundedLogoDataUrl(publicAssetUrl('PCWorthLogo.jpg')),
-      loadRoundedLogoDataUrl(publicAssetUrl('TimeWorthLogo.png'))
-    ])
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Could not load PDF logos'
-    error.value = msg
-    console.error('PDF logo load:', e)
-    return
-  }
-
-  const tableBody = buildPdfTableBodyFromRows(filteredRows.value)
-  const emp: TimesheetPdfEmp = {
-    id: user.value.id,
-    name: employeeName.value,
-    email: employeeEmail.value ?? user.value.email ?? null,
-    position_in_company: employeePosition.value,
-    employee_no: employeeNo.value
-  }
-  const doc = createTimesheetPdfDocument(
-    emp,
-    tableBody,
-    formatExportTableDateCoveredRange(),
-    pcDataUrl,
-    twDataUrl
-  )
-  const today = new Date().toISOString().slice(0, 10)
-  const nameSlug = safeFileSlug(employeeName.value || user.value.email || 'timesheet')
-  doc.save(`timesheet-${nameSlug}-${today}.pdf`)
-}
-
-function toggleRowExpansion(dateKey: string) {
-  if (expandedRow.value === dateKey) {
-    expandedRow.value = null
-  } else {
-    expandedRow.value = dateKey
-  }
-}
-
-function toLocalDateTimeInput(isoOrNull: string | null): string {
-  if (!isoOrNull) return ''
-  const ms = storedToRealInstant(isoOrNull)
-  const d = new Date(ms)
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  const hours = String(d.getHours()).padStart(2, '0')
-  const mins = String(d.getMinutes()).padStart(2, '0')
-  return `${year}-${month}-${day}T${hours}:${mins}`
-}
-
-/** Keep local wall-time exactly as entered in datetime-local inputs (no UTC shift). */
-function localInputToStoredWallTimeZ(val: string): string | null {
-  if (!val) return null
-  const m = val.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/)
-  if (!m) return null
-  const datePart = m[1]
-  const hh = m[2]
-  const mm = m[3]
-  const ss = m[4] ?? '00'
-  return `${datePart}T${hh}:${mm}:${ss}.000Z`
-}
-
-function openEditModalForEntry(entry: AttendanceRow, dateLabel: string) {
-  if (!entry.attendance_id) return
-  editTargetEntry.value = entry
-  editTargetDateLabel.value = dateLabel
-  editNewClockIn.value = toLocalDateTimeInput(entry.clock_in)
-  editNewClockOut.value = toLocalDateTimeInput(entry.clock_out)
-  editNewLunchStart.value = toLocalDateTimeInput(entry.lunch_break_start)
-  editNewLunchEnd.value = toLocalDateTimeInput(entry.lunch_break_end)
-  editReason.value = ''
-  showEditModal.value = true
-}
-
-function editStatusForEntry(entry: AttendanceRow): 'pending' | 'approved' | 'rejected' | null {
-  const id = entry.attendance_id
-  if (!id) return null
-  return editRequestStatusMap.value[id] ?? null
-}
-
-function hasPendingEditForEntry(entry: AttendanceRow): boolean {
-  return editStatusForEntry(entry) === 'pending'
-}
-
-function editButtonTitleForEntry(entry: AttendanceRow, dateKey: string): string {
-  const st = editStatusForEntry(entry)
-  if (st === 'pending') return 'Edit request pending'
-  if (st === 'approved') return 'Request approved — you can submit another edit'
-  if (st === 'rejected') return 'Request declined — you can submit a new edit'
-  return 'Request edit for this session on ' + dateKey
-}
-
-function closeEditModal() {
-  showEditModal.value = false
-  editTargetEntry.value = null
-}
-
-async function confirmEditRequest() {
-  try {
+  async function downloadPDF() {
     if (!user.value?.id) return
-    const uid = user.value.id
-    if (!editTargetEntry.value) return
-    const target = editTargetEntry.value
-    if (!target.attendance_id) return
 
-    const toIsoOrNull = (val: string): string | null => localInputToStoredWallTimeZ(val)
-
-    const nowIso = new Date().toISOString()
-    const payload = {
-      attendance_id: target.attendance_id,
-      requested_by: uid,
-      old_clock_in: target.clock_in,
-      old_clock_out: target.clock_out,
-      old_lunch_break_start: target.lunch_break_start,
-      old_lunch_break_end: target.lunch_break_end,
-      old_location_in: target.location_in,
-      old_location_out: target.location_out,
-      old_work_modality: target.work_modality,
-      new_clock_in: toIsoOrNull(editNewClockIn.value),
-      new_clock_out: toIsoOrNull(editNewClockOut.value),
-      new_lunch_break_start: toIsoOrNull(editNewLunchStart.value),
-      new_lunch_break_end: toIsoOrNull(editNewLunchEnd.value),
-      new_location_in: null,
-      new_location_out: null,
-      new_work_modality: null,
-      status: 'pending' as const,
-      reason: editReason.value || null,
-      admin_comment: null,
-      reviewed_by: null,
-      reviewed_at: null,
-      updated_at: nowIso
-    }
-
-    const { data: existingList, error: existingErr } = await supabase
-      .from('attendance_edit_requests')
-      .select('id')
-      .eq('attendance_id', target.attendance_id)
-      .eq('requested_by', uid)
-      .order('created_at', { ascending: false })
-      .limit(1)
-
-    if (existingErr) {
-      console.error('Edit request lookup error:', existingErr.message)
-      error.value = existingErr.message
+    let pcDataUrl: string
+    let twDataUrl: string
+    try {
+      ;[pcDataUrl, twDataUrl] = await Promise.all([
+        loadRoundedLogoDataUrl(publicAssetUrl('PCWorthLogo.jpg')),
+        loadRoundedLogoDataUrl(publicAssetUrl('TimeWorthLogo.png'))
+      ])
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not load PDF logos'
+      error.value = msg
+      console.error('PDF logo load:', e)
       return
     }
 
-    const existingId = existingList?.[0]?.id
-
-    async function applyUpdateById(id: string) {
-      return supabase
-        .from('attendance_edit_requests')
-        .update(payload)
-        .eq('id', id)
+    const tableBody = buildPdfTableBodyFromRows(filteredRows.value)
+    const emp: TimesheetPdfEmp = {
+      id: user.value.id,
+      name: employeeName.value,
+      email: employeeEmail.value ?? user.value.email ?? null,
+      position_in_company: employeePosition.value,
+      employee_no: employeeNo.value
     }
+    const doc = createTimesheetPdfDocument(
+      emp,
+      tableBody,
+      formatExportTableDateCoveredRange(),
+      pcDataUrl,
+      twDataUrl
+    )
+    const today = new Date().toISOString().slice(0, 10)
+    const nameSlug = safeFileSlug(employeeName.value || user.value.email || 'timesheet')
+    doc.save(`timesheet-${nameSlug}-${today}.pdf`)
+  }
 
-    /** When a prior request was approved/declined, the same row is reused: pending + new proposed times. */
-    async function applyUpdateByAttendanceKeys() {
-      return supabase
+  function toggleRowExpansion(dateKey: string) {
+    if (expandedRow.value === dateKey) {
+      expandedRow.value = null
+    } else {
+      expandedRow.value = dateKey
+    }
+  }
+
+  function toLocalDateTimeInput(isoOrNull: string | null): string {
+    if (!isoOrNull) return ''
+    const ms = storedToRealInstant(isoOrNull)
+    const d = new Date(ms)
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    const hours = String(d.getHours()).padStart(2, '0')
+    const mins = String(d.getMinutes()).padStart(2, '0')
+    return `${year}-${month}-${day}T${hours}:${mins}`
+  }
+
+  /** Keep local wall-time exactly as entered in datetime-local inputs (no UTC shift). */
+  function localInputToStoredWallTimeZ(val: string): string | null {
+    if (!val) return null
+    const m = val.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/)
+    if (!m) return null
+    const datePart = m[1]
+    const hh = m[2]
+    const mm = m[3]
+    const ss = m[4] ?? '00'
+    return `${datePart}T${hh}:${mm}:${ss}.000Z`
+  }
+
+  function openEditModalForEntry(entry: AttendanceRow, dateLabel: string) {
+    if (!entry.attendance_id) return
+    editTargetEntry.value = entry
+    editTargetDateLabel.value = dateLabel
+    editNewClockIn.value = toLocalDateTimeInput(entry.clock_in)
+    editNewClockOut.value = toLocalDateTimeInput(entry.clock_out)
+    editNewLunchStart.value = toLocalDateTimeInput(entry.lunch_break_start)
+    editNewLunchEnd.value = toLocalDateTimeInput(entry.lunch_break_end)
+    editReason.value = ''
+    showEditModal.value = true
+  }
+
+  function editStatusForEntry(entry: AttendanceRow): 'pending' | 'approved' | 'rejected' | null {
+    const id = entry.attendance_id
+    if (!id) return null
+    return editRequestStatusMap.value[id] ?? null
+  }
+
+  function hasPendingEditForEntry(entry: AttendanceRow): boolean {
+    return editStatusForEntry(entry) === 'pending'
+  }
+
+  function editButtonTitleForEntry(entry: AttendanceRow, dateKey: string): string {
+    const st = editStatusForEntry(entry)
+    if (st === 'pending') return 'Edit request pending'
+    if (st === 'approved') return 'Request approved — you can submit another edit'
+    if (st === 'rejected') return 'Request declined — you can submit a new edit'
+    return 'Request edit for this session on ' + dateKey
+  }
+
+  function closeEditModal() {
+    showEditModal.value = false
+    editTargetEntry.value = null
+  }
+
+  async function confirmEditRequest() {
+    try {
+      if (!user.value?.id) return
+      const uid = user.value.id
+      if (!editTargetEntry.value) return
+      const target = editTargetEntry.value
+      if (!target.attendance_id) return
+
+      const toIsoOrNull = (val: string): string | null => localInputToStoredWallTimeZ(val)
+
+      const nowIso = new Date().toISOString()
+      const payload = {
+        attendance_id: target.attendance_id,
+        requested_by: uid,
+        old_clock_in: target.clock_in,
+        old_clock_out: target.clock_out,
+        old_lunch_break_start: target.lunch_break_start,
+        old_lunch_break_end: target.lunch_break_end,
+        old_location_in: target.location_in,
+        old_location_out: target.location_out,
+        old_work_modality: target.work_modality,
+        new_clock_in: toIsoOrNull(editNewClockIn.value),
+        new_clock_out: toIsoOrNull(editNewClockOut.value),
+        new_lunch_break_start: toIsoOrNull(editNewLunchStart.value),
+        new_lunch_break_end: toIsoOrNull(editNewLunchEnd.value),
+        new_location_in: null,
+        new_location_out: null,
+        new_work_modality: null,
+        status: 'pending' as const,
+        reason: editReason.value || null,
+        admin_comment: null,
+        reviewed_by: null,
+        reviewed_at: null,
+        updated_at: nowIso
+      }
+
+      const { data: existingList, error: existingErr } = await supabase
         .from('attendance_edit_requests')
-        .update(payload)
+        .select('id')
         .eq('attendance_id', target.attendance_id)
         .eq('requested_by', uid)
-    }
+        .order('created_at', { ascending: false })
+        .limit(1)
 
-    if (existingId) {
-      const { error: updateError } = await applyUpdateById(existingId)
-      if (updateError) {
-        console.error('Edit request update error:', updateError.message)
-        error.value = updateError.message
+      if (existingErr) {
+        console.error('Edit request lookup error:', existingErr.message)
+        error.value = existingErr.message
         return
       }
-    } else {
-      const { error: insertError } = await supabase
-        .from('attendance_edit_requests')
-        .insert(payload)
-      if (insertError) {
-        const isDup =
-          insertError.code === '23505' ||
-          /duplicate|unique/i.test(insertError.message ?? '')
-        if (isDup) {
-          const { error: updateError } = await applyUpdateByAttendanceKeys()
-          if (updateError) {
-            console.error('Edit request update-after-duplicate error:', updateError.message)
-            error.value = updateError.message
-            return
-          }
-        } else {
-          console.error('Edit request error:', insertError.message)
-          error.value = insertError.message
+
+      const existingId = existingList?.[0]?.id
+
+      async function applyUpdateById(id: string) {
+        return supabase
+          .from('attendance_edit_requests')
+          .update(payload)
+          .eq('id', id)
+      }
+
+      /** When a prior request was approved/declined, the same row is reused: pending + new proposed times. */
+      async function applyUpdateByAttendanceKeys() {
+        return supabase
+          .from('attendance_edit_requests')
+          .update(payload)
+          .eq('attendance_id', target.attendance_id)
+          .eq('requested_by', uid)
+      }
+
+      if (existingId) {
+        const { error: updateError } = await applyUpdateById(existingId)
+        if (updateError) {
+          console.error('Edit request update error:', updateError.message)
+          error.value = updateError.message
           return
         }
+      } else {
+        const { error: insertError } = await supabase
+          .from('attendance_edit_requests')
+          .insert(payload)
+        if (insertError) {
+          const isDup =
+            insertError.code === '23505' ||
+            /duplicate|unique/i.test(insertError.message ?? '')
+          if (isDup) {
+            const { error: updateError } = await applyUpdateByAttendanceKeys()
+            if (updateError) {
+              console.error('Edit request update-after-duplicate error:', updateError.message)
+              error.value = updateError.message
+              return
+            }
+          } else {
+            console.error('Edit request error:', insertError.message)
+            error.value = insertError.message
+            return
+          }
+        }
       }
-    }
 
-    editRequestStatusMap.value = {
-      ...editRequestStatusMap.value,
-      [target.attendance_id]: 'pending'
-    }
+      editRequestStatusMap.value = {
+        ...editRequestStatusMap.value,
+        [target.attendance_id]: 'pending'
+      }
 
-    closeEditModal()
-  } catch (e) {
-    console.error('Unexpected edit request error:', e)
+      closeEditModal()
+    } catch (e) {
+      console.error('Unexpected edit request error:', e)
+    }
   }
-}
 </script>
 
 <template>
@@ -1461,9 +1494,6 @@ async function confirmEditRequest() {
 
     <div v-else class="card-wrap">
       <div class="table-card">
-        <p v-if="dateFilter === 'custom' && formatDateRange()" class="custom-range-banner">
-          {{ formatDateRange() }}
-        </p>
         <div class="table-scroll">
         <table class="data-table ts-table">
           <thead>
@@ -1559,81 +1589,10 @@ async function confirmEditRequest() {
                 </div>
               </th>
               <th v-if="showTimes" scope="col">Clock In</th>
+              <th v-if="showTimes" scope="col">Lunch In</th>
+              <th v-if="showTimes" scope="col">Lunch Out</th>
               <th v-if="showTimes" scope="col">Clock Out</th>
               <th v-if="showTimes" scope="col">Total Hours</th>
-              <th v-if="showTimes" class="th-in-table-filter" scope="col" @click.stop>
-                <div class="th-filter-wrap">
-                  <span class="th-column-label">
-                    Time
-                    <template v-if="timeFilter !== 'all'">
-                      <span class="th-filter-selection"> · {{ timeFilterLabel }}</span>
-                    </template>
-                  </span>
-                  <div ref="timeFilterTriggerRef" class="ts-filter-trigger-wrap">
-                    <button
-                      type="button"
-                      class="period-btn ts-filter-period-btn"
-                      aria-haspopup="listbox"
-                      :aria-expanded="showTimeFilterDropdown"
-                      :aria-label="`Time filter, ${timeFilterLabel}`"
-                      @click.stop="toggleTimeFilterMenu"
-                    >
-                      <ChevronDownIcon class="ts-period-chevron" aria-hidden="true" />
-                    </button>
-                    <Teleport to="body">
-                      <div
-                        v-if="showTimeFilterDropdown"
-                        class="ts-filter-dropdown-portal period-dropdown"
-                        :style="timeDropdownStyle"
-                        role="listbox"
-                        @click.stop
-                      >
-                        <button
-                          type="button"
-                          class="period-option"
-                          :class="{ active: timeFilter === 'all' }"
-                          role="option"
-                          :aria-selected="timeFilter === 'all'"
-                          @click="selectTimeFilter('all')"
-                        >
-                          All
-                        </button>
-                        <button
-                          type="button"
-                          class="period-option"
-                          :class="{ active: timeFilter === 'undertime' }"
-                          role="option"
-                          :aria-selected="timeFilter === 'undertime'"
-                          @click="selectTimeFilter('undertime')"
-                        >
-                          Undertime
-                        </button>
-                        <button
-                          type="button"
-                          class="period-option"
-                          :class="{ active: timeFilter === 'enough' }"
-                          role="option"
-                          :aria-selected="timeFilter === 'enough'"
-                          @click="selectTimeFilter('enough')"
-                        >
-                          On time
-                        </button>
-                        <button
-                          type="button"
-                          class="period-option"
-                          :class="{ active: timeFilter === 'overtime' }"
-                          role="option"
-                          :aria-selected="timeFilter === 'overtime'"
-                          @click="selectTimeFilter('overtime')"
-                        >
-                          Overtime
-                        </button>
-                      </div>
-                    </Teleport>
-                  </div>
-                </div>
-              </th>
-              <th v-if="showBreaks" scope="col">Planned Breaks</th>
               <th scope="col">Location</th>
               <th class="th-in-table-filter" scope="col" @click.stop>
                 <div class="th-filter-wrap">
@@ -1698,6 +1657,7 @@ async function confirmEditRequest() {
                 </div>
               </th>
               <th scope="col">Output</th>
+              <th scope="col">Photo</th>
               <th scope="col">Edit</th>
             </tr>
           </thead>
@@ -1716,23 +1676,13 @@ async function confirmEditRequest() {
                   </div>
                 </td>
                 <td v-if="showTimes" class="ts-cell">{{ row.clockIn }}</td>
+                <td v-if="showTimes" class="ts-cell">{{ row.lunchIn }}</td>
+                <td v-if="showTimes" class="ts-cell">{{ row.lunchOut }}</td>
                 <td v-if="showTimes" class="ts-cell">{{ row.clockOut }}</td>
                 <td v-if="showTimes" class="ts-cell ts-total">{{ row.total }}</td>
-                <td v-if="showTimes" class="ts-cell ts-time-compliance">{{ timeComplianceLabel(row) }}</td>
-                <td v-if="showBreaks" class="ts-cell">{{ row.plannedBreaks }}</td>
                 <td class="ts-cell">
                   <span v-if="row.hasMultipleEntries && row.citySummary.includes('locations')" class="location-summary">{{ row.citySummary }}</span>
                   <span v-else>{{ row.city }}</span>
-                  <button
-                    v-if="row.hasWfhPhoto"
-                    type="button"
-                    class="wfh-photo-btn"
-                    title="View WFH photo"
-                    aria-label="View WFH photo"
-                    @click.stop="openWfhPhotoModal(row.firstWfhPhotoPath)"
-                  >
-                    <PhotoIcon class="wfh-photo-icon" />
-                  </button>
                 </td>
                 <td class="ts-cell td-muted">
                   <span>{{ row.modality }}</span>
@@ -1744,6 +1694,19 @@ async function confirmEditRequest() {
                   <template v-else>
                     <span class="ts-output-text">{{ row.entries[0]?.output?.trim() || '—' }}</span>
                   </template>
+                </td>
+                <td class="ts-cell">
+                  <button
+                    v-if="row.hasWfhPhoto"
+                    type="button"
+                    class="wfh-photo-btn"
+                    title="View WFH photo"
+                    aria-label="View WFH photo"
+                    @click.stop="openWfhPhotoModal(row.firstWfhPhotoPath)"
+                  >
+                    <PhotoIcon class="wfh-photo-icon" />
+                  </button>
+                  <span v-else class="td-muted">—</span>
                 </td>
                 <td class="ts-cell ts-edit-cell">
                   <div v-if="!row.hasMultipleEntries && row.entries[0]" class="ts-edit-cell-inner">
@@ -1775,6 +1738,7 @@ async function confirmEditRequest() {
                   >
                     Expand
                   </span>
+                  <span v-else class="td-muted">—</span>
                 </td>
               </tr>
               <Transition name="expand">
@@ -1786,14 +1750,50 @@ async function confirmEditRequest() {
                   <td :colspan="timesheetExpandedColspan" class="ts-expanded-content">
                     <div class="ts-expanded-header">All Clock Entries ({{ row.entryCount }})</div>
                     <div class="ts-expanded-entries">
-                      <div
-                        v-for="(entry, idx) in row.entries"
-                        :key="entry.attendance_id || idx"
-                        class="ts-entry-item"
-                      >
-                        <div class="ts-entry-details">
-                          <div class="ts-entry-row ts-entry-header-row">
-                            <span class="ts-entry-session-label">Session {{ idx + 1 }}</span>
+                      <div class="ts-session-grid" aria-label="Clock entry sessions">
+                        <div class="ts-session-head">
+                          <div class="ts-session-th">Date</div>
+                          <div v-if="showTimes" class="ts-session-th">Clock In</div>
+                          <div class="ts-session-th">Lunch In</div>
+                          <div class="ts-session-th">Lunch Out</div>
+                          <div v-if="showTimes" class="ts-session-th">Clock Out</div>
+                          <div v-if="showTimes" class="ts-session-th">Total Hours</div>
+                          <div class="ts-session-th">Location</div>
+                          <div class="ts-session-th">Modality</div>
+                          <div class="ts-session-th">Output</div>
+                          <div class="ts-session-th">Photo</div>
+                          <div class="ts-session-th ts-session-th--action">Edit</div>
+                        </div>
+
+                        <div
+                          v-for="(entry, idx) in row.entries"
+                          :key="entry.attendance_id || idx"
+                          class="ts-session-tr"
+                        >
+                          <div class="ts-session-td ts-session-td--date">{{ row.dateKey }}</div>
+                          <div v-if="showTimes" class="ts-session-td">{{ formatTime12hApmFromStored(entry.clock_in) }}</div>
+                          <div class="ts-session-td">{{ formatTime12hApmFromStored(entry.lunch_break_start) }}</div>
+                          <div class="ts-session-td">{{ formatTime12hApmFromStored(entry.lunch_break_end) }}</div>
+                          <div v-if="showTimes" class="ts-session-td">{{ formatTime12hApmFromStored(entry.clock_out) }}</div>
+                          <div v-if="showTimes" class="ts-session-td">{{ formatTotalTime(entry.total_time) }}</div>
+                          <div class="ts-session-td ts-session-td--location">
+                            <span>{{ extractCity(entry) }}</span>
+                          </div>
+                          <div class="ts-session-td">{{ entry.work_modality === 'office' ? 'Office' : entry.work_modality === 'wfh' ? 'WFH' : '—' }}</div>
+                          <div class="ts-session-td ts-session-td--output">{{ entry.output?.trim() || '—' }}</div>
+                          <div class="ts-session-td ts-session-td--photo">
+                            <button
+                              v-if="entry.work_modality === 'wfh' && entry.wfh_pic_url"
+                              type="button"
+                              class="wfh-photo-btn wfh-photo-btn-inline"
+                              @click.stop="openWfhPhotoModal(entry.wfh_pic_url)"
+                            >
+                              <PhotoIcon class="wfh-photo-icon" />
+                              <span>View</span>
+                            </button>
+                            <span v-else class="td-muted">—</span>
+                          </div>
+                          <div class="ts-session-td ts-session-td--action">
                             <div class="ts-entry-edit-actions">
                               <CheckCircleIcon
                                 v-if="editStatusForEntry(entry) === 'approved'"
@@ -1816,43 +1816,6 @@ async function confirmEditRequest() {
                                 <ClockIcon v-else class="edit-icon pending-icon" />
                               </button>
                             </div>
-                          </div>
-                          <div class="ts-entry-row">
-                            <span class="ts-entry-label">Clock In:</span>
-                            <span class="ts-entry-value">{{ formatTime12hApmFromStored(entry.clock_in) }}</span>
-                            <span class="ts-entry-label">Clock Out:</span>
-                            <span class="ts-entry-value">{{ formatTime12hApmFromStored(entry.clock_out) }}</span>
-                          </div>
-                          <div class="ts-entry-row">
-                            <span class="ts-entry-label">Duration:</span>
-                            <span class="ts-entry-value">{{ formatTotalTime(entry.total_time) }}</span>
-                            <span class="ts-entry-label">Location:</span>
-                            <span class="ts-entry-value">{{ extractCity(entry) }}</span>
-                          </div>
-                          <div class="ts-entry-row">
-                            <span class="ts-entry-label">Modality:</span>
-                            <span class="ts-entry-value">{{ entry.work_modality === 'office' ? 'Office' : entry.work_modality === 'wfh' ? 'WFH' : '—' }}</span>
-                            <span class="ts-entry-label">Break:</span>
-                            <span class="ts-entry-value">{{ lunchMinutes(entry) > 0 ? `${Math.floor(lunchMinutes(entry) / 60)}h ${lunchMinutes(entry) % 60}m` : '—' }}</span>
-                          </div>
-                          <div v-if="entry.work_modality === 'wfh'" class="ts-entry-row">
-                            <span class="ts-entry-label">WFH Photo:</span>
-                            <button
-                              v-if="entry.wfh_pic_url"
-                              type="button"
-                              class="wfh-photo-btn wfh-photo-btn-inline"
-                              @click.stop="openWfhPhotoModal(entry.wfh_pic_url)"
-                            >
-                              <PhotoIcon class="wfh-photo-icon" />
-                              <span>View</span>
-                            </button>
-                            <span v-else class="ts-entry-value">—</span>
-                          </div>
-                          <div class="ts-entry-output-block">
-                            <span class="ts-entry-label">Output</span>
-                            <p class="ts-entry-output-text">
-                              {{ entry.output?.trim() || '—' }}
-                            </p>
                           </div>
                         </div>
                       </div>
@@ -2054,15 +2017,6 @@ async function confirmEditRequest() {
   border-radius: 14px;
   background: var(--bg-secondary);
   overflow: hidden;
-}
-.custom-range-banner {
-  margin: 0;
-  padding: 0.5rem 1rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-tertiary);
 }
 .table-scroll {
   overflow-x: auto;
@@ -2424,12 +2378,6 @@ async function confirmEditRequest() {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
-.ts-edit-expand-hint {
-  font-size: 0.75rem;
-  color: var(--text-secondary, #64748b);
-  font-weight: 500;
-}
-
 .ts-entry-header-row {
   justify-content: space-between;
   align-items: center;
@@ -2455,26 +2403,72 @@ async function confirmEditRequest() {
   padding: 0.2rem 0.35rem;
 }
 
-.ts-entry-details {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+/* Expanded sessions: align to table columns, but look like a "details grid" (not a nested table). */
+.ts-session-grid {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 10px;
 }
-.ts-entry-row {
-  display: flex;
+
+.ts-session-head,
+.ts-session-tr {
+  display: grid;
+  grid-template-columns:
+    100px /* Date */
+    90px /* Clock In */
+    90px /* Lunch In */
+    90px /* Lunch Out */
+    90px /* Clock Out */
+    100px /* Total Hours */
+    140px /* Location */
+    110px /* Modality */
+    minmax(140px, 1fr) /* Output */
+    90px /* Photo */
+    64px; /* Edit */
   align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  font-size: 0.875rem;
+  gap: 0;
+  min-width: 1064px;
 }
-.ts-entry-label {
-  font-weight: 500;
+
+.ts-session-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: transparent;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+
+.ts-session-th {
+  padding: 0.4rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 700;
   color: var(--text-secondary, #475569);
-  min-width: 80px;
+  white-space: nowrap;
 }
-.ts-entry-value {
+
+.ts-session-tr {
+  background: transparent;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+.ts-session-tr:last-child {
+  border-bottom: none;
+}
+
+.ts-session-td {
+  padding: 0.5rem 0.6rem;
+  font-size: 0.8125rem;
   color: var(--text-primary, #1e293b);
-  font-weight: 500;
+  min-width: 0;
+  word-break: break-word;
+}
+.ts-session-td--date {
+  font-weight: 700;
+}
+.ts-session-td--output {
+  white-space: pre-wrap;
+}
+.ts-session-td--action {
+  justify-self: end;
 }
 
 .location-summary {
@@ -2500,42 +2494,6 @@ async function confirmEditRequest() {
   font-size: 0.75rem;
   color: var(--text-secondary, #64748b);
   font-style: italic;
-}
-
-.ts-entry-output-block {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.35rem;
-  width: 100%;
-  margin-top: 0.35rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--border-color, #e2e8f0);
-}
-
-.ts-entry-output-block .ts-entry-label {
-  min-width: 0;
-}
-
-.ts-entry-output-text {
-  margin: 0;
-  font-size: 0.8125rem;
-  line-height: 1.45;
-  color: var(--text-primary, #1e293b);
-  white-space: pre-wrap;
-  word-break: break-word;
-  width: 100%;
-}
-
-.ts-edit-cell {
-  text-align: center;
-}
-
-.ts-edit-cell-inner {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
 }
 
 .edit-status-icon {
@@ -2657,6 +2615,9 @@ async function confirmEditRequest() {
 
 .wfh-photo-btn-inline {
   margin-left: 0;
+  justify-self: start;
+  width: max-content;
+  max-width: 100%;
 }
 
 .wfh-photo-icon {

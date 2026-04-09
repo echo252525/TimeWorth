@@ -9,6 +9,17 @@ const WFH_PICTURE_BUCKET = 'wfh_employee_picture'
 const REGISTERED_FACE_BUCKET = 'registered_user_face'
 
 const { user, getSignedProfileUrl } = useAuth()
+
+/** Each word: first letter uppercase, rest lowercase (as stored in DB). */
+function titleCaseName(s: string): string {
+  const t = s.trim()
+  if (!t) return ''
+  return t
+    .split(/\s+/)
+    .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : ''))
+    .join(' ')
+}
+
 const name = ref('')
 const email = ref('')
 const positionInCompany = ref('')
@@ -651,7 +662,7 @@ async function save() {
     return
   }
 
-  const trimmedName = name.value.trim()
+  const trimmedName = titleCaseName(name.value)
   const trimmedPosition = positionInCompany.value.trim()
   const trimmedEmail = email.value.trim()
   const trimmedEmp = String(employeeNo.value ?? '').trim()
@@ -705,6 +716,7 @@ async function save() {
       if (updateError) throw updateError
     }
 
+    name.value = trimmedName
     success.value = true
     showPersonalInfoForm.value = false
     personalBaseline.value = null

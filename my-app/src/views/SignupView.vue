@@ -56,11 +56,14 @@
     return true
   }
 
-  /** First letter uppercase, rest lowercase (as stored in DB). */
+  /** Each word: first letter uppercase, rest lowercase (as stored in DB). */
   function titleCasePart(s: string): string {
     const t = s.trim()
     if (!t) return ''
-    return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
+    return t
+      .split(/\s+/)
+      .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : ''))
+      .join(' ')
   }
 
   function combineFullName(): string {

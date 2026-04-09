@@ -9,6 +9,16 @@ import { validateEmployeeIdentifier } from '../lib/employeeIdentifierValidation'
 const { user } = useAuth()
 const { isSuperadmin, fetchAdminProfile } = useAdminAuth()
 
+/** Each word: first letter uppercase, rest lowercase (as stored in DB). */
+function titleCaseName(s: string): string {
+  const t = s.trim()
+  if (!t) return ''
+  return t
+    .split(/\s+/)
+    .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : ''))
+    .join(' ')
+}
+
 const name = ref('')
 const employeeid = ref('')
 const positionInCompany = ref('')
@@ -123,7 +133,6 @@ async function loadForm() {
   }
   name.value = p.name ?? ''
   employeeid.value = p.employeeid ?? ''
-  positionInCompany.value = p.position_in_company ?? ''
   email.value = p.email ?? ''
   await syncPicturePreview()
   loading.value = false
@@ -157,9 +166,8 @@ async function saveProfile() {
   saving.value = true
   try {
     const updates = {
-      name: name.value.trim(),
+      name: titleCaseName(name.value),
       employeeid: employeeid.value.trim(),
-      position_in_company: positionInCompany.value.trim(),
       updated_at: new Date().toISOString()
     }
     const { error: updateError } = await supabase.from('admin').update(updates).eq('id', user.value.id)
