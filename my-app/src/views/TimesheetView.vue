@@ -217,6 +217,10 @@
   const wfhPhotoModalLoading = ref(false)
   const wfhPhotoModalError = ref<string | null>(null)
 
+  const showOutputModal = ref(false)
+  const outputModalText = ref<string>('')
+  const outputModalTitle = ref<string>('Output')
+
   /** Latest edit-request status per attendance_id for the current user */
   const editRequestStatusMap = ref<Record<string, 'pending' | 'approved' | 'rejected'>>({})
 
@@ -259,6 +263,17 @@
     showWfhPhotoModal.value = false
     wfhPhotoModalUrl.value = null
     wfhPhotoModalError.value = null
+  }
+
+  function openOutputModal(text: string, title = 'Output') {
+    outputModalText.value = text
+    outputModalTitle.value = title
+    showOutputModal.value = true
+  }
+
+  function closeOutputModal() {
+    showOutputModal.value = false
+    outputModalText.value = ''
   }
 
   function getDateRange() {
@@ -1755,7 +1770,14 @@
                     <span class="ts-output-hint">Tap to view</span>
                   </template>
                   <template v-else>
-                    <span class="ts-output-text">{{ row.entries[0]?.output?.trim() || '—' }}</span>
+                    <button
+                      type="button"
+                      class="ts-output-preview"
+                      :disabled="!(row.entries[0]?.output?.trim())"
+                      @click.stop="row.entries[0]?.output?.trim() && openOutputModal(row.entries[0].output.trim(), `Output · ${row.dateKey}`)"
+                    >
+                      <span class="ts-output-text">{{ row.entries[0]?.output?.trim() || '—' }}</span>
+                    </button>
                   </template>
                 </td>
                 <td class="ts-cell">
@@ -1829,7 +1851,16 @@
                   <td v-if="showTimes" class="ts-cell ts-total">{{ formatTotalTime(entry.total_time) }}</td>
                   <td class="ts-cell">{{ extractCity(entry) }}</td>
                   <td class="ts-cell td-muted">{{ entry.work_modality === 'office' ? 'Office' : entry.work_modality === 'wfh' ? 'WFH' : '—' }}</td>
-                  <td class="ts-cell ts-output-cell td-muted">{{ entry.output?.trim() || '—' }}</td>
+                  <td class="ts-cell ts-output-cell td-muted">
+                    <button
+                      type="button"
+                      class="ts-output-preview"
+                      :disabled="!(entry.output?.trim())"
+                      @click.stop="entry.output?.trim() && openOutputModal(entry.output.trim(), `Output · ${row.dateKey} · Session ${idx + 1}`)"
+                    >
+                      <span class="ts-output-text">{{ entry.output?.trim() || '—' }}</span>
+                    </button>
+                  </td>
                   <td class="ts-cell">
                     <button
                       v-if="entry.work_modality === 'wfh' && entry.wfh_pic_url"
@@ -1984,6 +2015,18 @@
           <p v-if="wfhPhotoModalLoading" class="muted">Loading photo…</p>
           <p v-else-if="wfhPhotoModalError" class="error">{{ wfhPhotoModalError }}</p>
           <img v-else-if="wfhPhotoModalUrl" :src="wfhPhotoModalUrl" alt="WFH uploaded proof" class="wfh-photo-modal-image" />
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showOutputModal" class="modal-overlay" @click.self="closeOutputModal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 class="modal-title">{{ outputModalTitle }}</h3>
+          <button type="button" class="modal-close" @click="closeOutputModal" aria-label="Close">×</button>
+        </div>
+        <div class="modal-body">
+          <p class="output-modal-text">{{ outputModalText || '—' }}</p>
         </div>
       </div>
     </div>
@@ -2489,14 +2532,36 @@
   display: block;
   font-size: 0.8125rem;
   line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ts-output-hint {
   font-size: 0.75rem;
   color: var(--text-secondary, #64748b);
   font-style: italic;
+}
+
+.ts-output-preview {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.ts-output-preview:disabled {
+  cursor: default;
+}
+
+.output-modal-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+  line-height: 1.5;
 }
 
 .edit-status-icon {
