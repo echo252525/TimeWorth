@@ -1160,7 +1160,10 @@
   }
 
   /** Colspan for expanded detail row (all columns after Date). */
-  const timesheetColCount = computed(() => 1 + (showTimes.value ? 5 : 0) + 5)
+  const timesheetColCount = computed(() => {
+    const timeCols = showTimes.value ? (showBreaks.value ? 5 : 3) : 0
+    return 1 + timeCols + 5
+  })
 
   // Get all unique dates from filtered rows (local date for correct grouping)
   const allDates = computed(() => {
@@ -1772,8 +1775,8 @@
                 </div>
               </th>
               <th v-if="showTimes" scope="col">Clock In</th>
-              <th v-if="showTimes" scope="col">Lunch In</th>
-              <th v-if="showTimes" scope="col">Lunch Out</th>
+              <th v-if="showTimes && showBreaks" scope="col">Lunch In</th>
+              <th v-if="showTimes && showBreaks" scope="col">Lunch Out</th>
               <th v-if="showTimes" scope="col">Clock Out</th>
               <th v-if="showTimes" scope="col">Total Hours</th>
               <th scope="col">Location</th>
@@ -1859,8 +1862,8 @@
                   </div>
                 </td>
                 <td v-if="showTimes" class="ts-cell">{{ row.clockIn }}</td>
-                <td v-if="showTimes" class="ts-cell">{{ row.lunchIn }}</td>
-                <td v-if="showTimes" class="ts-cell">{{ row.lunchOut }}</td>
+                <td v-if="showTimes && showBreaks" class="ts-cell">{{ row.lunchIn }}</td>
+                <td v-if="showTimes && showBreaks" class="ts-cell">{{ row.lunchOut }}</td>
                 <td v-if="showTimes" class="ts-cell">{{ row.clockOut }}</td>
                 <td v-if="showTimes" class="ts-cell ts-total">{{ row.total }}</td>
                 <td class="ts-cell">
@@ -1940,8 +1943,8 @@
                     </div>
                   </td>
                   <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.clock_in) }}</td>
-                  <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.lunch_break_start) }}</td>
-                  <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.lunch_break_end) }}</td>
+                  <td v-if="showTimes && showBreaks" class="ts-cell">{{ formatTime12hApmFromStored(entry.lunch_break_start) }}</td>
+                  <td v-if="showTimes && showBreaks" class="ts-cell">{{ formatTime12hApmFromStored(entry.lunch_break_end) }}</td>
                   <td v-if="showTimes" class="ts-cell">{{ formatClockOutWithNextDay(entry.clock_in, entry.clock_out) }}</td>
                   <td v-if="showTimes" class="ts-cell ts-total">{{ formatTotalForAttendanceRow(entry) }}</td>
                   <td class="ts-cell">{{ extractCity(entry) }}</td>
@@ -2001,9 +2004,9 @@
           <span class="filter-check-label">Show time columns</span>
         </label>
         <label class="filter-check">
-          <input v-model="showBreaks" type="checkbox" class="filter-check-input" />
+          <input v-model="showBreaks" :disabled="!showTimes" type="checkbox" class="filter-check-input" />
           <span class="filter-check-box"></span>
-          <span class="filter-check-label">Show breaks</span>
+          <span class="filter-check-label">Show lunch columns</span>
         </label>
       </div>
       <button type="button" class="btn btn-primary" :disabled="!dayGroups.length" @click="downloadPDF">
