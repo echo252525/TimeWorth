@@ -107,39 +107,48 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section id="how-it-works" class="page-section how-it-works" aria-labelledby="how-it-works-heading">
-      <div class="page-inner">
-        <h2 id="how-it-works-heading" class="section-title how-title">How does TimeWorth work?</h2>
-        <p class="how-lead">
-          TimeWorth checks your location and your identity before you can clock in. Follow these three steps when you arrive at the office.
+    <section id="how-it-works" class="how-process" aria-labelledby="how-it-works-heading">
+      <div class="how-process-inner">
+        <h2 id="how-it-works-heading" class="how-process-title">How does TimeWorth work?</h2>
+        <p class="how-process-lead">
+          Create your account, get approved, then clock in—on-site or from home.
         </p>
-        <div class="how-steps">
-          <article class="how-step">
-            <div class="how-step-icon" aria-hidden="true">
-              <span class="material-symbols-outlined">smartphone</span>
+        <div class="how-process-grid" role="list">
+          <article class="how-process-step" role="listitem">
+            <div class="how-process-icon-ring" aria-hidden="true">
+              <span class="material-symbols-outlined">person_add</span>
             </div>
-            <p class="how-step-label">Step 1</p>
-            <p class="how-step-text">Open TimeWorth on your phone and make sure GPS is on so the app can confirm you are inside the designated geofence.</p>
+            <h3 class="how-process-step-title">1. Create Account</h3>
+            <p class="how-process-step-desc">
+              Register, confirm your email, and wait for an admin to approve your account before you log in.
+            </p>
           </article>
-          <div class="how-arrow" aria-hidden="true">
-            <span class="material-symbols-outlined">arrow_forward</span>
-          </div>
-          <article class="how-step">
-            <div class="how-step-icon" aria-hidden="true">
-              <span class="material-symbols-outlined">face</span>
+          <article class="how-process-step" role="listitem">
+            <div class="how-process-icon-ring" aria-hidden="true">
+              <span class="material-symbols-outlined">touch_app</span>
             </div>
-            <p class="how-step-label">Step 2</p>
-            <p class="how-step-text">At the entrance, scan your face so facial recognition can verify that you are the registered employee.</p>
+            <h3 class="how-process-step-title">2. Choose Modality</h3>
+            <p class="how-process-step-desc">
+              Open the Timeclock page or tap <strong>Open Timeclock</strong> on the Dashboard, then choose <strong>Office</strong> or <strong>WFH</strong>.
+            </p>
           </article>
-          <div class="how-arrow" aria-hidden="true">
-            <span class="material-symbols-outlined">arrow_forward</span>
-          </div>
-          <article class="how-step">
-            <div class="how-step-icon" aria-hidden="true">
-              <span class="material-symbols-outlined">task_alt</span>
+          <article class="how-process-step" role="listitem">
+            <div class="how-process-icon-ring" aria-hidden="true">
+              <span class="material-symbols-outlined">familiar_face_and_zone</span>
             </div>
-            <p class="how-step-label">Step 3</p>
-            <p class="how-step-text">When both checks pass, complete clock-in. Your attendance is recorded securely for the day.</p>
+            <h3 class="how-process-step-title">3. Office</h3>
+            <p class="how-process-step-desc">
+              Stay inside the geofence to clock in and out. Scan your face at the office for both clock in and clock out.
+            </p>
+          </article>
+          <article class="how-process-step" role="listitem">
+            <div class="how-process-icon-ring" aria-hidden="true">
+              <span class="material-symbols-outlined">home_work</span>
+            </div>
+            <h3 class="how-process-step-title">4. WFH</h3>
+            <p class="how-process-step-desc">
+              Upload a photo before clocking in. Submit an accomplishment report before you can clock out.
+            </p>
           </article>
         </div>
       </div>
@@ -530,120 +539,126 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 
-.how-it-works {
-  background: var(--landing-section-soft);
+/* “Our Process” style: solid band, white type, circular icon rings */
+.how-process {
+  /* Blend with the rest of the landing page */
+  --how-process-fg: var(--landing-text);
+  background: transparent;
+  color: var(--how-process-fg);
+  padding: clamp(3rem, 10vw, 5rem) clamp(1.5rem, 5vw, 3rem);
+  border-top: 1px solid var(--landing-border);
 }
 
-.how-title {
+.how-process-inner {
+  max-width: 1200px;
+  margin: 0 auto;
   text-align: center;
-  width: 100%;
 }
 
-.how-lead {
-  margin: 0 auto 2.5rem;
-  text-align: center;
+.how-process-title {
+  margin: 0 0 0.65rem;
+  font-size: clamp(1.65rem, 4vw, 2.25rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--how-process-fg);
+}
+
+.how-process-lead {
+  margin: 0 auto 2.25rem;
+  max-width: 42rem;
+  font-size: clamp(0.95rem, 2vw, 1.0625rem);
+  line-height: 1.55;
   color: var(--landing-muted);
-  font-size: clamp(0.9375rem, 2vw, 1.0625rem);
-  line-height: 1.65;
-  max-width: min(36rem, 90%);
+  font-weight: 400;
 }
 
-.how-steps {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.25rem;
-}
-
-.how-step {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+.how-process-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem 1.5rem;
+  align-items: start;
   text-align: center;
-  max-width: 22rem;
-  width: 100%;
-  min-height: 230px;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  padding: 0.9rem 0.85rem;
-  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 }
 
-.how-step:hover {
-  transform: translateY(-3px);
-  background: var(--landing-surface);
-  border-color: var(--landing-accent-border);
+@media (min-width: 560px) {
+  .how-process-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-.how-step-icon {
-  margin-bottom: 0.5rem;
-  line-height: 0;
+@media (min-width: 960px) {
+  .how-process-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1.25rem 1.75rem;
+  }
+}
+
+.how-process-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 0.35rem;
+  transform: translateZ(0);
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.how-process-step:hover {
+  transform: scale(1.07);
+}
+
+.how-process-step:hover .how-process-icon-ring {
+  border-color: color-mix(in srgb, var(--accent) 85%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .how-process-step {
+    transition: none;
+  }
+  .how-process-step:hover {
+    transform: none;
+  }
+}
+
+.how-process-icon-ring {
+  width: 5.5rem;
+  height: 5.5rem;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
+  margin-bottom: 1.1rem;
+  flex-shrink: 0;
+  transition: border-color 180ms ease;
 }
 
-.how-step-icon .material-symbols-outlined {
-  font-size: 3rem;
-  color: var(--landing-subheading);
+.how-process-icon-ring .material-symbols-outlined {
+  font-size: 2.35rem;
+  color: var(--accent);
   font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 48;
 }
 
-.how-step-label {
-  margin: 0 0 0.5rem;
-  font-size: 0.8125rem;
+.how-process-step-title {
+  margin: 0 0 0.55rem;
+  font-size: clamp(1rem, 2.2vw, 1.125rem);
   font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--landing-heading);
+  line-height: 1.25;
 }
 
-.how-step-text {
+.how-process-step-desc {
   margin: 0;
   font-size: 0.875rem;
-  color: var(--landing-muted);
   line-height: 1.55;
-}
-
-.how-arrow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-style: italic;
   color: var(--landing-muted);
-  flex-shrink: 0;
+  max-width: 22rem;
 }
 
-.how-arrow .material-symbols-outlined {
-  font-size: 1.75rem;
-}
-
-@media (max-width: 899px) {
-  .how-arrow .material-symbols-outlined {
-    transform: rotate(90deg);
-  }
-}
-
-@media (min-width: 900px) {
-  .how-steps {
-    flex-direction: row;
-    flex-wrap: nowrap;
-    justify-content: center;
-    align-items: stretch;
-    gap: 0.75rem 1rem;
-  }
-
-  .how-step {
-    flex: 1 1 0;
-    min-width: 0;
-    max-width: none;
-    min-height: 250px;
-  }
-
-  .how-arrow {
-    align-self: center;
-    padding: 0 0.25rem;
-  }
+.how-process-step-desc strong {
+  color: var(--landing-heading);
+  font-weight: 600;
+  font-style: italic;
 }
 
 .thesis-credits {
