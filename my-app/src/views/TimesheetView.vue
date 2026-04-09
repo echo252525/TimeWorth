@@ -228,6 +228,7 @@
   const editRequestStatusMap = ref<Record<string, 'pending' | 'approved' | 'rejected'>>({})
 
   const EDIT_APPROVED_SEEN_KEY = 'tw:timesheet:edit-approved-seen:v1'
+  const EDIT_REJECTED_SEEN_KEY = 'tw:timesheet:edit-rejected-seen:v1'
 
   function getApprovedSeenMap(): Record<string, true> {
     try {
@@ -249,7 +250,27 @@
     }
   }
 
-  function approvedSeenKeyForAttendance(attendanceId: string): string {
+  function getRejectedSeenMap(): Record<string, true> {
+    try {
+      const raw = localStorage.getItem(EDIT_REJECTED_SEEN_KEY)
+      if (!raw) return {}
+      const parsed = JSON.parse(raw) as unknown
+      if (!parsed || typeof parsed !== 'object') return {}
+      return parsed as Record<string, true>
+    } catch {
+      return {}
+    }
+  }
+
+  function setRejectedSeenMap(map: Record<string, true>) {
+    try {
+      localStorage.setItem(EDIT_REJECTED_SEEN_KEY, JSON.stringify(map))
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  function editSeenKeyForAttendance(attendanceId: string): string {
     const uid = user.value?.id || 'anon'
     return `${uid}:${attendanceId}`
   }
@@ -261,7 +282,7 @@
         .filter(([, st]) => st === 'approved')
         .map(([aid]) => aid)
 
-      const unseenApproved = approvedAttendanceIds.filter((aid) => !seen[approvedSeenKeyForAttendance(aid)])
+      const unseenApproved = approvedAttendanceIds.filter((aid) => !seen[editSeenKeyForAttendance(aid)])
       if (!unseenApproved.length) return
 
       await Swal.fire({
@@ -273,11 +294,38 @@
       })
 
       for (const aid of unseenApproved) {
-        seen[approvedSeenKeyForAttendance(aid)] = true
+        seen[editSeenKeyForAttendance(aid)] = true
       }
       setApprovedSeenMap(seen)
     } catch (e) {
       console.warn('[Timesheet] approval notification error', e)
+    }
+  }
+
+  async function maybeNotifyRejectedEditRequests() {
+    try {
+      const seen = getRejectedSeenMap()
+      const rejectedAttendanceIds = Object.entries(editRequestStatusMap.value)
+        .filter(([, st]) => st === 'rejected')
+        .map(([aid]) => aid)
+
+      const unseenRejected = rejectedAttendanceIds.filter((aid) => !seen[editSeenKeyForAttendance(aid)])
+      if (!unseenRejected.length) return
+
+      await Swal.fire({
+        icon: 'error',
+        title: 'Your edit request has been denied',
+        confirmButtonText: 'Okay',
+        allowOutsideClick: true,
+        allowEscapeKey: true
+      })
+
+      for (const aid of unseenRejected) {
+        seen[editSeenKeyForAttendance(aid)] = true
+      }
+      setRejectedSeenMap(seen)
+    } catch (e) {
+      console.warn('[Timesheet] denial notification error', e)
     }
   }
 
@@ -568,6 +616,7 @@
       }
       editRequestStatusMap.value = map
       await maybeNotifyApprovedEditRequests()
+      await maybeNotifyRejectedEditRequests()
     } catch (e) {
       console.error('Unexpected edit status load error:', e)
     }
