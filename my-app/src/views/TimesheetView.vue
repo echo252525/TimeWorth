@@ -5,6 +5,8 @@
   import supabase from '../lib/supabaseClient'
   import { user } from '../composables/useAuth'
   import { isTravelFlagged, getBranch, parseLocation, getLocalDateString, storedToRealInstant, type AttendanceRow, type WorkModality } from '../composables/useAttendance'
+  import Swal from 'sweetalert2'
+  import 'sweetalert2/dist/sweetalert2.min.css'
   import {
     ClockIcon,
     PencilSquareIcon,
@@ -204,6 +206,7 @@
   const editNewClockOut = ref<string>('')
   const editNewLunchStart = ref<string>('')
   const editNewLunchEnd = ref<string>('')
+  const editBaseDate = ref<string>('') // YYYY-MM-DD (local)
   const editReason = ref<string>('')
 
   // City cache for reverse geocoded locations
@@ -223,6 +226,60 @@
 
   /** Latest edit-request status per attendance_id for the current user */
   const editRequestStatusMap = ref<Record<string, 'pending' | 'approved' | 'rejected'>>({})
+
+  const EDIT_APPROVED_SEEN_KEY = 'tw:timesheet:edit-approved-seen:v1'
+
+  function getApprovedSeenMap(): Record<string, true> {
+    try {
+      const raw = localStorage.getItem(EDIT_APPROVED_SEEN_KEY)
+      if (!raw) return {}
+      const parsed = JSON.parse(raw) as unknown
+      if (!parsed || typeof parsed !== 'object') return {}
+      return parsed as Record<string, true>
+    } catch {
+      return {}
+    }
+  }
+
+  function setApprovedSeenMap(map: Record<string, true>) {
+    try {
+      localStorage.setItem(EDIT_APPROVED_SEEN_KEY, JSON.stringify(map))
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  function approvedSeenKeyForAttendance(attendanceId: string): string {
+    const uid = user.value?.id || 'anon'
+    return `${uid}:${attendanceId}`
+  }
+
+  async function maybeNotifyApprovedEditRequests() {
+    try {
+      const seen = getApprovedSeenMap()
+      const approvedAttendanceIds = Object.entries(editRequestStatusMap.value)
+        .filter(([, st]) => st === 'approved')
+        .map(([aid]) => aid)
+
+      const unseenApproved = approvedAttendanceIds.filter((aid) => !seen[approvedSeenKeyForAttendance(aid)])
+      if (!unseenApproved.length) return
+
+      await Swal.fire({
+        icon: 'success',
+        title: 'Your edit request has been approved',
+        confirmButtonText: 'Okay',
+        allowOutsideClick: true,
+        allowEscapeKey: true
+      })
+
+      for (const aid of unseenApproved) {
+        seen[approvedSeenKeyForAttendance(aid)] = true
+      }
+      setApprovedSeenMap(seen)
+    } catch (e) {
+      console.warn('[Timesheet] approval notification error', e)
+    }
+  }
 
   async function openWfhPhotoModal(pathOrUrl: string | null) {
     console.log('[Timesheet] openWfhPhotoModal called', { pathOrUrl })
@@ -510,6 +567,7 @@
         if (st) map[aid] = st
       }
       editRequestStatusMap.value = map
+      await maybeNotifyApprovedEditRequests()
     } catch (e) {
       console.error('Unexpected edit status load error:', e)
     }
@@ -1420,15 +1478,37 @@
     return `${datePart}T${hh}:${mm}:${ss}.000Z`
   }
 
+  function toLocalTimeInput(isoOrNull: string | null): string {
+    if (!isoOrNull) return ''
+    const ms = storedToRealInstant(isoOrNull)
+    const d = new Date(ms)
+    const hours = String(d.getHours()).padStart(2, '0')
+    const mins = String(d.getMinutes()).padStart(2, '0')
+    return `${hours}:${mins}`
+  }
+
+  function localTimeToStoredWallTimeZ(baseDate: string, time: string): string | null {
+    if (!baseDate || !time) return null
+    const m = time.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/)
+    if (!m) return null
+    const hh = m[1]
+    const mm = m[2]
+    const ss = m[3] ?? '00'
+    return `${baseDate}T${hh}:${mm}:${ss}.000Z`
+  }
+
   function openEditModalForEntry(entry: AttendanceRow, dateLabel: string) {
     if (!entry.attendance_id) return
     editTargetEntry.value = entry
     editTargetDateLabel.value = dateLabel
-    editNewClockIn.value = toLocalDateTimeInput(entry.clock_in)
-    editNewClockOut.value = toLocalDateTimeInput(entry.clock_out)
-    editNewLunchStart.value = toLocalDateTimeInput(entry.lunch_break_start)
-    editNewLunchEnd.value = toLocalDateTimeInput(entry.lunch_break_end)
-    editReason.value = ''
+    const baseMs = storedToRealInstant(entry.clock_in ?? entry.created_at)
+    const base = new Date(baseMs)
+    editBaseDate.value = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`
+    editNewClockIn.value = toLocalTimeInput(entry.clock_in)
+    editNewClockOut.value = toLocalTimeInput(entry.clock_out)
+    editNewLunchStart.value = toLocalTimeInput(entry.lunch_break_start)
+    editNewLunchEnd.value = toLocalTimeInput(entry.lunch_break_end)
+    editReason.value = 'Update attendance times'
     showEditModal.value = true
   }
 
@@ -1463,7 +1543,7 @@
       const target = editTargetEntry.value
       if (!target.attendance_id) return
 
-      const toIsoOrNull = (val: string): string | null => localInputToStoredWallTimeZ(val)
+      const toIsoOrNull = (val: string): string | null => localTimeToStoredWallTimeZ(editBaseDate.value, val)
 
       const nowIso = new Date().toISOString()
       const payload = {
@@ -1796,16 +1876,6 @@
                 </td>
                 <td class="ts-cell ts-edit-cell">
                   <div v-if="!row.hasMultipleEntries && row.entries[0]" class="ts-edit-cell-inner">
-                    <CheckCircleIcon
-                      v-if="editStatusForEntry(row.entries[0]) === 'approved'"
-                      class="edit-status-icon edit-status-approved"
-                      aria-hidden="true"
-                    />
-                    <XMarkIcon
-                      v-else-if="editStatusForEntry(row.entries[0]) === 'rejected'"
-                      class="edit-status-icon edit-status-declined"
-                      aria-hidden="true"
-                    />
                     <button
                       type="button"
                       class="edit-btn"
@@ -1876,16 +1946,6 @@
                   </td>
                   <td class="ts-cell ts-edit-cell">
                     <div class="ts-edit-cell-inner">
-                      <CheckCircleIcon
-                        v-if="editStatusForEntry(entry) === 'approved'"
-                        class="edit-status-icon edit-status-approved"
-                        aria-hidden="true"
-                      />
-                      <XMarkIcon
-                        v-else-if="editStatusForEntry(entry) === 'rejected'"
-                        class="edit-status-icon edit-status-declined"
-                        aria-hidden="true"
-                      />
                       <button
                         type="button"
                         class="edit-btn edit-btn-entry"
@@ -1966,19 +2026,19 @@
           <div class="date-picker-group">
             <label class="date-picker-label">
               <span>New Clock In</span>
-              <input v-model="editNewClockIn" type="datetime-local" class="date-picker-input" />
+              <input v-model="editNewClockIn" type="time" class="date-picker-input" />
             </label>
             <label class="date-picker-label">
               <span>New Clock Out</span>
-              <input v-model="editNewClockOut" type="datetime-local" class="date-picker-input" />
+              <input v-model="editNewClockOut" type="time" class="date-picker-input" />
             </label>
             <label class="date-picker-label">
               <span>New Lunch Break Start</span>
-              <input v-model="editNewLunchStart" type="datetime-local" class="date-picker-input" />
+              <input v-model="editNewLunchStart" type="time" class="date-picker-input" />
             </label>
             <label class="date-picker-label">
               <span>New Lunch Break End</span>
-              <input v-model="editNewLunchEnd" type="datetime-local" class="date-picker-input" />
+              <input v-model="editNewLunchEnd" type="time" class="date-picker-input" />
             </label>
             <label class="date-picker-label">
               <span>Reason for change</span>
@@ -1986,7 +2046,9 @@
                 v-model="editReason"
                 rows="3"
                 class="date-picker-textarea"
-                placeholder="Explain why this attendance needs to be edited"
+                placeholder="Reason is set automatically."
+                readonly
+                aria-readonly="true"
               />
             </label>
           </div>
@@ -1997,7 +2059,7 @@
             type="button"
             class="btn btn-primary"
             @click="confirmEditRequest"
-            :disabled="!editNewClockIn && !editNewClockOut && !editNewLunchStart && !editNewLunchEnd && !editReason"
+            :disabled="!editNewClockIn && !editNewClockOut && !editNewLunchStart && !editNewLunchEnd"
           >
             Confirm
           </button>

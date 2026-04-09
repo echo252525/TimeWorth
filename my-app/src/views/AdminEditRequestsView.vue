@@ -380,6 +380,8 @@ onUnmounted(() => {
               </th>
               <th scope="col">Previous (in → out)</th>
               <th scope="col">Requested (in → out)</th>
+              <th scope="col">Previous lunch (start → end)</th>
+              <th scope="col">Requested lunch (start → end)</th>
               <th scope="col">Modality</th>
               <th scope="col">Reason</th>
               <th scope="col" class="th-actions">Actions</th>
@@ -397,6 +399,8 @@ onUnmounted(() => {
               </td>
               <td class="td-muted cell-compact">{{ shortRange(r.old_clock_in, r.old_clock_out) }}</td>
               <td class="td-muted cell-compact">{{ shortRange(r.new_clock_in, r.new_clock_out) }}</td>
+              <td class="td-muted cell-compact">{{ shortRange(r.old_lunch_break_start, r.old_lunch_break_end) }}</td>
+              <td class="td-muted cell-compact">{{ shortRange(r.new_lunch_break_start, r.new_lunch_break_end) }}</td>
               <td class="td-muted">
                 <span v-if="r.old_work_modality || r.new_work_modality">
                   {{ r.old_work_modality ?? '—' }} → {{ r.new_work_modality ?? '—' }}
