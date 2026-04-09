@@ -208,6 +208,9 @@
 
   // City cache for reverse geocoded locations
   const cityCache = ref<Record<string, string>>({})
+  const addressCache = ref<Record<string, string>>({})
+  const addressInFlight: Partial<Record<string, Promise<string | null>>> = {}
+  const ADDRESS_CACHE_KEY = 'tw:geocode:address:v1'
   const WFH_PICTURE_BUCKET = 'wfh_employee_picture'
   const showWfhPhotoModal = ref(false)
   const wfhPhotoModalUrl = ref<string | null>(null)
@@ -798,28 +801,52 @@
     return doc
   }
 
+  // (Address caching kept for backward compatibility; UI uses city only.)
+
+  function localityFromNominatim(data: any): string | null {
+    const addr = data?.address
+    if (!addr || typeof addr !== 'object') return null
+    const locality = addr.municipality || addr.city || null
+    return locality ? String(locality) : null
+  }
+
   async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
     const key = `${lat.toFixed(6)},${lng.toFixed(6)}`
     if (cityCache.value[key]) return cityCache.value[key]
+    if (addressInFlight[key]) return await addressInFlight[key]!
+    addressInFlight[key] = (async () => {
     try {
+      const controller = new AbortController()
+      const timeoutId = window.setTimeout(() => controller.abort(), 8000)
       const res = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-        { headers: { 'Accept-Language': 'en', 'User-Agent': 'TimeWorthApp/1.0' } }
-      )
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=jsonv2&zoom=18&addressdetails=1`,
+        { headers: { 'Accept-Language': 'en' }, signal: controller.signal }
+      ).finally(() => window.clearTimeout(timeoutId))
       const data = await res.json()
       const addr = data?.display_name ?? null
       if (addr) {
-        // Extract city from address
-        const city = extractCityFromAddress(addr)
-        if (city) {
-          cityCache.value[key] = city
-          return city
+        // Cache "locality" (specific place + city/region when available).
+        const locality = localityFromNominatim(data)
+        if (locality) {
+          cityCache.value[key] = locality
+          return locality
         }
+        const fallbackCity = extractCityFromAddress(String(addr))
+        if (fallbackCity) {
+          cityCache.value[key] = fallbackCity
+          return fallbackCity
+        }
+        return null
       }
       return null
-    } catch {
+    } catch (e) {
+      console.warn('[Timesheet] reverseGeocode failed', { lat, lng, error: e })
       return null
+    } finally {
+      delete addressInFlight[key]
     }
+    })()
+    return await addressInFlight[key]!
   }
 
   function extractCityFromAddress(address: string): string | null {
@@ -843,6 +870,49 @@
   }
 
   function extractCity(attendanceRow: AttendanceRow): string {
+    const out = (attendanceRow.location_out || '').trim()
+    const inn = (attendanceRow.location_in || '').trim()
+
+    // Prefer stored attendance locations when available.
+    // These come directly from Supabase `attendance.location_in/location_out`.
+    function parseLocationLoose(s: string): { lat: number; lng: number } | null {
+      const t = s.trim()
+      if (!t) return null
+      // Most common: "lat,lng"
+      const simple = t.split(',').map((x) => Number(String(x).trim()))
+      if (simple.length >= 2 && Number.isFinite(simple[0]) && Number.isFinite(simple[1])) {
+        const lat0 = simple[0]
+        const lng0 = simple[1]
+        if (Math.abs(lat0) <= 90 && Math.abs(lng0) <= 180) return { lat: lat0, lng: lng0 }
+        if (Math.abs(lng0) <= 90 && Math.abs(lat0) <= 180) return { lat: lng0, lng: lat0 }
+      }
+      // Fallback: extract 2 numbers from any string (e.g. "POINT(lng lat)" or JSON)
+      const nums = t.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? []
+      if (nums.length < 2) return null
+      const a = nums[0]
+      const b = nums[1]
+      if (Number.isFinite(a) && Number.isFinite(b)) {
+        if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b }
+        if (Math.abs(b) <= 90 && Math.abs(a) <= 180) return { lat: b, lng: a }
+      }
+      return null
+    }
+
+    if (out) {
+      const coords = parseLocationLoose(out) ?? parseLocation(out)
+      if (!coords) return extractCityFromAddress(out) || out
+      const key = `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`
+      void reverseGeocode(coords.lat, coords.lng)
+      return cityCache.value[key] || 'Resolving…'
+    }
+    if (inn) {
+      const coords = parseLocationLoose(inn) ?? parseLocation(inn)
+      if (!coords) return extractCityFromAddress(inn) || inn
+      const key = `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`
+      void reverseGeocode(coords.lat, coords.lng)
+      return cityCache.value[key] || 'Resolving…'
+    }
+
     // If office work, extract city from branch address
     if (attendanceRow.work_modality === 'office' && attendanceRow.branch_location) {
       const branch = getBranch(attendanceRow.branch_location)
@@ -866,20 +936,7 @@
       }
       return branch?.name || '—'
     }
-    // For WFH, extract city from last clock out location
-    if (attendanceRow.work_modality === 'wfh' && attendanceRow.location_out) {
-      const coords = parseLocation(attendanceRow.location_out)
-      if (coords) {
-        const key = `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`
-        // Check cache first
-        if (cityCache.value[key]) {
-          return cityCache.value[key]
-        }
-        // If not in cache, return WFH as fallback (will update when reverse geocode completes)
-        return 'WFH'
-      }
-    }
-    return 'WFH'
+    return attendanceRow.work_modality === 'office' ? '—' : 'WFH'
   }
 
   function formatTotalTime(interval: string | null): string {
@@ -989,9 +1046,7 @@
   }
 
   /** Colspan for expanded detail row (all columns after Date). */
-  const timesheetExpandedColspan = computed(
-    () => (showTimes.value ? 5 : 0) + 5
-  )
+  const timesheetColCount = computed(() => 1 + (showTimes.value ? 5 : 0) + 5)
 
   // Get all unique dates from filtered rows (local date for correct grouping)
   const allDates = computed(() => {
@@ -1006,7 +1061,7 @@
   const weekDays = computed(() => allDates.value.map(dateKey => ({ dateKey })))
 
   const tableRows = computed(() => {
-    // Access cityCache to make this computed reactive to cache updates
+    // Access caches to make this computed reactive to cache updates
     void cityCache.value
     const byDate: Record<string, AttendanceRow[]> = {}
     for (const r of filteredRows.value) {
@@ -1083,17 +1138,25 @@
           } else if (entryCity === 'WFH') {
             cities.add('WFH')
           }
-          // Trigger reverse geocoding for WFH if needed
-          if (entry.work_modality === 'wfh' && entry.location_out) {
-            const coords = parseLocation(entry.location_out)
+          // Trigger reverse geocoding for coordinates if needed
+          if (entry.location_out) {
+            const coords = (() => {
+              const raw = entry.location_out
+              if (!raw) return null
+              const nums = raw.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? []
+              if (nums.length < 2) return parseLocation(raw)
+              const a = nums[0]
+              const b = nums[1]
+              if (Number.isFinite(a) && Number.isFinite(b)) {
+                if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b }
+                if (Math.abs(b) <= 90 && Math.abs(a) <= 180) return { lat: b, lng: a }
+              }
+              return parseLocation(raw)
+            })()
             if (coords) {
               const key = `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`
-              if (!cityCache.value[key]) {
-                reverseGeocode(coords.lat, coords.lng).then(cityName => {
-                  if (cityName) {
-                    cityCache.value[key] = cityName
-                  }
-                })
+              if (!addressCache.value[key]) {
+                void reverseGeocode(coords.lat, coords.lng)
               }
             }
           }
@@ -1689,15 +1752,16 @@
                 </td>
                 <td class="ts-cell ts-output-cell td-muted">
                   <template v-if="row.hasMultipleEntries">
-                    <span class="ts-output-hint">Per session below</span>
+                    <span class="ts-output-hint">Tap to view</span>
                   </template>
                   <template v-else>
                     <span class="ts-output-text">{{ row.entries[0]?.output?.trim() || '—' }}</span>
                   </template>
                 </td>
                 <td class="ts-cell">
+                  <span v-if="row.hasMultipleEntries" class="ts-output-hint">Tap to view</span>
                   <button
-                    v-if="row.hasWfhPhoto"
+                    v-else-if="row.hasWfhPhoto"
                     type="button"
                     class="wfh-photo-btn"
                     title="View WFH photo"
@@ -1736,93 +1800,75 @@
                     class="ts-edit-expand-hint"
                     title="Expand this row to edit each clock session separately"
                   >
-                    Expand
+                    <span class="ts-output-hint">Tap to view</span>
                   </span>
                   <span v-else class="td-muted">—</span>
                 </td>
               </tr>
-              <Transition name="expand">
-                <tr 
-                  v-if="row.hasMultipleEntries && expandedRow === row.dateKey"
-                  :key="`expanded-${row.dateKey}`"
-                  class="ts-row-expanded"
+              <template v-if="row.hasMultipleEntries && expandedRow === row.dateKey">
+                <tr class="ts-subrow ts-subrow--header">
+                  <td :colspan="timesheetColCount" class="ts-subrow-header-cell">
+                    All Clock Entries ({{ row.entryCount }})
+                  </td>
+                </tr>
+                <tr
+                  v-for="(entry, idx) in row.entries"
+                  :key="`session-${entry.attendance_id || idx}`"
+                  class="ts-subrow"
                 >
-                  <td :colspan="timesheetExpandedColspan" class="ts-expanded-content">
-                    <div class="ts-expanded-header">All Clock Entries ({{ row.entryCount }})</div>
-                    <div class="ts-expanded-entries">
-                      <div class="ts-session-grid" aria-label="Clock entry sessions">
-                        <div class="ts-session-head">
-                          <div class="ts-session-th">Date</div>
-                          <div v-if="showTimes" class="ts-session-th">Clock In</div>
-                          <div class="ts-session-th">Lunch In</div>
-                          <div class="ts-session-th">Lunch Out</div>
-                          <div v-if="showTimes" class="ts-session-th">Clock Out</div>
-                          <div v-if="showTimes" class="ts-session-th">Total Hours</div>
-                          <div class="ts-session-th">Location</div>
-                          <div class="ts-session-th">Modality</div>
-                          <div class="ts-session-th">Output</div>
-                          <div class="ts-session-th">Photo</div>
-                          <div class="ts-session-th ts-session-th--action">Edit</div>
-                        </div>
-
-                        <div
-                          v-for="(entry, idx) in row.entries"
-                          :key="entry.attendance_id || idx"
-                          class="ts-session-tr"
-                        >
-                          <div class="ts-session-td ts-session-td--date">{{ row.dateKey }}</div>
-                          <div v-if="showTimes" class="ts-session-td">{{ formatTime12hApmFromStored(entry.clock_in) }}</div>
-                          <div class="ts-session-td">{{ formatTime12hApmFromStored(entry.lunch_break_start) }}</div>
-                          <div class="ts-session-td">{{ formatTime12hApmFromStored(entry.lunch_break_end) }}</div>
-                          <div v-if="showTimes" class="ts-session-td">{{ formatTime12hApmFromStored(entry.clock_out) }}</div>
-                          <div v-if="showTimes" class="ts-session-td">{{ formatTotalTime(entry.total_time) }}</div>
-                          <div class="ts-session-td ts-session-td--location">
-                            <span>{{ extractCity(entry) }}</span>
-                          </div>
-                          <div class="ts-session-td">{{ entry.work_modality === 'office' ? 'Office' : entry.work_modality === 'wfh' ? 'WFH' : '—' }}</div>
-                          <div class="ts-session-td ts-session-td--output">{{ entry.output?.trim() || '—' }}</div>
-                          <div class="ts-session-td ts-session-td--photo">
-                            <button
-                              v-if="entry.work_modality === 'wfh' && entry.wfh_pic_url"
-                              type="button"
-                              class="wfh-photo-btn wfh-photo-btn-inline"
-                              @click.stop="openWfhPhotoModal(entry.wfh_pic_url)"
-                            >
-                              <PhotoIcon class="wfh-photo-icon" />
-                              <span>View</span>
-                            </button>
-                            <span v-else class="td-muted">—</span>
-                          </div>
-                          <div class="ts-session-td ts-session-td--action">
-                            <div class="ts-entry-edit-actions">
-                              <CheckCircleIcon
-                                v-if="editStatusForEntry(entry) === 'approved'"
-                                class="edit-status-icon edit-status-approved"
-                                aria-hidden="true"
-                              />
-                              <XMarkIcon
-                                v-else-if="editStatusForEntry(entry) === 'rejected'"
-                                class="edit-status-icon edit-status-declined"
-                                aria-hidden="true"
-                              />
-                              <button
-                                type="button"
-                                class="edit-btn edit-btn-entry"
-                                :title="editButtonTitleForEntry(entry, row.dateKey)"
-                                :disabled="hasPendingEditForEntry(entry)"
-                                @click.stop="openEditModalForEntry(entry, row.dateKey)"
-                              >
-                                <PencilSquareIcon v-if="!hasPendingEditForEntry(entry)" class="edit-icon" />
-                                <ClockIcon v-else class="edit-icon pending-icon" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                  <td class="ts-date ts-subrow-date">
+                    <div class="ts-date-content">
+                      <span>{{ row.dateKey }}</span>
+                      <span class="ts-subrow-session">Session {{ idx + 1 }}</span>
+                    </div>
+                  </td>
+                  <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.clock_in) }}</td>
+                  <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.lunch_break_start) }}</td>
+                  <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.lunch_break_end) }}</td>
+                  <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.clock_out) }}</td>
+                  <td v-if="showTimes" class="ts-cell ts-total">{{ formatTotalTime(entry.total_time) }}</td>
+                  <td class="ts-cell">{{ extractCity(entry) }}</td>
+                  <td class="ts-cell td-muted">{{ entry.work_modality === 'office' ? 'Office' : entry.work_modality === 'wfh' ? 'WFH' : '—' }}</td>
+                  <td class="ts-cell ts-output-cell td-muted">{{ entry.output?.trim() || '—' }}</td>
+                  <td class="ts-cell">
+                    <button
+                      v-if="entry.work_modality === 'wfh' && entry.wfh_pic_url"
+                      type="button"
+                      class="wfh-photo-btn"
+                      title="View WFH photo"
+                      aria-label="View WFH photo"
+                      @click.stop="openWfhPhotoModal(entry.wfh_pic_url)"
+                    >
+                      <PhotoIcon class="wfh-photo-icon" />
+                    </button>
+                    <span v-else class="td-muted">—</span>
+                  </td>
+                  <td class="ts-cell ts-edit-cell">
+                    <div class="ts-edit-cell-inner">
+                      <CheckCircleIcon
+                        v-if="editStatusForEntry(entry) === 'approved'"
+                        class="edit-status-icon edit-status-approved"
+                        aria-hidden="true"
+                      />
+                      <XMarkIcon
+                        v-else-if="editStatusForEntry(entry) === 'rejected'"
+                        class="edit-status-icon edit-status-declined"
+                        aria-hidden="true"
+                      />
+                      <button
+                        type="button"
+                        class="edit-btn edit-btn-entry"
+                        :title="editButtonTitleForEntry(entry, row.dateKey)"
+                        :disabled="hasPendingEditForEntry(entry)"
+                        @click.stop="openEditModalForEntry(entry, row.dateKey)"
+                      >
+                        <PencilSquareIcon v-if="!hasPendingEditForEntry(entry)" class="edit-icon" />
+                        <ClockIcon v-else class="edit-icon pending-icon" />
+                      </button>
                     </div>
                   </td>
                 </tr>
-              </Transition>
+              </template>
             </template>
           </tbody>
         </table>
@@ -2029,11 +2075,16 @@
 }
 .data-table th {
   text-align: left;
-  padding: 0.75rem 1rem;
+  padding: 0.45rem 0.6rem;
   color: var(--text-tertiary);
   font-weight: 600;
   border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
+}
+.data-table td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: middle;
 }
 .th-in-table-filter {
   vertical-align: middle;
@@ -2172,11 +2223,6 @@
   background: rgba(56, 189, 248, 0.15);
   color: var(--accent);
 }
-.data-table td {
-  padding: 0.7rem 1rem;
-  border-bottom: 1px solid var(--border-color);
-  vertical-align: top;
-}
 .data-table .ts-row:last-child td {
   border-bottom: none;
 }
@@ -2270,7 +2316,7 @@
   }
   .data-table.ts-table th,
   .data-table.ts-table td {
-    padding: 0.625rem 0.75rem;
+    padding: 0.5rem 0.6rem;
   }
   .table-toolbar .btn {
     width: 100%;
@@ -2403,72 +2449,29 @@
   padding: 0.2rem 0.35rem;
 }
 
-/* Expanded sessions: align to table columns, but look like a "details grid" (not a nested table). */
-.ts-session-grid {
-  width: 100%;
-  overflow-x: auto;
-  border-radius: 10px;
+/* Expanded sessions: render as aligned sub-rows within the same table */
+.ts-subrow--header td {
+  background: var(--bg-tertiary);
+  font-weight: 700;
+  color: var(--text-secondary);
 }
 
-.ts-session-head,
-.ts-session-tr {
-  display: grid;
-  grid-template-columns:
-    100px /* Date */
-    90px /* Clock In */
-    90px /* Lunch In */
-    90px /* Lunch Out */
-    90px /* Clock Out */
-    100px /* Total Hours */
-    140px /* Location */
-    110px /* Modality */
-    minmax(140px, 1fr) /* Output */
-    90px /* Photo */
-    64px; /* Edit */
-  align-items: center;
-  gap: 0;
-  min-width: 1064px;
+.ts-subrow-header-cell {
+  padding: 0.45rem 0.6rem;
 }
 
-.ts-session-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: transparent;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+.ts-subrow {
+  background: color-mix(in srgb, var(--bg-secondary) 65%, transparent);
 }
 
-.ts-session-th {
-  padding: 0.4rem 0.6rem;
+.ts-subrow-date .ts-date-content {
+  gap: 0.4rem;
+}
+
+.ts-subrow-session {
   font-size: 0.75rem;
-  font-weight: 700;
-  color: var(--text-secondary, #475569);
-  white-space: nowrap;
-}
-
-.ts-session-tr {
-  background: transparent;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
-}
-.ts-session-tr:last-child {
-  border-bottom: none;
-}
-
-.ts-session-td {
-  padding: 0.5rem 0.6rem;
-  font-size: 0.8125rem;
-  color: var(--text-primary, #1e293b);
-  min-width: 0;
-  word-break: break-word;
-}
-.ts-session-td--date {
-  font-weight: 700;
-}
-.ts-session-td--output {
-  white-space: pre-wrap;
-}
-.ts-session-td--action {
-  justify-self: end;
+  font-weight: 600;
+  color: var(--text-secondary, #64748b);
 }
 
 .location-summary {
@@ -2595,7 +2598,7 @@
 }
 
 .wfh-photo-btn {
-  margin-left: 0.45rem;
+  margin-left: 0rem;
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
