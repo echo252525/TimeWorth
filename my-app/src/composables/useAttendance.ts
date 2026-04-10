@@ -314,6 +314,8 @@ export function useAttendance() {
   }
 
   const tick = ref(0)
+  /** Tracks local calendar day while the live timer runs so we refetch when midnight passes (tab stays open). */
+  let lastTrackedLocalDate = getLocalDateString(new Date())
   let tickInterval: ReturnType<typeof setInterval> | null = null
   function startTick() {
     if (tickInterval) {
@@ -401,31 +403,56 @@ export function useAttendance() {
     const padMs = 36 * 60 * 60 * 1000
     const startWide = new Date(new Date(startOfDay).getTime() - padMs).toISOString()
     const endWide = new Date(new Date(endOfDay).getTime() + padMs).toISOString()
-    const { data, error: err } = await supabase
-      .from('attendance')
-      .select('*')
-      .eq('user_id', userId.value)
-      .gte('clock_in', startWide)
-      .lte('clock_in', endWide)
-      .order('clock_in', { ascending: false })
+    const [dayRes, openRes] = await Promise.all([
+      supabase
+        .from('attendance')
+        .select('*')
+        .eq('user_id', userId.value)
+        .gte('clock_in', startWide)
+        .lte('clock_in', endWide)
+        .order('clock_in', { ascending: false }),
+      supabase
+        .from('attendance')
+        .select('*')
+        .eq('user_id', userId.value)
+        .is('clock_out', null)
+        .order('clock_in', { ascending: false })
+        .limit(1)
+    ])
     isLoading.value = false
+    const err = dayRes.error ?? openRes.error
     if (err) { error.value = err.message; return }
-    let incoming = (data ?? []) as AttendanceRow[]
+    let incoming = (dayRes.data ?? []) as AttendanceRow[]
     incoming = incoming.filter((r) => {
       if (!r.clock_in) return false
       const localD = getLocalDateString(new Date(storedToRealInstant(r.clock_in)))
       return localD === dayStr
     })
+    const openRows = (openRes.data ?? []) as AttendanceRow[]
+    const openFromDb = openRows[0] ?? null
     const prevOpen = todayRecords.value.find((r) => !r.clock_out)
-    // Keep any still-open session in memory even when the calendar day changes.
-    // This prevents the timeclock timer from stopping if the user forgets to clock out
-    // and only clocks out the next day.
-    if (prevOpen && !incoming.some((r) => r.attendance_id === prevOpen.attendance_id)) {
+    const ids = new Set(incoming.map((r) => r.attendance_id))
+    /** Open shift from DB (any day) so overnight sessions survive midnight and cold reloads. */
+    if (openFromDb && !ids.has(openFromDb.attendance_id)) {
+      incoming = [openFromDb, ...incoming]
+      ids.add(openFromDb.attendance_id)
+    }
+    // Fallback: keep in-memory open row if DB open query missed (e.g. race) and day query excluded it.
+    if (prevOpen && !ids.has(prevOpen.attendance_id)) {
       todayRecords.value = [prevOpen, ...incoming.filter((r) => r.attendance_id !== prevOpen.attendance_id)]
+      lastTrackedLocalDate = getLocalDateString(new Date())
       return
     }
     todayRecords.value = incoming
+    lastTrackedLocalDate = getLocalDateString(new Date())
   }
+
+  /** Refetch when the local date rolls over while still clocked in (timer has no midnight reset). */
+  watch(tick, (t) => {
+    if (!userId.value || !t) return
+    const nowDay = getLocalDateString(new Date(t))
+    if (nowDay !== lastTrackedLocalDate) void fetchToday()
+  })
 
   watch(
     userId,

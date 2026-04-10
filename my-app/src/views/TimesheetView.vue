@@ -665,6 +665,39 @@
     return isClockOutNextLocalDay(clockInStored, clockOutStored) ? `${base} (Next day)` : base
   }
 
+  /** True when clock-in and clock-out fall on different local calendar days (e.g. multi-day shift). */
+  function clockInClockOutDifferentLocalDays(clockIn: string | null, clockOut: string | null): boolean {
+    if (!clockIn || !clockOut) return false
+    const inKey = getLocalDateString(new Date(storedToRealInstant(clockIn)))
+    const outKey = getLocalDateString(new Date(storedToRealInstant(clockOut)))
+    return inKey !== outKey
+  }
+
+  /** e.g. `Mar 3, 1:00 P.M.` — used when in/out are on different days so both ends show a date. */
+  function formatShortDateTime12hFromStored(stored: string | null): string {
+    if (!stored) return '—'
+    const d = new Date(storedToRealInstant(stored))
+    const datePart = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    const h = d.getHours()
+    const m = d.getMinutes()
+    const isAm = h < 12
+    const h12 = h % 12 || 12
+    const timePart = `${h12}:${m.toString().padStart(2, '0')} ${isAm ? 'A.M.' : 'P.M.'}`
+    return `${datePart}, ${timePart}`
+  }
+
+  function formatClockInForTimesheet(clockIn: string | null, clockOut: string | null): string {
+    if (!clockIn) return '—'
+    if (clockOut && clockInClockOutDifferentLocalDays(clockIn, clockOut)) return formatShortDateTime12hFromStored(clockIn)
+    return formatTime12hApmFromStored(clockIn)
+  }
+
+  function formatClockOutForTimesheet(clockIn: string | null, clockOut: string | null): string {
+    if (!clockOut) return '—'
+    if (clockIn && clockInClockOutDifferentLocalDays(clockIn, clockOut)) return formatShortDateTime12hFromStored(clockOut)
+    return formatClockOutWithNextDay(clockIn, clockOut)
+  }
+
   /** Min–max of YYYY-MM-DD dates actually present in the PDF/CSV export rows */
   function formatExportTableDateCoveredRange(): string {
     const unique = new Set<string>()
@@ -810,8 +843,8 @@
       if (!map[dateKey]) map[dateKey] = []
       map[dateKey].push({
         date: dateKey,
-        clockIn: formatTime12hApmFromStored(r.clock_in),
-        clockOut: formatClockOutWithNextDay(r.clock_in, r.clock_out),
+        clockIn: formatClockInForTimesheet(r.clock_in, r.clock_out),
+        clockOut: formatClockOutForTimesheet(r.clock_in, r.clock_out),
         lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
         lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
         total: formatTotalTimeCompactForRow(r)
@@ -1205,10 +1238,10 @@
       ) ?? null
 
       if (dayRows.length && sorted.length > 0 && sorted[0]) {
-        clockIn = formatTime12hApmFromStored(sorted[0].clock_in)
+        clockIn = formatClockInForTimesheet(sorted[0].clock_in, sorted[sorted.length - 1]?.clock_out ?? null)
         const last = sorted[sorted.length - 1]
         if (last) {
-          clockOut = formatClockOutWithNextDay(sorted[0].clock_in, last.clock_out)
+          clockOut = formatClockOutForTimesheet(sorted[0].clock_in, last.clock_out)
         }
         const firstLunchStart = sorted.find((e) => !!e.lunch_break_start)?.lunch_break_start ?? null
         const lastLunchEnd = [...sorted].reverse().find((e) => !!e.lunch_break_end)?.lunch_break_end ?? null
@@ -1388,8 +1421,8 @@
       const branch = r.branch_location ? getBranch(r.branch_location) : null
       map[dateKey].push({
         date: dateKey,
-        clockIn: formatTime12hApmFromStored(r.clock_in),
-        clockOut: formatClockOutWithNextDay(r.clock_in, r.clock_out),
+        clockIn: formatClockInForTimesheet(r.clock_in, r.clock_out),
+        clockOut: formatClockOutForTimesheet(r.clock_in, r.clock_out),
         lunchIn: formatTime12hApmFromStored(r.lunch_break_start),
         lunchOut: formatTime12hApmFromStored(r.lunch_break_end),
         total: formatTotalForAttendanceRow(r),
@@ -1942,10 +1975,10 @@
                       <span class="ts-subrow-session">Session {{ idx + 1 }}</span>
                     </div>
                   </td>
-                  <td v-if="showTimes" class="ts-cell">{{ formatTime12hApmFromStored(entry.clock_in) }}</td>
+                  <td v-if="showTimes" class="ts-cell">{{ formatClockInForTimesheet(entry.clock_in, entry.clock_out) }}</td>
                   <td v-if="showTimes && showBreaks" class="ts-cell">{{ formatTime12hApmFromStored(entry.lunch_break_start) }}</td>
                   <td v-if="showTimes && showBreaks" class="ts-cell">{{ formatTime12hApmFromStored(entry.lunch_break_end) }}</td>
-                  <td v-if="showTimes" class="ts-cell">{{ formatClockOutWithNextDay(entry.clock_in, entry.clock_out) }}</td>
+                  <td v-if="showTimes" class="ts-cell">{{ formatClockOutForTimesheet(entry.clock_in, entry.clock_out) }}</td>
                   <td v-if="showTimes" class="ts-cell ts-total">{{ formatTotalForAttendanceRow(entry) }}</td>
                   <td class="ts-cell">{{ extractCity(entry) }}</td>
                   <td class="ts-cell td-muted">{{ entry.work_modality === 'office' ? 'Office' : entry.work_modality === 'wfh' ? 'WFH' : '—' }}</td>
