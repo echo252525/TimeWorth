@@ -14,7 +14,7 @@ import {
   storedToRealInstant,
   isClockOutNextLocalDay,
   type WorkModality,
-  type Branch
+  type Branch,
 } from '../composables/useAttendance'
 import { useAuth } from '../composables/useAuth'
 import supabase from '../lib/supabaseClient'
@@ -34,7 +34,7 @@ const {
   startLunchBreak,
   endLunchBreak,
   elapsedDisplay,
-  lunchElapsedDisplay
+  lunchElapsedDisplay,
 } = useAttendance()
 const { user, getSignedProfileUrl } = useAuth()
 const userProfileUrl = ref<string | null>(null)
@@ -42,7 +42,15 @@ const userInitial = ref<string>('?')
 
 const workModality = ref<WorkModality>('office')
 const selectedBranch = ref<Branch | null>(BRANCHES[0])
-const step = ref<'idle' | 'choose_modality' | 'getting_location' | 'wfh_photo' | 'facial' | 'clocked_in' | 'facial_out'>('idle')
+const step = ref<
+  | 'idle'
+  | 'choose_modality'
+  | 'getting_location'
+  | 'wfh_photo'
+  | 'facial'
+  | 'clocked_in'
+  | 'facial_out'
+>('idle')
 const liveLocation = ref<{ lat: number; lng: number } | null>(null)
 const locationIn = ref<{ lat: number; lng: number } | null>(null)
 const locationOut = ref<{ lat: number; lng: number } | null>(null)
@@ -79,14 +87,14 @@ async function refreshWfhVideoInputList(): Promise<void> {
     return
   }
   let list = (await navigator.mediaDevices.enumerateDevices()).filter(
-    (d) => d.kind === 'videoinput' && d.deviceId
+    (d) => d.kind === 'videoinput' && d.deviceId,
   )
   if (list.length && !list.some((d) => d.label)) {
     try {
       const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
       s.getTracks().forEach((t) => t.stop())
       list = (await navigator.mediaDevices.enumerateDevices()).filter(
-        (d) => d.kind === 'videoinput' && d.deviceId
+        (d) => d.kind === 'videoinput' && d.deviceId,
       )
     } catch {
       /* keep unlabeled list */
@@ -170,7 +178,10 @@ let lastGpsForHeading: { lat: number; lng: number } | null = null
 /** Degrees clockwise from north; null when not moving meaningfully between samples. */
 const userMovementHeadingDeg = ref<number | null>(null)
 
-function bearingDegrees(from: { lat: number; lng: number }, to: { lat: number; lng: number }): number {
+function bearingDegrees(
+  from: { lat: number; lng: number },
+  to: { lat: number; lng: number },
+): number {
   const toRad = (d: number) => (d * Math.PI) / 180
   const φ1 = toRad(from.lat)
   const φ2 = toRad(to.lat)
@@ -181,24 +192,23 @@ function bearingDegrees(from: { lat: number; lng: number }, to: { lat: number; l
   return ((θ * 180) / Math.PI + 360) % 360
 }
 
-/** Office geofence from `geolocation` where `geolocation_status` is true (admin System configuration). */
 interface OfficeGeofenceRow {
   id: string
   name: string
   latitude: number
   longitude: number
   radius_meters: number
+  have_facial?: boolean
 }
-const officeGeofence = ref<OfficeGeofenceRow | null>(null)
+const officeGeofences = ref<OfficeGeofenceRow[]>([])
 const officeGeofenceLoading = ref(true)
-/** Reverse-geocoded address for the active geofence center (geolocation row with `geolocation_status` true). Used for geofence circle hover only. */
-const officeGeofenceHoverAddress = ref<string | null>(null)
+const officeGeofenceHoverAddress = ref<Record<string, string | null>>({})
 
 async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-      { headers: { 'Accept-Language': 'en', 'User-Agent': 'TimeWorthApp/1.0' } }
+      { headers: { 'Accept-Language': 'en', 'User-Agent': 'TimeWorthApp/1.0' } },
     )
     const data = await res.json()
     return data?.display_name ?? null
@@ -207,24 +217,22 @@ async function reverseGeocode(lat: number, lng: number): Promise<string | null> 
   }
 }
 
-async function loadOfficeGeofence() {
+async function loadOfficeGeofences() {
   officeGeofenceLoading.value = true
-  officeGeofenceHoverAddress.value = null
+  officeGeofenceHoverAddress.value = {}
   const { data, error } = await supabase
     .from('geolocation')
-    .select('id, name, latitude, longitude, radius_meters')
+    .select('id, name, latitude, longitude, radius_meters, have_facial')
     .eq('geolocation_status', true)
-    .maybeSingle()
   officeGeofenceLoading.value = false
   if (error) {
-    officeGeofence.value = null
+    officeGeofences.value = []
     return
   }
-  officeGeofence.value = (data as OfficeGeofenceRow | null) ?? null
-  const row = officeGeofence.value
-  if (row) {
+  officeGeofences.value = (data as OfficeGeofenceRow[]) ?? []
+  for (const row of officeGeofences.value) {
     const addr = await reverseGeocode(row.latitude, row.longitude)
-    officeGeofenceHoverAddress.value = addr?.trim() || null
+    officeGeofenceHoverAddress.value[row.id] = addr?.trim() || null
   }
   nextTick(() => {
     if (map && circle) bindGeofenceCircleTooltip()
@@ -235,12 +243,16 @@ const centerIcon = L.divIcon({
   className: 'map-center-icon',
   html: '<span class="center-pin" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#4285F4" width="28" height="28"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></span>',
   iconSize: [28, 36],
-  iconAnchor: [14, 36]
+  iconAnchor: [14, 36],
 })
 
 async function loadUserProfile() {
   if (!user.value?.id) return
-  const { data } = await supabase.from('employee').select('name, picture').eq('id', user.value.id).maybeSingle()
+  const { data } = await supabase
+    .from('employee')
+    .select('name, picture')
+    .eq('id', user.value.id)
+    .maybeSingle()
   if (data?.name) userInitial.value = data.name.trim().slice(0, 1).toUpperCase()
   const pathOrUrl = data?.picture
   if (!pathOrUrl) return
@@ -301,10 +313,15 @@ function resumeLivenessRow(row: { id: string }) {
     .channel(`facial:${row.id}`)
     .on(
       'postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'facial_verifications', filter: `id=eq.${row.id}` },
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'facial_verifications',
+        filter: `id=eq.${row.id}`,
+      },
       (payload: { new: { facial_clock_in?: boolean } }) => {
         if (payload.new?.facial_clock_in === true) onFacialClockInVerified()
-      }
+      },
     )
     .subscribe()
 }
@@ -341,13 +358,13 @@ async function startWfhCamera() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: { deviceId: { exact: deviceId } },
-          audio: false
+          audio: false,
         })
       } catch {
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: { deviceId: { ideal: deviceId } },
-            audio: false
+            audio: false,
           })
         } catch {
           stream = null
@@ -359,7 +376,7 @@ async function startWfhCamera() {
         { video: { facingMode: { ideal: 'user' } }, audio: false },
         { video: { facingMode: 'user' }, audio: false },
         { video: { facingMode: { ideal: 'environment' } }, audio: false },
-        { video: true, audio: false }
+        { video: true, audio: false },
       ]
       for (const c of constraintsList) {
         try {
@@ -437,7 +454,7 @@ function captureWfhPhotoFromCamera() {
       stopWfhCamera()
     },
     'image/jpeg',
-    0.88
+    0.88,
   )
 }
 
@@ -449,15 +466,17 @@ watch(
     } else if (prev === 'wfh_photo') {
       stopWfhCamera()
     }
-  }
+  },
 )
 
 onMounted(() => {
   fetchToday()
-  void loadOfficeGeofence()
+  void loadOfficeGeofences()
   loadUserProfile()
   void syncEmployeeIsregisteredFromFaceBucket()
-  nextTick(() => { if (mapContainer.value) initMap() })
+  nextTick(() => {
+    if (mapContainer.value) initMap()
+  })
   startLiveLocationWatch()
   fetchLocationOnce()
 
@@ -493,20 +512,32 @@ onUnmounted(() => {
 
 const activeBranch = computed(() => {
   if (workModality.value === 'office' && selectedBranch.value) return selectedBranch.value
-  const br = todayRecord.value?.branch_location ? getBranch(todayRecord.value.branch_location) : null
+  const br = todayRecord.value?.branch_location
+    ? getBranch(todayRecord.value.branch_location)
+    : null
   return br ?? selectedBranch.value ?? BRANCHES[0]
 })
 
-/** Map / geofence circle center for office mode uses admin-configured geofence when present. */
+/** Map / geofence circle center for office mode uses the first geofence the user is inside, or the first geofence, or branch. */
 const mapCenter = computed(() => {
-  if (workModality.value === 'office' && officeGeofence.value) {
-    return { lat: officeGeofence.value.latitude, lng: officeGeofence.value.longitude }
+  if (workModality.value === 'office' && officeGeofences.value.length) {
+    const pos = userLoc.value ?? locationIn.value
+    // Try to center on the geofence the user is inside
+    const inside =
+      pos &&
+      officeGeofences.value.find(
+        (g) => distanceMeters(pos, { lat: g.latitude, lng: g.longitude }) <= g.radius_meters,
+      )
+    const g = inside || officeGeofences.value[0]
+    return { lat: g.latitude, lng: g.longitude }
   }
   if (workModality.value === 'office') {
     const b = activeBranch.value
     return { lat: b.lat, lng: b.lng }
   }
-  const locStr = locationIn.value ? `${locationIn.value.lat},${locationIn.value.lng}` : todayRecord.value?.location_in
+  const locStr = locationIn.value
+    ? `${locationIn.value.lat},${locationIn.value.lng}`
+    : todayRecord.value?.location_in
   const p = parseLocation(locStr ?? null)
   return p ?? (locationIn.value || { lat: activeBranch.value.lat, lng: activeBranch.value.lng })
 })
@@ -519,13 +550,16 @@ const officeGeofenceCheckPos = computed(() => {
   return userLoc.value ?? locationIn.value ?? null
 })
 
+// Returns true if user is outside ALL office geofences
 const isOutsideOfficeRadius = computed(() => {
   if (workModality.value !== 'office' || step.value !== 'choose_modality') return false
-  if (!officeGeofence.value) return false
+  if (!officeGeofences.value.length) return false
   const pos = officeGeofenceCheckPos.value
   if (!pos) return false
-  const g = officeGeofence.value
-  return distanceMeters(pos, { lat: g.latitude, lng: g.longitude }) > g.radius_meters
+  // User is inside at least one geofence
+  return !officeGeofences.value.some(
+    (g) => distanceMeters(pos, { lat: g.latitude, lng: g.longitude }) <= g.radius_meters,
+  )
 })
 
 const chooseModalityContinueDisabled = computed(() => {
@@ -534,33 +568,41 @@ const chooseModalityContinueDisabled = computed(() => {
   if ((officeFetchingLocation.value || wfhFetchingLocation.value) && !pos) return true
   if (workModality.value !== 'office') return false
   if (officeGeofenceLoading.value) return true
-  if (!officeGeofence.value) return true
+  if (!officeGeofences.value.length) return true
   if (!pos) return true
   return isOutsideOfficeRadius.value
 })
 
-/** Office session with admin geofence — used for map colors / clock-out gate while clocked in. */
+/** Office session with any admin geofence — used for map colors / clock-out gate while clocked in. */
 function isOfficeClockedInSessionForGeofenceUi(): boolean {
   const tr = todayRecord.value
-  return !!(tr && !tr.clock_out && tr.work_modality === 'office' && officeGeofence.value)
+  return !!(tr && !tr.clock_out && tr.work_modality === 'office' && officeGeofences.value.length)
 }
 
-/** Outside office geofence while clocked in (office), not on lunch; needs live position. */
+/** Outside ALL office geofences while clocked in (office), not on lunch; needs live position. */
 function isOfficeClockedInOutsideGeofence(): boolean {
   if (!isOfficeClockedInSessionForGeofenceUi()) return false
   if (isOnLunch.value) return false
   const pos = userLoc.value
   if (!pos) return false
-  const g = officeGeofence.value!
-  return distanceMeters(pos, { lat: g.latitude, lng: g.longitude }) > g.radius_meters
+  // If inside any geofence, not outside
+  return !officeGeofences.value.some(
+    (g) => distanceMeters(pos, { lat: g.latitude, lng: g.longitude }) <= g.radius_meters,
+  )
 }
 
 const clockOutDisabledByGeofence = computed(() => isOfficeClockedInOutsideGeofence())
 
 /** Short label under the map. Full street address appears only on map hover (profile marker or geofence circle tooltips). */
 const mapCaptionShort = computed(() => {
-  if (workModality.value === 'office' && officeGeofence.value) {
-    return officeGeofence.value.name?.trim() || activeBranch.value.name
+  if (workModality.value === 'office' && officeGeofences.value.length) {
+    const pos = userLoc.value ?? locationIn.value
+    const inside =
+      pos &&
+      officeGeofences.value.find(
+        (g) => distanceMeters(pos, { lat: g.latitude, lng: g.longitude }) <= g.radius_meters,
+      )
+    return inside?.name?.trim() || officeGeofences.value[0]?.name?.trim() || activeBranch.value.name
   }
   if (workModality.value === 'office' && activeBranch.value) {
     return activeBranch.value.name
@@ -577,11 +619,10 @@ watch(
       isOutsideOfficeRadius.value,
       step.value,
       workModality.value,
-      officeGeofence.value?.id,
       isOnLunch.value,
       clockOutDisabledByGeofence.value,
       userLoc.value?.lat,
-      userLoc.value?.lng
+      userLoc.value?.lng,
     ] as const,
   () => {
     if (
@@ -597,23 +638,27 @@ watch(
       syncUserMarkerGeofenceBorder()
       syncGeofenceCircleStyle()
     })
-  }
+  },
 )
 
 function initMap() {
   if (map) return
   if (!mapContainer.value) return
-  map = L.map(mapContainer.value, { zoomControl: false }).setView([mapCenter.value.lat, mapCenter.value.lng], 16)
+  map = L.map(mapContainer.value, { zoomControl: false }).setView(
+    [mapCenter.value.lat, mapCenter.value.lng],
+    16,
+  )
   L.control.zoom({ position: 'topright' }).addTo(map!)
   /* Carto Voyager: bright cyan water, pale green land use, light grey base — closest free raster to Google Maps default palette; refined via CSS below. */
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
+    attribution:
+      '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>',
     subdomains: 'abcd',
-    maxZoom: 20
+    maxZoom: 20,
   }).addTo(map!)
   circle = L.circle([mapCenter.value.lat, mapCenter.value.lng], {
     radius: RADIUS_M,
-    ...geofenceCircleLeafletStyle()
+    ...geofenceCircleLeafletStyle(),
   }).addTo(map!)
   syncGeofenceCircleStyle()
   bindGeofenceCircleTooltip()
@@ -624,63 +669,63 @@ function initMap() {
 function updateCenterMarker() {
   if (!map) return
   centerMarker?.remove()
-  if (workModality.value === 'office' && step.value !== 'idle') {
+  if (workModality.value === 'office' && step.value !== 'idle' && officeGeofences.value.length) {
     const c = mapCenter.value
-    const geoName = officeGeofence.value?.name?.trim() ?? ''
-    /** Long geofence names are often full addresses from config; keep pin label short (full address is on circle hover only). */
-    const label =
-      geoName && geoName.length <= 48
-        ? geoName
-        : activeBranch.value.name
-    const radiusLabel =
-      officeGeofence.value != null
-        ? Math.round(officeGeofence.value.radius_meters)
-        : RADIUS_M
-    centerMarker = L.marker([c.lat, c.lng], { icon: centerIcon }).addTo(map!)
+    const pos = userLoc.value ?? locationIn.value
+    const inside =
+      pos &&
+      officeGeofences.value.find(
+        (g) => distanceMeters(pos, { lat: g.latitude, lng: g.longitude }) <= g.radius_meters,
+      )
+    const g = inside || officeGeofences.value[0]
+    const geoName = g?.name?.trim() ?? ''
+    let label = geoName && geoName.length <= 48 ? geoName : ''
+    if (label.toLowerCase().includes('earnshaw')) label = ''
+    centerMarker = L.marker([c.lat, c.lng], { icon: L.divIcon({className: ''}) }).addTo(map!)
     centerMarker.bindTooltip(
-      `<div class="map-tooltip-inner"><strong>${escapeHtml(label)}</strong><span>${radiusLabel}m radius</span></div>`,
-      { permanent: false, direction: 'top', offset: [0, -12], className: 'map-bound-tooltip map-bound-tooltip-branch', sticky: true }
+      `<div class="map-tooltip-inner"><strong>${escapeHtml(label)}</strong></div>`,
+      {
+        permanent: false,
+        direction: 'top',
+        offset: [0, -12],
+        className: 'map-bound-tooltip map-bound-tooltip-branch',
+        sticky: true,
+      },
     )
   } else centerMarker = null
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
 const GEOFENCE_CIRCLE_STYLE_DEFAULT = {
   color: '#4285F4',
   fillColor: '#4285F4',
   fillOpacity: 0.14,
-  weight: 3
+  weight: 3,
 } as const
 
 const GEOFENCE_CIRCLE_STYLE_OUT = {
   color: '#ea4335',
   fillColor: '#ea4335',
   fillOpacity: 0.14,
-  weight: 3
+  weight: 3,
 } as const
 
 const GEOFENCE_CIRCLE_STYLE_IN = {
   color: '#34a853',
   fillColor: '#34a853',
   fillOpacity: 0.14,
-  weight: 3
+  weight: 3,
 } as const
 
 function geofenceCircleLeafletStyle(): L.PathOptions {
-  if (workModality.value !== 'office' || !officeGeofence.value) {
-    return { ...GEOFENCE_CIRCLE_STYLE_DEFAULT }
-  }
-  if (step.value === 'choose_modality') {
-    return isOutsideOfficeRadius.value ? { ...GEOFENCE_CIRCLE_STYLE_OUT } : { ...GEOFENCE_CIRCLE_STYLE_IN }
-  }
-  if (isOfficeClockedInSessionForGeofenceUi() && !isOnLunch.value && userLoc.value) {
-    return isOfficeClockedInOutsideGeofence()
-      ? { ...GEOFENCE_CIRCLE_STYLE_OUT }
-      : { ...GEOFENCE_CIRCLE_STYLE_IN }
-  }
+  // This function is now only used for the legacy single circle, but all geofences are drawn in updateMapView
   return { ...GEOFENCE_CIRCLE_STYLE_DEFAULT }
 }
 
@@ -692,9 +737,10 @@ function syncGeofenceCircleStyle() {
 /** Full office site address for geofence circle tooltip (hover boundary only). When admin geofence exists, use reverse geocode of its lat/lng (not default branch). */
 function geofenceCircleTooltipText(): string | null {
   if (workModality.value !== 'office' || step.value === 'idle') return null
-  const g = officeGeofence.value
+  // Use the first geofence for tooltip
+  const g = officeGeofences.value[0]
   if (g) {
-    const resolved = officeGeofenceHoverAddress.value?.trim()
+    const resolved = officeGeofenceHoverAddress.value?.[g.id]?.trim()
     if (resolved) return resolved
     const name = g.name?.trim()
     if (name) return name
@@ -716,14 +762,14 @@ function bindGeofenceCircleTooltip() {
       permanent: false,
       direction: 'auto',
       sticky: true,
-      className: 'map-bound-tooltip map-bound-tooltip-geofence'
-    }
+      className: 'map-bound-tooltip map-bound-tooltip-geofence',
+    },
   )
 }
 
 /** Office: choose_modality or clocked-in (not on lunch) — red outside, green inside; lunch uses default blue. */
 function userMarkerRootGeofenceClass(): string {
-  if (workModality.value !== 'office' || !officeGeofence.value) return ''
+  if (workModality.value !== 'office' || !officeGeofences.value.length) return ''
   if (step.value === 'choose_modality') {
     return isOutsideOfficeRadius.value
       ? 'map-user-marker-root--geofence-out'
@@ -757,7 +803,7 @@ function createUserMarkerIcon(): L.DivIcon {
       ${arrowHtml}
     </div>`,
     iconSize: [USER_MARKER_ICON_PX, USER_MARKER_ICON_PX],
-    iconAnchor: [half, half]
+    iconAnchor: [half, half],
   })
 }
 
@@ -793,14 +839,21 @@ function cancelUserMarkerMoveAnimation() {
 function bindUserMarkerTooltip(mark: L.Marker) {
   const loc = userLoc.value
   if (!loc) return
-  const fullAddress = workModality.value === 'wfh' && wfhAddress.value
-    ? wfhAddress.value
-    : (workModality.value === 'office' && officeUserAddress.value)
-      ? officeUserAddress.value
-      : `${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`
+  const fullAddress =
+    workModality.value === 'wfh' && wfhAddress.value
+      ? wfhAddress.value
+      : workModality.value === 'office' && officeUserAddress.value
+        ? officeUserAddress.value
+        : `${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`
   mark.bindTooltip(
     `<div class="map-tooltip-inner map-tooltip-you"><span class="map-tooltip-address-only">${escapeHtml(fullAddress)}</span></div>`,
-    { permanent: false, direction: 'top', offset: [0, -USER_MARKER_ICON_PX - 8], className: 'map-bound-tooltip map-bound-tooltip-user', sticky: true }
+    {
+      permanent: false,
+      direction: 'top',
+      offset: [0, -USER_MARKER_ICON_PX - 8],
+      className: 'map-bound-tooltip map-bound-tooltip-user',
+      sticky: true,
+    },
   )
 }
 
@@ -900,7 +953,10 @@ function updateUserMarker(animateMove = false) {
 
 const DEFAULT_MAP_VIEW = { lat: 14.5995, lng: 120.9842, zoom: 13 }
 
-function getEdgePosition(targetLat: number, targetLng: number): { visible: boolean; x: number; y: number; angle: number } | null {
+function getEdgePosition(
+  targetLat: number,
+  targetLng: number,
+): { visible: boolean; x: number; y: number; angle: number } | null {
   if (!map || !mapContainer.value) return null
   const bounds = map.getBounds()
   if (bounds.contains([targetLat, targetLng])) return { visible: true, x: 0, y: 0, angle: 0 }
@@ -916,7 +972,8 @@ function getEdgePosition(targetLat: number, targetLng: number): { visible: boole
   const halfW = w / 2
   const halfH = h / 2
   const slope = dy / dx
-  let x = 0, y = 0
+  let x = 0,
+    y = 0
   if (Math.abs(dx) > Math.abs(dy)) {
     x = dx > 0 ? w - 24 : 24
     y = halfH + (x - halfW) * slope
@@ -938,7 +995,8 @@ function focusOnUserLocation() {
 
 function focusOnBranchLocation() {
   if (!map) return
-  const branchLoc = workModality.value === 'office' && step.value !== 'idle' ? mapCenter.value : null
+  const branchLoc =
+    workModality.value === 'office' && step.value !== 'idle' ? mapCenter.value : null
   if (!branchLoc) return
   map.setView([branchLoc.lat, branchLoc.lng], 17, { animate: true, duration: 0.5 })
 }
@@ -946,7 +1004,8 @@ function focusOnBranchLocation() {
 function updateEdgeIndicators() {
   if (!map || !mapContainer.value) return
   const userLocVal = userLoc.value
-  const branchLoc = workModality.value === 'office' && step.value !== 'idle' ? mapCenter.value : null
+  const branchLoc =
+    workModality.value === 'office' && step.value !== 'idle' ? mapCenter.value : null
   if (userLocVal) {
     const pos = getEdgePosition(userLocVal.lat, userLocVal.lng)
     if (pos && !pos.visible && userEdgeIndicator.value) {
@@ -981,55 +1040,70 @@ function updateEdgeIndicators() {
  */
 function updateMapView(preserveViewport = false, animateUserMove = false) {
   if (!map) return
-  if (step.value === 'idle') {
-    circle?.remove()
-    centerMarker?.remove()
-    const live = userLoc.value
-    if (!preserveViewport) {
-      if (live) {
-        map.setView([live.lat, live.lng], 17)
-      } else {
-        map.setView([DEFAULT_MAP_VIEW.lat, DEFAULT_MAP_VIEW.lng], DEFAULT_MAP_VIEW.zoom)
-      }
+  // Remove previous office geofence circles
+  map.eachLayer((layer) => {
+    if (layer instanceof L.Circle && (layer as any)._isOfficeGeofence) {
+      map.removeLayer(layer)
     }
+    if (layer instanceof L.Marker && (layer as any)._isOfficeGeofenceMarker) {
+      map.removeLayer(layer)
+    }
+  })
+  if (step.value === 'idle') {
+    centerMarker?.remove()
+    // No automatic recentering
     updateUserMarker(animateUserMove)
     return
   }
   if (workModality.value === 'wfh') {
-    circle?.remove()
     updateCenterMarker()
     updateUserMarker(animateUserMove)
-    if (!preserveViewport) {
-      const c = mapCenter.value
-      map.setView([c.lat, c.lng], 16)
-    }
+    // No automatic recentering
     nextTick(() => updateEdgeIndicators())
     return
   }
-  if (!circle) return
-  const c = mapCenter.value
-  const radius =
-    workModality.value === 'office' && officeGeofence.value
-      ? Math.max(1, officeGeofence.value.radius_meters)
-      : RADIUS_M
-  circle.setLatLng([c.lat, c.lng])
-  circle.setRadius(radius)
-  if (!map.hasLayer(circle)) circle.addTo(map!)
-  syncGeofenceCircleStyle()
-  bindGeofenceCircleTooltip()
+  // Draw office geofence circles and markers
+  officeGeofences.value.forEach((g) => {
+    const circle = L.circle([g.latitude, g.longitude], {
+      radius: Math.max(1, g.radius_meters),
+      color: '#0ea5e9', // blue for all offices
+      fillColor: '#0ea5e9',
+      fillOpacity: 0.13,
+      weight: 2,
+    }) as any
+    circle._isOfficeGeofence = true
+    circle.addTo(map)
+    // Add a second green circle if facial is enabled
+    if (g.have_facial) {
+      // Draw a green dashed circle just outside the main radius (e.g. +3 meters)
+      const facialCircle = L.circle([g.latitude, g.longitude], {
+        radius: Math.max(1, g.radius_meters) + 3,
+        color: '#22c55e', // green
+        fillColor: '#22c55e',
+        fillOpacity: 0.07,
+        weight: 2,
+        dashArray: '6 6',
+      }) as any
+      facialCircle._isOfficeGeofence = true
+      facialCircle.addTo(map)
+    }
+    // Use a location icon for all office markers, no facial icon
+    const icon = L.divIcon({
+      className: 'office-marker',
+      html: `<div style="display:flex;align-items:center;justify-content:center;align-items:center;width:28px;height:28px;">
+        <span style="display:inline-block;width:28px;height:28px;background:#fff;border-radius:50%;box-shadow:0 2px 8px rgba(34,197,94,0.18);display:flex;align-items:center;justify-content:center;">
+          <svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"#0ea5e9\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z\"/></svg>
+        </span>
+      </div>`,
+    })
+    const marker = L.marker([g.latitude, g.longitude], { icon }) as any
+    marker._isOfficeGeofenceMarker = true
+    marker.addTo(map)
+    marker.bindTooltip(`${g.name}${g.have_facial ? ' (Facial Scanner)' : ''}`)
+  })
   updateCenterMarker()
   updateUserMarker(animateUserMove)
-  const loc = userLoc.value
-  if (!preserveViewport) {
-    if (loc) {
-      const branchPoint = L.latLng(c.lat, c.lng)
-      const userPoint = L.latLng(loc.lat, loc.lng)
-      const bounds = L.latLngBounds([branchPoint, userPoint]).pad(0.15)
-      map.fitBounds(bounds, { maxZoom: 17, padding: [24, 24] })
-    } else {
-      map.setView([c.lat, c.lng], 16)
-    }
-  }
+  // No automatic recentering
   nextTick(() => updateEdgeIndicators())
 }
 
@@ -1044,15 +1118,14 @@ watch(
     wfhAddress,
     officeUserAddress,
     userProfileUrl,
-    officeGeofence,
     officeGeofenceHoverAddress,
-    isOnLunch
+    isOnLunch,
   ],
   () => {
     updateMapView()
     nextTick(() => updateEdgeIndicators())
   },
-  { flush: 'post' }
+  { flush: 'post' },
 )
 
 function fetchLocationOnce() {
@@ -1099,7 +1172,7 @@ function getLocationInitialQuick(): Promise<{ lat: number; lng: number }> {
     navigator.geolocation.getCurrentPosition(
       (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
       (err) => reject(err),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 6000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 6000 },
     )
   })
 }
@@ -1119,16 +1192,24 @@ watch(
     officeFetchingLocation.value = false
     wfhFetchingLocation.value = false
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 watch(workModality, () => {
-  console.log('[Timeclock] workModality changed', { to: workModality.value, locationIn: !!locationIn.value, officeFetching: officeFetchingLocation.value, wfhFetching: wfhFetchingLocation.value })
+  console.log('[Timeclock] workModality changed', {
+    to: workModality.value,
+    locationIn: !!locationIn.value,
+    officeFetching: officeFetchingLocation.value,
+    wfhFetching: wfhFetchingLocation.value,
+  })
   if (step.value === 'choose_modality' && locationIn.value) nextTick(() => updateMapView())
 })
 
 watch(step, (s) => {
-  console.log('[Timeclock] step changed', { to: s, locationFetchedOnMount: locationFetchedOnMount.value })
+  console.log('[Timeclock] step changed', {
+    to: s,
+    locationFetchedOnMount: locationFetchedOnMount.value,
+  })
 })
 
 watch(
@@ -1136,7 +1217,7 @@ watch(
   (m) => {
     if (m === 'office' || m === 'wfh') workModality.value = m
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 function stopFacialClockOutPoll() {
@@ -1204,11 +1285,12 @@ watch(
       }, 1000)
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 watch(step, async (s, prev) => {
-  const verificationId = livenessVerificationId.value ?? todayRecord.value?.facial_verifications_id ?? null
+  const verificationId =
+    livenessVerificationId.value ?? todayRecord.value?.facial_verifications_id ?? null
   if (s === 'facial_out' && verificationId) {
     if (!livenessVerificationId.value && todayRecord.value?.facial_verifications_id) {
       livenessVerificationId.value = todayRecord.value.facial_verifications_id
@@ -1229,7 +1311,7 @@ watch(step, async (s, prev) => {
           event: 'UPDATE',
           schema: 'public',
           table: 'facial_verifications',
-          filter: `id=eq.${id}`
+          filter: `id=eq.${id}`,
         },
         async (payload: { new: { facial_clock_out?: boolean } }) => {
           if (payload.new?.facial_clock_out !== true) return
@@ -1254,7 +1336,7 @@ watch(step, async (s, prev) => {
             clockOutOutputDraft.value = ''
             void fetchToday()
           }, 1800)
-        }
+        },
       )
       .subscribe()
   } else if (prev === 'facial_out' && s !== 'facial_out') {
@@ -1263,13 +1345,16 @@ watch(step, async (s, prev) => {
 })
 
 watch(
-  () => (workModality.value === 'wfh' ? (locationIn.value || todayRecord.value?.location_in) : null),
+  () => (workModality.value === 'wfh' ? locationIn.value || todayRecord.value?.location_in : null),
   (loc) => {
     if (!loc || wfhFetchingLocation.value) return
     const coords = typeof loc === 'string' ? parseLocation(loc) : loc
-    if (coords) reverseGeocode(coords.lat, coords.lng).then((addr) => { wfhAddress.value = addr })
+    if (coords)
+      reverseGeocode(coords.lat, coords.lng).then((addr) => {
+        wfhAddress.value = addr
+      })
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 watch(mapContainer, (el) => {
@@ -1281,7 +1366,7 @@ const LIVE_LOCATION_POLL_MS = 600
 const GEO_LIVE_POLL_OPTIONS: PositionOptions = {
   enableHighAccuracy: true,
   maximumAge: 0,
-  timeout: 2000
+  timeout: 2000,
 }
 
 /** GMaps-style: refresh GPS (same accuracy as live poll) and recenter on you. */
@@ -1313,7 +1398,7 @@ function onMapLocateMeClick() {
     () => {
       focusOnUserLocation()
     },
-    GEO_LIVE_POLL_OPTIONS
+    GEO_LIVE_POLL_OPTIONS,
   )
 }
 
@@ -1345,7 +1430,7 @@ function startLiveLocationWatch() {
         console.log('[Timeclock] live GPS update', {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
-          accuracyM: pos.coords.accuracy
+          accuracyM: pos.coords.accuracy,
         })
         nextTick(() => {
           updateMapView(true, true)
@@ -1356,7 +1441,7 @@ function startLiveLocationWatch() {
         livePollInFlight = false
         console.warn('[Timeclock] live GPS error', err.code, err.message)
       },
-      GEO_LIVE_POLL_OPTIONS
+      GEO_LIVE_POLL_OPTIONS,
     )
   }
   tick()
@@ -1385,7 +1470,7 @@ function getLocation(): Promise<{ lat: number; lng: number }> {
     const sampleOpts: PositionOptions = {
       enableHighAccuracy: true,
       maximumAge: 0,
-      timeout: 20000
+      timeout: 20000,
     }
     /** Early exit when horizontal accuracy is at or below this (meters). */
     const GOOD_ENOUGH_ACCURACY_M = 50
@@ -1435,7 +1520,7 @@ function getLocation(): Promise<{ lat: number; lng: number }> {
       navigator.geolocation.getCurrentPosition(
         (pos) => resolveFrom(pos),
         (err) => reject(err),
-        sampleOpts
+        sampleOpts,
       )
     }, MAX_SAMPLE_MS)
 
@@ -1448,7 +1533,7 @@ function getLocation(): Promise<{ lat: number; lng: number }> {
           if (!settled) reject(err)
         }
       },
-      sampleOpts
+      sampleOpts,
     )
   })
 }
@@ -1469,12 +1554,11 @@ async function uploadWfhPhoto(): Promise<string> {
   const safeExt = ext.replace(/[^a-z0-9]/g, '') || 'jpg'
   const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`
   const storagePath = `${user.value.id}/${fileName}`
-  const { error: uploadError } = await supabase
-    .storage
+  const { error: uploadError } = await supabase.storage
     .from(WFH_PICTURE_BUCKET)
     .upload(storagePath, wfhPhotoFile.value, {
       upsert: false,
-      contentType: wfhPhotoFile.value.type || 'image/jpeg'
+      contentType: wfhPhotoFile.value.type || 'image/jpeg',
     })
   if (uploadError) throw uploadError
   return storagePath
@@ -1489,7 +1573,7 @@ async function submitWfhClockIn() {
   wfhPhotoError.value = null
   locationError.value = null
   try {
-    const loc = locationIn.value ?? await getLocation()
+    const loc = locationIn.value ?? (await getLocation())
     const picturePath = await uploadWfhPhoto()
     if (!loc) return
     locationIn.value = loc
@@ -1532,7 +1616,7 @@ async function selectModalityAndStart(mod: WorkModality) {
   }
   if (mod === 'office') {
     if (officeGeofenceLoading.value) return
-    if (!officeGeofence.value) {
+    if (!officeGeofences.value.length) {
       locationError.value =
         'Office location is not configured yet. Please contact your administrator.'
       return
@@ -1540,7 +1624,7 @@ async function selectModalityAndStart(mod: WorkModality) {
   }
   step.value = 'getting_location'
   try {
-    const loc = userLoc.value ?? locationIn.value ?? await getLocation()
+    const loc = userLoc.value ?? locationIn.value ?? (await getLocation())
     if (!loc) return
     locationIn.value = loc
     nextTick(() => updateMapView())
@@ -1549,18 +1633,26 @@ async function selectModalityAndStart(mod: WorkModality) {
     step.value = 'choose_modality'
     return
   }
-  if (mod === 'office' && officeGeofence.value) {
-    const g = officeGeofence.value
-    if (distanceMeters(locationIn.value!, { lat: g.latitude, lng: g.longitude }) > g.radius_meters) {
+  if (mod === 'office' && officeGeofences.value.length) {
+    // Find the geofence the user is inside
+    const insideGeofence = officeGeofences.value.find(
+      (g) =>
+        distanceMeters(locationIn.value!, { lat: g.latitude, lng: g.longitude }) <= g.radius_meters,
+    )
+    if (!insideGeofence) {
       locationError.value =
         'You must be within the office geofence to clock in. Move closer and try again.'
       step.value = 'choose_modality'
       return
     }
-  }
-  if (workModality.value === 'office' && branch) {
-    await syncEmployeeIsregisteredFromFaceBucket()
-    await startLivenessVerification()
+    if (insideGeofence.have_facial) {
+      await syncEmployeeIsregisteredFromFaceBucket()
+      await startLivenessVerification()
+    } else {
+      await clockIn('office', { locationIn: locationString(locationIn.value!) })
+      step.value = 'clocked_in'
+      locationIn.value = null
+    }
   }
 }
 
@@ -1619,13 +1711,13 @@ async function startLivenessVerification() {
           event: 'UPDATE',
           schema: 'public',
           table: 'facial_verifications',
-          filter: `id=eq.${row.id}`
+          filter: `id=eq.${row.id}`,
         },
         (payload: { new: { facial_clock_in?: boolean } }) => {
           if (payload.new?.facial_clock_in === true) {
             onFacialClockInVerified()
           }
-        }
+        },
       )
       .subscribe()
   } catch (e) {
@@ -1654,13 +1746,13 @@ async function onFacialClockInVerified() {
   }
   const branchLocation =
     workModality.value === 'office'
-      ? (officeGeofence.value?.name?.trim() || selectedBranch.value?.id)
+      ? officeGeofences.value[0]?.name?.trim() || selectedBranch.value?.id
       : undefined
   await clockIn(workModality.value, {
     locationIn: locStr,
     facialStatus: 'verified',
     branchLocation,
-    facialVerificationId: livenessVerificationId.value ?? undefined
+    facialVerificationId: livenessVerificationId.value ?? undefined,
   })
   // Match WFH: enter clocked-in state immediately so the live timer is visible (not hidden under step==='facial').
   step.value = 'clocked_in'
@@ -1723,6 +1815,7 @@ function cancelClockOutOutputPanel() {
   clockOutOutputDraft.value = ''
 }
 
+
 function beginOfficeClockOut() {
   if (clockOutDisabledByGeofence.value) return
   clockOutOutputDraft.value = ''
@@ -1730,9 +1823,38 @@ function beginOfficeClockOut() {
   showClockOutOutputPanel.value = false
   clockOutLoading.value = true
   try {
-    step.value = 'facial_out'
+    // Find the geofence the user is inside
+    const pos = userLoc.value ?? locationIn.value
+    const insideGeofence =
+      pos && officeGeofences.value.find(
+        (g) => distanceMeters(pos, { lat: g.latitude, lng: g.longitude }) <= g.radius_meters,
+      )
+    if (insideGeofence && insideGeofence.have_facial) {
+      step.value = 'facial_out'
+    } else {
+      // If no facial required, just clock out directly
+      // Do not recenter or restrict map
+      clockOutLoading.value = true
+      ;(async () => {
+        try {
+          const loc = await getLocation()
+          locationOut.value = loc
+          const locStr = locationString(loc)!
+          await clockOut(locStr, null)
+          step.value = 'idle'
+          locationOut.value = null
+          clearClockOutOutputState()
+        } catch {
+          await clockOut(undefined, null)
+          step.value = 'idle'
+          clearClockOutOutputState()
+        } finally {
+          clockOutLoading.value = false
+        }
+      })()
+    }
   } finally {
-    clockOutLoading.value = false
+    if (step.value === 'facial_out') clockOutLoading.value = false
   }
 }
 
@@ -1820,7 +1942,7 @@ const todayTimelineEvents = computed(() => {
         label: 'Clock in',
         time: r.clock_in,
         displayTime: fmtStored(r.clock_in),
-        modality: formatWorkModalityLabel(r.work_modality)
+        modality: formatWorkModalityLabel(r.work_modality),
       })
     }
     if (r.lunch_break_start) {
@@ -1828,7 +1950,7 @@ const todayTimelineEvents = computed(() => {
         key: `${r.attendance_id}-lunch-start`,
         label: 'Lunch break started',
         time: r.lunch_break_start,
-        displayTime: fmtStored(r.lunch_break_start)
+        displayTime: fmtStored(r.lunch_break_start),
       })
     }
     if (r.lunch_break_end) {
@@ -1836,19 +1958,20 @@ const todayTimelineEvents = computed(() => {
         key: `${r.attendance_id}-lunch-end`,
         label: 'Lunch break ended',
         time: r.lunch_break_end,
-        displayTime: fmtStored(r.lunch_break_end)
+        displayTime: fmtStored(r.lunch_break_end),
       })
     }
     if (r.clock_out) {
       const base = fmtStored(r.clock_out)
-      const displayTime =
-        isClockOutNextLocalDay(r.clock_in, r.clock_out) ? `${base} (Next day)` : base
+      const displayTime = isClockOutNextLocalDay(r.clock_in, r.clock_out)
+        ? `${base} (Next day)`
+        : base
       raw.push({
         key: `${r.attendance_id}-out`,
         label: 'Clock out',
         time: r.clock_out,
         displayTime,
-        modality: formatWorkModalityLabel(r.work_modality)
+        modality: formatWorkModalityLabel(r.work_modality),
       })
     }
   }
@@ -1891,14 +2014,24 @@ async function handleCancelFacial() {
                 aria-label="Work output for this shift"
               />
               <div class="actions">
-                <button type="button" class="btn primary" :disabled="clockOutLoading" @click="submitClockOutOutput">
+                <button
+                  type="button"
+                  class="btn primary"
+                  :disabled="clockOutLoading"
+                  @click="submitClockOutOutput"
+                >
                   <span v-if="clockOutLoading" class="btn-loading-wrap">
                     <span class="btn-loading-spinner" aria-hidden="true"></span>
                     <span>Continuing…</span>
                   </span>
                   <span v-else>Clock out</span>
                 </button>
-                <button type="button" class="btn secondary" :disabled="clockOutLoading" @click="cancelClockOutOutputPanel">
+                <button
+                  type="button"
+                  class="btn secondary"
+                  :disabled="clockOutLoading"
+                  @click="cancelClockOutOutputPanel"
+                >
                   Cancel
                 </button>
               </div>
@@ -1908,19 +2041,28 @@ async function handleCancelFacial() {
             </div>
             <div v-else-if="clockOutConfirm" class="confirm-wrap">
               <p class="confirm-msg">
-                {{ clockOutConfirm.outsideOffice
-                  ? 'Are you sure you want to clock out outside the office location? You will be flagged as travel.'
-                  : 'Are you sure you want to clock out outside your WFH radius? You will be flagged as possible travel.' }}
+                {{
+                  clockOutConfirm.outsideOffice
+                    ? 'Are you sure you want to clock out outside the office location? You will be flagged as travel.'
+                    : 'Are you sure you want to clock out outside your WFH radius? You will be flagged as possible travel.'
+                }}
               </p>
               <div class="actions">
-                <button type="button" class="btn primary" :disabled="isLoading" @click="confirmClockOutOutside">
+                <button
+                  type="button"
+                  class="btn primary"
+                  :disabled="isLoading"
+                  @click="confirmClockOutOutside"
+                >
                   <span v-if="isLoading" class="btn-loading-wrap">
                     <span class="btn-loading-spinner" aria-hidden="true"></span>
                     <span>Clocking out…</span>
                   </span>
                   <span v-else>Yes, clock out</span>
                 </button>
-                <button type="button" class="btn secondary" @click="cancelClockOutConfirm">Cancel</button>
+                <button type="button" class="btn secondary" @click="cancelClockOutConfirm">
+                  Cancel
+                </button>
               </div>
             </div>
             <template v-else>
@@ -1932,25 +2074,48 @@ async function handleCancelFacial() {
                     <p class="muted sub">Work: {{ elapsedDisplay }}</p>
                   </template>
                   <template v-else>
-                    <p class="muted hero-sub clocked-hero-label">Working · {{ formatWorkModalityLabel(todayRecord.work_modality) }}</p>
+                    <p class="muted hero-sub clocked-hero-label">
+                      Working · {{ formatWorkModalityLabel(todayRecord.work_modality) }}
+                    </p>
                     <div class="timer timer-hero-main" aria-live="polite">{{ elapsedDisplay }}</div>
-                    <p class="muted clocked-hero-meta">In at {{ fmtStored(todayRecord.clock_in) }}</p>
+                    <p class="muted clocked-hero-meta">
+                      In at {{ fmtStored(todayRecord.clock_in) }}
+                    </p>
                   </template>
                 </div>
               </div>
               <div v-if="todayRecord.lunch_break_start" class="lunch-info">
-                <span class="muted">Lunch {{ isOnLunch ? 'started' : 'ended' }} at {{ isOnLunch ? fmtStored(todayRecord.lunch_break_start) : fmtStored(todayRecord.lunch_break_end) }}</span>
+                <span class="muted"
+                  >Lunch {{ isOnLunch ? 'started' : 'ended' }} at
+                  {{
+                    isOnLunch
+                      ? fmtStored(todayRecord.lunch_break_start)
+                      : fmtStored(todayRecord.lunch_break_end)
+                  }}</span
+                >
               </div>
               <div class="actions">
                 <template v-if="!usedLunchBreak">
-                  <button v-if="!isOnLunch" type="button" class="btn secondary" :disabled="isLoading" @click="startLunchBreak">
+                  <button
+                    v-if="!isOnLunch"
+                    type="button"
+                    class="btn secondary"
+                    :disabled="isLoading"
+                    @click="startLunchBreak"
+                  >
                     <span v-if="isLoading" class="btn-loading-wrap">
                       <span class="btn-loading-spinner" aria-hidden="true"></span>
                       <span>Starting…</span>
                     </span>
                     <span v-else>Start lunch</span>
                   </button>
-                  <button v-else type="button" class="btn secondary" :disabled="isLoading" @click="endLunchBreak">
+                  <button
+                    v-else
+                    type="button"
+                    class="btn secondary"
+                    :disabled="isLoading"
+                    @click="endLunchBreak"
+                  >
                     <span v-if="isLoading" class="btn-loading-wrap">
                       <span class="btn-loading-spinner" aria-hidden="true"></span>
                       <span>Ending…</span>
@@ -1978,7 +2143,9 @@ async function handleCancelFacial() {
           <div v-else-if="step === 'choose_modality'" class="hero-card">
             <div class="modality-heading">
               <h2 class="modality-heading-title">Select your work modality</h2>
-              <p class="muted modality-heading-sub">Choose whether you are working from the office or remotely.</p>
+              <p class="muted modality-heading-sub">
+                Choose whether you are working from the office or remotely.
+              </p>
             </div>
             <div
               class="modality-btns modality-toggle"
@@ -1990,12 +2157,21 @@ async function handleCancelFacial() {
               <button
                 type="button"
                 class="btn modality-toggle-btn"
-                :class="{ primary: workModality === 'office', secondary: workModality !== 'office' }"
+                :class="{
+                  primary: workModality === 'office',
+                  secondary: workModality !== 'office',
+                }"
                 :aria-pressed="workModality === 'office'"
                 @click="workModality = 'office'"
               >
                 <span class="modality-toggle-btn-inner">
-                  <svg class="modality-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <svg
+                    class="modality-icon"
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
                     <path d="M3 21h18v-8H3v8zm2-2v-4h14v4H5zM3 10h18V3H3v7zm2-2V5h14v3H5z" />
                   </svg>
                   <span>Office</span>
@@ -2009,7 +2185,13 @@ async function handleCancelFacial() {
                 @click="workModality = 'wfh'"
               >
                 <span class="modality-toggle-btn-inner">
-                  <svg class="modality-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <svg
+                    class="modality-icon"
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
                     <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8h5z" />
                   </svg>
                   <span>WFH</span>
@@ -2023,7 +2205,7 @@ async function handleCancelFacial() {
               Loading office location…
             </p>
             <p
-              v-if="workModality === 'office' && !officeGeofenceLoading && !officeGeofence"
+              v-if="workModality === 'office' && !officeGeofenceLoading && officeGeofences.length === 0"
               class="block-msg"
             >
               Office location is not set up yet. Please contact your administrator.
@@ -2036,21 +2218,31 @@ async function handleCancelFacial() {
                 @click="selectModalityAndStart(workModality)"
               >
                 <span v-if="isLoading">Continuing…</span>
-                <span v-else-if="(officeFetchingLocation || wfhFetchingLocation) && !locationIn">Getting location…</span>
+                <span v-else-if="(officeFetchingLocation || wfhFetchingLocation) && !locationIn"
+                  >Getting location…</span
+                >
                 <span v-else-if="workModality === 'office' && officeGeofenceLoading">Loading…</span>
                 <span v-else>Continue</span>
               </button>
               <button type="button" class="btn secondary" @click="step = 'idle'">Cancel</button>
             </div>
-            <div v-if="todayTimelineEvents.length" class="today-activity-panel" aria-label="Today's activity">
+            <div
+              v-if="todayTimelineEvents.length"
+              class="today-activity-panel"
+              aria-label="Today's activity"
+            >
               <h3 class="today-activity-panel-title">Today's activity</h3>
               <ol class="today-activity-list">
                 <li v-for="ev in todayTimelineEvents" :key="ev.key" class="today-activity-item">
                   <span class="today-activity-dot" aria-hidden="true"></span>
                   <div class="today-activity-body">
                     <span class="today-activity-label">{{ ev.label }}</span>
-                    <time class="today-activity-time" :datetime="ev.time">{{ ev.displayTime }}</time>
-                    <span v-if="ev.modality" class="today-activity-modality">{{ ev.modality }}</span>
+                    <time class="today-activity-time" :datetime="ev.time">{{
+                      ev.displayTime
+                    }}</time>
+                    <span v-if="ev.modality" class="today-activity-modality">{{
+                      ev.modality
+                    }}</span>
                   </div>
                 </li>
               </ol>
@@ -2087,7 +2279,9 @@ async function handleCancelFacial() {
               </div>
             </div>
             <div v-else-if="wfhShowCameraPicker" class="wfh-camera-switch">
-              <label class="wfh-camera-switch-label muted small" for="wfh-camera-select">Camera</label>
+              <label class="wfh-camera-switch-label muted small" for="wfh-camera-select"
+                >Camera</label
+              >
               <select
                 id="wfh-camera-select"
                 class="wfh-camera-select"
@@ -2095,11 +2289,7 @@ async function handleCancelFacial() {
                 :disabled="wfhCameraStarting"
                 @change="onWfhCameraSelectChange"
               >
-                <option
-                  v-for="(d, idx) in wfhVideoInputs"
-                  :key="d.deviceId"
-                  :value="d.deviceId"
-                >
+                <option v-for="(d, idx) in wfhVideoInputs" :key="d.deviceId" :value="d.deviceId">
                   {{ d.label?.trim() || `Camera ${idx + 1}` }}
                 </option>
               </select>
@@ -2128,7 +2318,12 @@ async function handleCancelFacial() {
                 </button>
               </div>
               <div v-else class="wfh-photo-camera-actions">
-                <button type="button" class="btn secondary" :disabled="wfhPhotoUploading" @click="retakeWfhPhoto">
+                <button
+                  type="button"
+                  class="btn secondary"
+                  :disabled="wfhPhotoUploading"
+                  @click="retakeWfhPhoto"
+                >
                   Retake
                 </button>
               </div>
@@ -2144,7 +2339,14 @@ async function handleCancelFacial() {
                 <span v-if="wfhPhotoUploading">Uploading…</span>
                 <span v-else>Submit and clock in</span>
               </button>
-              <button type="button" class="btn secondary" :disabled="wfhPhotoUploading" @click="cancelWfhPhotoFlow">Cancel</button>
+              <button
+                type="button"
+                class="btn secondary"
+                :disabled="wfhPhotoUploading"
+                @click="cancelWfhPhotoFlow"
+              >
+                Cancel
+              </button>
             </div>
           </div>
           <!-- Office facial: message shown in modal -->
@@ -2154,20 +2356,33 @@ async function handleCancelFacial() {
           <!-- Idle: start -->
           <div v-else class="hero-card hero-idle">
             <div class="hero-sub-row">
-              <p class="muted hero-sub">
-                Clock in and out here to track your daily attendance.
-              </p>
+              <p class="muted hero-sub">Clock in and out here to track your daily attendance.</p>
             </div>
-            <button type="button" class="btn hero-cta" :disabled="isLoading" @click="onClockInClick">Clock in</button>
-            <div v-if="todayTimelineEvents.length" class="today-activity-panel" aria-label="Today's activity">
+            <button
+              type="button"
+              class="btn hero-cta"
+              :disabled="isLoading"
+              @click="onClockInClick"
+            >
+              Clock in
+            </button>
+            <div
+              v-if="todayTimelineEvents.length"
+              class="today-activity-panel"
+              aria-label="Today's activity"
+            >
               <h3 class="today-activity-panel-title">Today's activity</h3>
               <ol class="today-activity-list">
                 <li v-for="ev in todayTimelineEvents" :key="ev.key" class="today-activity-item">
                   <span class="today-activity-dot" aria-hidden="true"></span>
                   <div class="today-activity-body">
                     <span class="today-activity-label">{{ ev.label }}</span>
-                    <time class="today-activity-time" :datetime="ev.time">{{ ev.displayTime }}</time>
-                    <span v-if="ev.modality" class="today-activity-modality">{{ ev.modality }}</span>
+                    <time class="today-activity-time" :datetime="ev.time">{{
+                      ev.displayTime
+                    }}</time>
+                    <span v-if="ev.modality" class="today-activity-modality">{{
+                      ev.modality
+                    }}</span>
                   </div>
                 </li>
               </ol>
@@ -2178,15 +2393,19 @@ async function handleCancelFacial() {
       <!-- Right: Map -->
       <aside class="map-aside">
         <div class="map-wrap-wrapper">
-          <div v-if="(officeFetchingLocation || wfhFetchingLocation) && !locationIn" class="map-loading-overlay" aria-live="polite">
+          <div
+            v-if="(officeFetchingLocation || wfhFetchingLocation) && !locationIn"
+            class="map-loading-overlay"
+            aria-live="polite"
+          >
             <span class="map-loading-spinner" aria-hidden="true"></span>
             <span class="map-loading-text">Getting location…</span>
           </div>
           <div ref="mapContainer" class="map-wrap"></div>
           <div
             v-if="
-              (workModality === 'office' && step === 'choose_modality' && isOutsideOfficeRadius)
-                || clockOutDisabledByGeofence
+              (workModality === 'office' && step === 'choose_modality' && isOutsideOfficeRadius) ||
+              clockOutDisabledByGeofence
             "
             class="map-geofence-float"
             role="status"
@@ -2204,18 +2423,38 @@ async function handleCancelFacial() {
             title="Refresh location and center map on you"
             @click="onMapLocateMeClick"
           >
-            <svg class="map-locate-me-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z" />
+            <svg
+              class="map-locate-me-icon"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"
+              />
             </svg>
           </button>
-          <div ref="userEdgeIndicator" class="map-edge-indicator map-edge-user" aria-label="Your location direction" title="Click to focus on your location" @click="focusOnUserLocation">
+          <div
+            ref="userEdgeIndicator"
+            class="map-edge-indicator map-edge-user"
+            aria-label="Your location direction"
+            title="Click to focus on your location"
+            @click="focusOnUserLocation"
+          >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2L8 10L12 8L16 10L12 2Z"/>
+              <path d="M12 2L8 10L12 8L16 10L12 2Z" />
             </svg>
           </div>
-          <div ref="branchEdgeIndicator" class="map-edge-indicator map-edge-branch" aria-label="Branch location direction" title="Click to focus on branch location" @click="focusOnBranchLocation">
+          <div
+            ref="branchEdgeIndicator"
+            class="map-edge-indicator map-edge-branch"
+            aria-label="Branch location direction"
+            title="Click to focus on branch location"
+            @click="focusOnBranchLocation"
+          >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2L8 10L12 8L16 10L12 2Z"/>
+              <path d="M12 2L8 10L12 8L16 10L12 2Z" />
             </svg>
           </div>
         </div>
@@ -2225,8 +2464,8 @@ async function handleCancelFacial() {
           {{ mapCaptionShort }}
           <template v-if="workModality === 'office'">
             {{
-              officeGeofence
-                ? ` · ${Math.round(officeGeofence.radius_meters)}m radius`
+              officeGeofences.length
+                ? ` · ${Math.round((userLoc && officeGeofences.find((g) => distanceMeters(userLoc, { lat: g.latitude, lng: g.longitude }) <= g.radius_meters))?.radius_meters || officeGeofences[0].radius_meters)}m radius`
                 : ` · ${RADIUS_M}m radius`
             }}
           </template>
@@ -2236,9 +2475,13 @@ async function handleCancelFacial() {
 
     <!-- Face scanning modal (clock in / clock out). Include facialScanSuccess so success overlay can show after step is clocked_in (timer visible behind lighter overlay). -->
     <div
-      v-if="step === 'facial' || step === 'facial_out' || facialScanSuccess || autoFacialClockOutSuccess"
+      v-if="
+        step === 'facial' || step === 'facial_out' || facialScanSuccess || autoFacialClockOutSuccess
+      "
       class="liveness-modal-overlay"
-      :class="{ 'liveness-modal-overlay--post-clock-in': facialScanSuccess && step === 'clocked_in' }"
+      :class="{
+        'liveness-modal-overlay--post-clock-in': facialScanSuccess && step === 'clocked_in',
+      }"
       aria-modal="true"
       role="dialog"
       aria-labelledby="facial-modal-title"
@@ -2270,8 +2513,12 @@ async function handleCancelFacial() {
                 ? 'Your clock-out was recorded with your current location.'
                 : 'Your clock-out has been recorded.'
               : facialScanSuccess
-                ? (step === 'facial_out' ? 'Clocking out…' : 'Proceeding to timer…')
-                : (step === 'facial' ? 'Verify at facial to clock in.' : 'Verify at facial to clock out.')
+                ? step === 'facial_out'
+                  ? 'Clocking out…'
+                  : 'Proceeding to timer…'
+                : step === 'facial'
+                  ? 'Verify at facial to clock in.'
+                  : 'Verify at facial to clock out.'
           }}
         </p>
         <button
@@ -2400,7 +2647,8 @@ async function handleCancelFacial() {
 
 .hero-idle {
   padding: 1rem 2rem;
-  box-shadow: rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, 
+  box-shadow:
+    rgba(0, 0, 0, 0.1) 0px 1px 3px 0px,
     rgba(0, 0, 0, 0.06) 0px 1px 2px 0px;
 }
 
@@ -2545,7 +2793,9 @@ async function handleCancelFacial() {
   letter-spacing: 0.01em;
   border: 0;
   background: transparent;
-  transition: color 220ms ease, transform 0.12s ease;
+  transition:
+    color 220ms ease,
+    transform 0.12s ease;
 }
 
 .modality-toggle-btn.secondary {
@@ -2689,7 +2939,7 @@ body.dark-mode .timeclock-page .today-activity-modality {
   padding: 0.5rem 1rem;
   font-size: 0.9375rem;
   font-weight: 500;
-  cursor: pointer;  
+  cursor: pointer;
   transition: opacity 0.2s;
   background: #0ea5e9;
   color: #fff;
@@ -2914,7 +3164,11 @@ body.dark-mode .timeclock-page .today-activity-modality {
   z-index: 14;
   pointer-events: none;
   border-radius: inherit;
-  background: radial-gradient(ellipse 100% 95% at 50% 40%, transparent 55%, rgba(32, 33, 36, 0.05) 100%);
+  background: radial-gradient(
+    ellipse 100% 95% at 50% 40%,
+    transparent 55%,
+    rgba(32, 33, 36, 0.05) 100%
+  );
   mix-blend-mode: multiply;
 }
 
@@ -2928,7 +3182,12 @@ body.dark-mode .timeclock-page .today-activity-modality {
   z-index: 16;
   pointer-events: none;
   border-radius: 0 0 999px 999px;
-  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 100%
+  );
   opacity: 0.65;
   filter: blur(0.5px);
 }
@@ -2984,7 +3243,10 @@ body.dark-mode .timeclock-page .today-activity-modality {
   box-shadow:
     0 1px 4px rgba(60, 64, 67, 0.32),
     0 2px 6px rgba(60, 64, 67, 0.15);
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .map-locate-me-btn:hover {
@@ -3017,7 +3279,9 @@ body.dark-mode .timeclock-page .today-activity-modality {
   width: 48px;
   height: 48px;
   cursor: pointer;
-  transition: opacity 0.2s ease, filter 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    filter 0.2s ease;
 }
 
 .map-edge-indicator:hover {
@@ -3065,7 +3329,9 @@ body.dark-mode .timeclock-page .today-activity-modality {
   background: #fff;
   border: 1px solid rgba(32, 33, 36, 0.1);
   border-radius: 10px;
-  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.28), 0 2px 8px rgba(60, 64, 67, 0.12);
+  box-shadow:
+    0 1px 2px rgba(60, 64, 67, 0.28),
+    0 2px 8px rgba(60, 64, 67, 0.12);
   padding: 0;
   font-size: 0.8125rem;
   color: #3c4043;
@@ -3121,7 +3387,9 @@ body.dark-mode .timeclock-page .today-activity-modality {
   border-radius: 50%;
   overflow: hidden;
   border: 3px solid #4285f4;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.22),
+    0 0 0 1px rgba(255, 255, 255, 0.9) inset;
   background: #e8f0fe;
   display: flex;
   align-items: center;
@@ -3155,12 +3423,16 @@ body.dark-mode .timeclock-page .today-activity-modality {
 
 .map-wrap-wrapper :deep(.map-user-marker-root--geofence-out .map-user-marker-wrap) {
   border-color: #ea4335;
-  box-shadow: 0 2px 8px rgba(234, 67, 53, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+  box-shadow:
+    0 2px 8px rgba(234, 67, 53, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.9) inset;
 }
 
 .map-wrap-wrapper :deep(.map-user-marker-root--geofence-in .map-user-marker-wrap) {
   border-color: #34a853;
-  box-shadow: 0 2px 8px rgba(52, 168, 83, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+  box-shadow:
+    0 2px 8px rgba(52, 168, 83, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.9) inset;
 }
 
 .map-wrap-wrapper :deep(.map-user-marker-root--geofence-out .map-user-marker-pulse) {
@@ -3386,7 +3658,9 @@ body.dark-mode .timeclock-page .today-activity-modality {
   border: none;
   border-radius: 8px;
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(60, 64, 67, 0.28), 0 2px 8px rgba(60, 64, 67, 0.12);
+  box-shadow:
+    0 1px 4px rgba(60, 64, 67, 0.28),
+    0 2px 8px rgba(60, 64, 67, 0.12);
 }
 
 .timeclock-page :deep(.leaflet-control-zoom a) {
@@ -3474,11 +3748,12 @@ body.dark-mode .timeclock-page .today-activity-modality {
   border-radius: 999px;
   background: #fff;
   border: 1px solid rgba(32, 33, 36, 0.1);
-  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.28), 0 2px 8px rgba(60, 64, 67, 0.12);
+  box-shadow:
+    0 1px 2px rgba(60, 64, 67, 0.28),
+    0 2px 8px rgba(60, 64, 67, 0.12);
   line-height: 1.35;
   color: #3c4043;
 }
-
 
 .branch-select {
   margin: 0.75rem 0 0;

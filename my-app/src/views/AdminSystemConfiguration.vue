@@ -8,7 +8,7 @@ import {
   PlusCircleIcon,
   MapPinIcon,
   BriefcaseIcon,
-  MagnifyingGlassIcon
+  MagnifyingGlassIcon,
 } from '@heroicons/vue/24/outline'
 import supabase from '../lib/supabaseClient'
 
@@ -25,6 +25,7 @@ interface GeolocationRow {
   longitude: number
   radius_meters: number
   geolocation_status?: boolean
+  have_facial?: boolean
   created_at: string
   updated_at: string
 }
@@ -34,6 +35,7 @@ const geoMapContainer = ref<HTMLElement | null>(null)
 let geoMap: L.Map | null = null
 let geoMarker: L.Marker | null = null
 let geoCircle: L.Circle | null = null
+let geoOfficeMarkers: L.Marker[] = []
 const geoRowId = ref<string | null>(null)
 const geoLat = ref(DEFAULT_GEO.lat)
 const geoLng = ref(DEFAULT_GEO.lng)
@@ -66,7 +68,10 @@ const showNewRow = ref(false)
 async function load() {
   loading.value = true
   error.value = null
-  const { data, error: qErr } = await supabase.from('position').select('*').order('title', { ascending: true })
+  const { data, error: qErr } = await supabase
+    .from('position')
+    .select('*')
+    .order('title', { ascending: true })
   loading.value = false
   if (qErr) {
     error.value = qErr.message
@@ -79,7 +84,7 @@ async function reverseGeocodeAddress(lat: number, lng: number): Promise<string> 
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-      { headers: { 'Accept-Language': 'en', 'User-Agent': 'TimeWorthAdmin/1.0' } }
+      { headers: { 'Accept-Language': 'en', 'User-Agent': 'TimeWorthAdmin/1.0' } },
     )
     const data = await res.json()
     const name = typeof data?.display_name === 'string' ? data.display_name.trim() : ''
@@ -105,8 +110,7 @@ async function loadGeofence() {
     geoRows.value = []
   } else {
     geoRows.value = (data ?? []) as GeolocationRow[]
-    const stillEditing =
-      previousMapRowId && geoRows.value.some((r) => r.id === previousMapRowId)
+    const stillEditing = previousMapRowId && geoRows.value.some((r) => r.id === previousMapRowId)
     if (stillEditing) {
       const row = geoRows.value.find((r) => r.id === previousMapRowId)!
       geoRowId.value = row.id
@@ -144,23 +148,29 @@ function startNewGeofenceOnMap() {
 }
 
 function editGeofenceOnMap(r: GeolocationRow) {
-  geoRowId.value = r.id
-  geoLat.value = r.latitude
-  geoLng.value = r.longitude
-  geoRadiusMeters.value = Math.max(1, r.radius_meters)
+  if (geoRowId.value === r.id) {
+    // Deselect if already selected
+    geoRowId.value = null
+    geoLat.value = DEFAULT_GEO.lat
+    geoLng.value = DEFAULT_GEO.lng
+    geoRadiusMeters.value = 200
+  } else {
+    geoRowId.value = r.id
+    geoLat.value = r.latitude
+    geoLng.value = r.longitude
+    geoRadiusMeters.value = Math.max(1, r.radius_meters)
+  }
   initOrRefreshGeoMap()
 }
 
-async function setOfficeGeofence(targetId: string) {
+async function setOfficeGeofence(targetId: string, value: boolean) {
   geoError.value = null
   geoOfficeSavingId.value = targetId
   const now = new Date().toISOString()
   try {
-    const { error: clearErr } = await supabase.from('geolocation').update({ geolocation_status: false, updated_at: now }).neq('id', '00000000-0000-0000-0000-000000000000')
-    if (clearErr) throw clearErr
     const { error: setErr } = await supabase
       .from('geolocation')
-      .update({ geolocation_status: true, updated_at: now })
+      .update({ geolocation_status: value, updated_at: now })
       .eq('id', targetId)
     if (setErr) throw setErr
     await loadGeofence()
@@ -168,6 +178,21 @@ async function setOfficeGeofence(targetId: string) {
     geoError.value = e instanceof Error ? e.message : 'Failed to set office geofence'
   } finally {
     geoOfficeSavingId.value = null
+  }
+}
+
+async function toggleFacialScanner(targetId: string, value: boolean) {
+  geoError.value = null
+  const now = new Date().toISOString()
+  try {
+    const { error: setErr } = await supabase
+      .from('geolocation')
+      .update({ have_facial: value, updated_at: now })
+      .eq('id', targetId)
+    if (setErr) throw setErr
+    await loadGeofence()
+  } catch (e) {
+    geoError.value = e instanceof Error ? e.message : 'Failed to set facial scanner'
   }
 }
 
@@ -209,6 +234,8 @@ function teardownGeoMap() {
   geoCircle = null
   geoMarker?.remove()
   geoMarker = null
+  geoOfficeMarkers.forEach((m) => m.remove())
+  geoOfficeMarkers = []
   geoMap?.remove()
   geoMap = null
 }
@@ -222,30 +249,77 @@ function updateGeoCircle() {
     color: '#0ea5e9',
     weight: 2,
     fillColor: '#0ea5e9',
-    fillOpacity: 0.12
+    fillOpacity: 0.12,
   }).addTo(geoMap)
 }
 
 function initOrRefreshGeoMap() {
   if (!geoMapContainer.value) return
   if (!geoMap) {
-    geoMap = L.map(geoMapContainer.value, { zoomControl: true }).setView([geoLat.value, geoLng.value], 16)
+    geoMap = L.map(geoMapContainer.value, { zoomControl: true }).setView(
+      [geoLat.value, geoLng.value],
+      16,
+    )
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       attribution: '© CARTO',
       subdomains: 'abcd',
-      maxZoom: 20
+      maxZoom: 20,
     }).addTo(geoMap)
     geoMap.on('click', (e: L.LeafletMouseEvent) => {
-      geoLat.value = e.latlng.lat
-      geoLng.value = e.latlng.lng
-      placeGeoMarker()
-      updateGeoCircle()
+      // Deselect if clicking on the same location
+      if (geoRowId.value) {
+        geoRowId.value = null
+        geoLat.value = DEFAULT_GEO.lat
+        geoLng.value = DEFAULT_GEO.lng
+        geoRadiusMeters.value = 200
+        placeGeoMarker()
+        updateGeoCircle()
+      }
     })
   } else {
     geoMap.setView([geoLat.value, geoLng.value], geoMap.getZoom())
   }
-  placeGeoMarker()
-  updateGeoCircle()
+  // Remove previous markers
+  geoOfficeMarkers.forEach((m) => m.remove())
+  geoOfficeMarkers = []
+  // Show all office geofences with circle and improved icon
+  geoRows.value.forEach((row) => {
+    if (row.geolocation_status) {
+      const icon = L.divIcon({
+        className: 'office-marker',
+        html: `
+          <div style="display:flex;align-items:center;gap:2px;">
+            <span style="display:inline-block;width:28px;height:28px;background:linear-gradient(135deg,#22c55e 60%,#0ea5e9 100%);border-radius:50%;box-shadow:0 2px 8px rgba(34,197,94,0.18);display:flex;align-items:center;justify-content:center;">
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="4" y="7" width="12" height="9" rx="2" fill="white"/><rect x="7" y="4" width="6" height="3" rx="1.5" fill="white"/><rect x="9" y="10" width="2" height="3" rx="1" fill="#22c55e"/></svg>
+            </span>
+            ${row.have_facial ? `<span style=\"display:inline-block;width:22px;height:22px;background:#fff;border-radius:50%;box-shadow:0 1px 4px rgba(14,165,233,0.13);margin-left:-8px;display:flex;align-items:center;justify-content:center;\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 20 20\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><circle cx=\"10\" cy=\"10\" r=\"7\" fill=\"#0ea5e9\"/><circle cx=\"10\" cy=\"10\" r=\"3\" fill=\"#fff\"/></svg></span>` : ''}
+          </div>
+        `,
+      })
+      const marker = L.marker([row.latitude, row.longitude], { icon }).addTo(geoMap!)
+      marker.bindTooltip(`${row.name}${row.have_facial ? ' (Facial Scanner)' : ''}`)
+      geoOfficeMarkers.push(marker)
+      // Draw circle for each office geofence
+      const circle = L.circle([row.latitude, row.longitude], {
+        radius: Math.max(1, row.radius_meters),
+        color: '#22c55e',
+        weight: 2,
+        fillColor: '#22c55e',
+        fillOpacity: 0.1,
+      }).addTo(geoMap!)
+      geoOfficeMarkers.push(circle)
+    }
+  })
+  // Show selected marker if any
+  if (geoRowId.value) {
+    placeGeoMarker()
+    updateGeoCircle()
+  } else {
+    geoMarker?.remove()
+    geoMarker = null
+    geoCircle?.remove()
+    geoCircle = null
+  }
 }
 
 function placeGeoMarker() {
@@ -283,7 +357,7 @@ function recenterMapOnCurrentLocation() {
       geoLocating.value = false
       geoError.value = err?.message || 'Could not get your current location.'
     },
-    { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
   )
 }
 
@@ -308,7 +382,7 @@ async function saveGeofence() {
           latitude: lat,
           longitude: lng,
           radius_meters: radius,
-          updated_at: now
+          updated_at: now,
         })
         .eq('id', geoRowId.value)
       if (uErr) throw uErr
@@ -321,7 +395,7 @@ async function saveGeofence() {
           longitude: lng,
           radius_meters: radius,
           geolocation_status: false,
-          updated_at: now
+          updated_at: now,
         })
         .select('id')
         .single()
@@ -363,7 +437,10 @@ async function saveEdit(r: PositionRow) {
   }
   error.value = null
   savingId.value = r.position_id
-  const { error: err } = await supabase.from('position').update({ title: t, updated_at: new Date().toISOString() }).eq('position_id', r.position_id)
+  const { error: err } = await supabase
+    .from('position')
+    .update({ title: t, updated_at: new Date().toISOString() })
+    .eq('position_id', r.position_id)
   savingId.value = null
   if (err) {
     error.value = err.message
@@ -424,7 +501,7 @@ function formatDate(iso: string) {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     })
   } catch {
     return iso
@@ -439,7 +516,7 @@ const filteredGeoRows = computed(() => {
       g.name.toLowerCase().includes(q) ||
       String(g.latitude).includes(q) ||
       String(g.longitude).includes(q) ||
-      String(Math.round(g.radius_meters)).includes(q)
+      String(Math.round(g.radius_meters)).includes(q),
   )
 })
 
@@ -464,7 +541,8 @@ watch(activeSection, async (s) => {
     <header class="sys-config-page-header">
       <h1>System configuration</h1>
       <p class="muted page-lead">
-        Choose a category from the left. Use search to narrow lists. Geofence and job positions are organized as separate settings areas.
+        Choose a category from the left. Use search to narrow lists. Geofence and job positions are
+        organized as separate settings areas.
       </p>
     </header>
 
@@ -500,7 +578,9 @@ watch(activeSection, async (s) => {
         >
           <h2 id="geofence-panel-title" class="sys-config-panel-title">Geofence</h2>
           <p class="muted sys-config-panel-lead">
-            Define where attendance may be validated. Multiple rows can exist; only one may be marked as the office geofence (<code class="code-inline">geolocation_status</code>). Search applies to the saved list below.
+            Define where attendance may be validated. Multiple rows can exist; only one may be
+            marked as the office geofence (<code class="code-inline">geolocation_status</code>).
+            Search applies to the saved list below.
           </p>
 
           <div class="sys-config-search" role="search">
@@ -521,12 +601,19 @@ watch(activeSection, async (s) => {
             <h3 class="config-item-title">Geofence center and radius</h3>
             <p class="config-item-key">geolocation.center · geolocation.radius_meters</p>
             <p class="config-item-desc">
-              Click the map or drag the pin to set the center. Use <strong>Current location</strong> to jump to your device GPS, then adjust radius and save.
+              Click the map or drag the pin to set the center. Use
+              <strong>Current location</strong> to jump to your device GPS, then adjust radius and
+              save.
             </p>
             <div class="config-item-control">
               <div v-if="geoLoading" class="loading-state">Loading map…</div>
               <div v-show="!geoLoading" class="geofence-map-wrap">
-                <div ref="geoMapContainer" class="geofence-map" role="application" aria-label="Map: click to set geofence center" />
+                <div
+                  ref="geoMapContainer"
+                  class="geofence-map"
+                  role="application"
+                  aria-label="Map: click to set geofence center"
+                />
                 <button
                   type="button"
                   class="geo-locate-btn"
@@ -554,21 +641,34 @@ watch(activeSection, async (s) => {
                   {{ geoLat.toFixed(6) }}, {{ geoLng.toFixed(6) }}
                 </div>
                 <p class="geo-mode-hint muted" aria-live="polite">
-                  {{ geoRowId ? 'Table: row highlighted = updating this location.' : 'Adding a new location — no row highlighted.' }}
+                  {{
+                    geoRowId
+                      ? 'Table: row highlighted = updating this location.'
+                      : 'Adding a new location — no row highlighted.'
+                  }}
                 </p>
-                <button type="button" class="btn-primary" :disabled="geoSaving" @click="saveGeofence">
+                <button
+                  type="button"
+                  class="btn-primary"
+                  :disabled="geoSaving"
+                  @click="saveGeofence"
+                >
                   {{ geoSaving ? 'Saving…' : geoRowId ? 'Update geofence' : 'Save new geofence' }}
                 </button>
               </div>
             </div>
-            <p class="config-item-note">Saving reverse-geocodes the center for the row label. Office designation is managed in the table setting.</p>
+            <p class="config-item-note">
+              Saving reverse-geocodes the center for the row label. Office designation is managed in
+              the table setting.
+            </p>
           </article>
 
           <article class="config-item">
             <h3 class="config-item-title">Saved geofences</h3>
             <p class="config-item-key">geolocation.records</p>
             <p class="config-item-desc">
-              Select a row to load it on the map. Mark one row as the office geofence, or clear the office flag.
+              Select a row to load it on the map. Mark one row as the office geofence, or clear the
+              office flag.
             </p>
             <div class="config-item-control">
               <div class="geo-table-header">
@@ -576,7 +676,9 @@ watch(activeSection, async (s) => {
                   Add new location
                 </button>
               </div>
-              <div v-if="geoTableLoading && !geoRows.length" class="loading-state muted">Loading list…</div>
+              <div v-if="geoTableLoading && !geoRows.length" class="loading-state muted">
+                Loading list…
+              </div>
               <div v-else class="table-scroll geo-table-scroll">
                 <table class="data-table geo-data-table">
                   <thead>
@@ -596,13 +698,47 @@ watch(activeSection, async (s) => {
                       class="geo-row--clickable"
                       :class="{
                         'geo-row--office': g.geolocation_status,
-                        'geo-row--selected': geoRowId !== null && geoRowId === g.id
+                        'geo-row--selected': geoRowId !== null && geoRowId === g.id,
                       }"
                       tabindex="0"
                       @click="editGeofenceOnMap(g)"
                       @keydown.enter.prevent="editGeofenceOnMap(g)"
                     >
-                      <td class="geo-name-cell">{{ g.name }}</td>
+                      <td class="geo-name-cell">
+                        {{ g.name }}
+                        <span
+                          v-if="g.geolocation_status"
+                          style="margin-left: 0.2em; vertical-align: middle"
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 20 20"
+                            fill="none"
+                            style="vertical-align: middle"
+                          >
+                            <rect x="4" y="7" width="12" height="9" rx="2" fill="#22c55e" />
+                            <rect x="7" y="4" width="6" height="3" rx="1.5" fill="#22c55e" />
+                            <rect x="9" y="10" width="2" height="3" rx="1" fill="#fff" />
+                          </svg>
+                        </span>
+                        <span
+                          v-if="g.have_facial"
+                          title="Facial scanner enabled"
+                          style="margin-left: 0.15em; vertical-align: middle"
+                        >
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 20 20"
+                            fill="none"
+                            style="vertical-align: middle"
+                          >
+                            <circle cx="10" cy="10" r="7" fill="#0ea5e9" />
+                            <circle cx="10" cy="10" r="3" fill="#fff" />
+                          </svg>
+                        </span>
+                      </td>
                       <td class="td-muted">{{ g.latitude?.toFixed(6) }}</td>
                       <td class="td-muted">{{ g.longitude?.toFixed(6) }}</td>
                       <td class="td-muted">{{ Math.round(g.radius_meters) }}</td>
@@ -620,22 +756,28 @@ watch(activeSection, async (s) => {
                           Edit on map
                         </button>
                         <button
-                          v-if="!g.geolocation_status"
                           type="button"
                           class="btn-mini btn-mini-accent"
                           :disabled="geoOfficeSavingId !== null || geoDeletingId !== null"
-                          @click="setOfficeGeofence(g.id)"
+                          @click="setOfficeGeofence(g.id, !g.geolocation_status)"
                         >
-                          {{ geoOfficeSavingId === g.id ? 'Setting…' : 'Set as office geofence' }}
+                          {{
+                            g.geolocation_status
+                              ? geoOfficeSavingId === g.id
+                                ? 'Unsetting…'
+                                : 'Unset office'
+                              : geoOfficeSavingId === g.id
+                                ? 'Setting…'
+                                : 'Set as office'
+                          }}
                         </button>
                         <button
-                          v-else
                           type="button"
                           class="btn-mini"
                           :disabled="geoOfficeSavingId !== null || geoDeletingId !== null"
-                          @click="clearOfficeGeofence"
+                          @click="toggleFacialScanner(g.id, !g.have_facial)"
                         >
-                          {{ geoOfficeSavingId === 'all' ? 'Clearing…' : 'Clear office' }}
+                          {{ g.have_facial ? 'Unset facial scanner' : 'Set facial scanner' }}
                         </button>
                         <button
                           type="button"
@@ -650,18 +792,20 @@ watch(activeSection, async (s) => {
                   </tbody>
                 </table>
               </div>
-              <p v-if="!geoRows.length && !geoTableLoading && !geoLoading" class="empty-hint">No geofences yet. Place a point on the map and save.</p>
-              <p v-else-if="geoRows.length && !filteredGeoRows.length" class="empty-hint">No geofences match your search.</p>
+              <p v-if="!geoRows.length && !geoTableLoading && !geoLoading" class="empty-hint">
+                No geofences yet. Place a point on the map and save.
+              </p>
+              <p v-else-if="geoRows.length && !filteredGeoRows.length" class="empty-hint">
+                No geofences match your search.
+              </p>
             </div>
-            <p class="config-item-note">The current office row is the one with geolocation_status true in the database.</p>
+            <p class="config-item-note">
+              The current office row is the one with geolocation_status true in the database.
+            </p>
           </article>
         </section>
 
-        <section
-          v-else
-          class="sys-config-panel"
-          aria-labelledby="positions-panel-title"
-        >
+        <section v-else class="sys-config-panel" aria-labelledby="positions-panel-title">
           <h2 id="positions-panel-title" class="sys-config-panel-title">Job positions</h2>
           <p class="muted sys-config-panel-lead">
             Titles appear wherever employees pick a position. Search filters the list below.
@@ -684,10 +828,17 @@ watch(activeSection, async (s) => {
           <article class="config-item">
             <h3 class="config-item-title">Add position</h3>
             <p class="config-item-key">position.create</p>
-            <p class="config-item-desc">Create a new job title for signup and attendance records.</p>
+            <p class="config-item-desc">
+              Create a new job title for signup and attendance records.
+            </p>
             <div class="config-item-control">
               <div class="toolbar">
-                <button type="button" class="btn-add" :disabled="loading || showNewRow" @click="openNew">
+                <button
+                  type="button"
+                  class="btn-add"
+                  :disabled="loading || showNewRow"
+                  @click="openNew"
+                >
                   <PlusCircleIcon class="btn-add-icon" aria-hidden="true" />
                   Add position
                 </button>
@@ -701,19 +852,35 @@ watch(activeSection, async (s) => {
                   aria-label="New position title"
                   @keyup.enter="saveNew"
                 />
-                <button type="button" class="btn-primary" :disabled="savingId === 'new'" @click="saveNew">
+                <button
+                  type="button"
+                  class="btn-primary"
+                  :disabled="savingId === 'new'"
+                  @click="saveNew"
+                >
                   {{ savingId === 'new' ? 'Saving…' : 'Save' }}
                 </button>
-                <button type="button" class="btn-ghost" :disabled="savingId === 'new'" @click="cancelNew">Cancel</button>
+                <button
+                  type="button"
+                  class="btn-ghost"
+                  :disabled="savingId === 'new'"
+                  @click="cancelNew"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
-            <p class="config-item-note">New rows are stored in the <code class="code-inline">position</code> table.</p>
+            <p class="config-item-note">
+              New rows are stored in the <code class="code-inline">position</code> table.
+            </p>
           </article>
 
           <article class="config-item">
             <h3 class="config-item-title">Saved positions</h3>
             <p class="config-item-key">position.list</p>
-            <p class="config-item-desc">Edit titles in place or remove positions that are no longer offered.</p>
+            <p class="config-item-desc">
+              Edit titles in place or remove positions that are no longer offered.
+            </p>
             <div class="config-item-control">
               <div v-if="loading" class="loading-state">Loading…</div>
               <div v-else class="table-scroll">
@@ -744,17 +911,43 @@ watch(activeSection, async (s) => {
                       <td class="td-muted">{{ formatDate(r.created_at) }}</td>
                       <td class="td-actions">
                         <template v-if="editingId === r.position_id">
-                          <button type="button" class="btn-icon btn-save" :disabled="savingId === r.position_id" title="Save" @click="saveEdit(r)">
+                          <button
+                            type="button"
+                            class="btn-icon btn-save"
+                            :disabled="savingId === r.position_id"
+                            title="Save"
+                            @click="saveEdit(r)"
+                          >
                             Save
                           </button>
-                          <button type="button" class="btn-icon btn-cancel" :disabled="savingId === r.position_id" title="Cancel" @click="cancelEdit">Cancel</button>
+                          <button
+                            type="button"
+                            class="btn-icon btn-cancel"
+                            :disabled="savingId === r.position_id"
+                            title="Cancel"
+                            @click="cancelEdit"
+                          >
+                            Cancel
+                          </button>
                         </template>
                         <template v-else>
-                          <button type="button" class="btn-icon" title="Edit title" :disabled="savingId !== null" @click="startEdit(r)">
+                          <button
+                            type="button"
+                            class="btn-icon"
+                            title="Edit title"
+                            :disabled="savingId !== null"
+                            @click="startEdit(r)"
+                          >
                             <PencilSquareIcon class="icon" aria-hidden="true" />
                             <span class="sr-only">Edit</span>
                           </button>
-                          <button type="button" class="btn-icon btn-danger" title="Remove" :disabled="savingId !== null" @click="removeRow(r)">
+                          <button
+                            type="button"
+                            class="btn-icon btn-danger"
+                            title="Remove"
+                            :disabled="savingId !== null"
+                            @click="removeRow(r)"
+                          >
                             <TrashIcon class="icon" aria-hidden="true" />
                             <span class="sr-only">Remove</span>
                           </button>
@@ -764,10 +957,16 @@ watch(activeSection, async (s) => {
                   </tbody>
                 </table>
               </div>
-              <p v-if="!rows.length && !loading && !showNewRow" class="empty-hint">No positions yet. Use “Add position” above to create one.</p>
-              <p v-else-if="rows.length && !filteredPositionRows.length" class="empty-hint">No positions match your search.</p>
+              <p v-if="!rows.length && !loading && !showNewRow" class="empty-hint">
+                No positions yet. Use “Add position” above to create one.
+              </p>
+              <p v-else-if="rows.length && !filteredPositionRows.length" class="empty-hint">
+                No positions match your search.
+              </p>
             </div>
-            <p class="config-item-note">Edits update <code class="code-inline">position.title</code> for the selected row.</p>
+            <p class="config-item-note">
+              Edits update <code class="code-inline">position.title</code> for the selected row.
+            </p>
           </article>
         </section>
       </div>
@@ -845,7 +1044,9 @@ watch(activeSection, async (s) => {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 .sys-config-nav-item:hover {
@@ -1217,7 +1418,9 @@ watch(activeSection, async (s) => {
   color: var(--text-primary);
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  transition: background 0.2s, opacity 0.2s;
+  transition:
+    background 0.2s,
+    opacity 0.2s;
 }
 .geo-locate-btn:hover:not(:disabled) {
   background: var(--bg-hover);
@@ -1266,7 +1469,9 @@ watch(activeSection, async (s) => {
   background: rgba(56, 189, 248, 0.12);
   color: var(--accent);
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s;
 }
 .btn-add-location:hover {
   background: rgba(56, 189, 248, 0.2);
