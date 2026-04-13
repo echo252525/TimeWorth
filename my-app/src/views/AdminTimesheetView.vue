@@ -831,7 +831,7 @@ async function fetchAttendanceForUserInRange(userId: string, bounds: HistoryDate
       .order('clock_in', { ascending: false })
   }
 
-  let { data, error: err } = await queryRange(bounds.startDay, bounds.endDay)
+  const { data, error: err } = await queryRange(bounds.startDay, bounds.endDay)
   if (err) throw err
 
   let raw = (data ?? []) as AttendanceRow[]

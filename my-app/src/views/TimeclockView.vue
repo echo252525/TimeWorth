@@ -148,6 +148,31 @@ const autoFacialClockOutSavedLocation = ref(false)
 const livenessLoading = ref(false)
 const livenessError = ref<string | null>(null)
 const clockOutLoading = ref(false)
+/** Shown when clock-in/out Supabase calls exceed threshold (weak Wi‑Fi / signal). */
+const weakSignalModalOpen = ref(false)
+let weakSignalTimer: number | null = null
+/** Shorter in dev so you can verify UI; production uses 10s (slow requests only). */
+const CLOCK_ACTION_WEAK_SIGNAL_MS = import.meta.env.DEV ? 3_000 : 10_000
+
+function beginWeakSignalWatch() {
+  endWeakSignalWatch()
+  weakSignalTimer = window.setTimeout(() => {
+    weakSignalModalOpen.value = true
+  }, CLOCK_ACTION_WEAK_SIGNAL_MS)
+}
+
+function endWeakSignalWatch() {
+  if (weakSignalTimer != null) {
+    clearTimeout(weakSignalTimer)
+    weakSignalTimer = null
+  }
+  weakSignalModalOpen.value = false
+}
+
+function dismissWeakSignalModal() {
+  weakSignalModalOpen.value = false
+}
+
 /** While clocked in with a facial row, poll for remote clock-out flag (hardware / facial terminal). */
 let facialAutoClockOutPollId: number | null = null
 const facialAutoClockOutInFlight = ref(false)
@@ -508,6 +533,7 @@ onUnmounted(() => {
     wfhPhotoPreviewUrl.value = null
   }
   stopWfhCamera()
+  endWeakSignalWatch()
 })
 
 const activeBranch = computed(() => {
@@ -1244,17 +1270,22 @@ async function tryAutoClockOutFromFacialFlag() {
   try {
     let savedLocation = false
     try {
-      const loc = await getLocation()
-      locationOut.value = loc
-      const locStr = locationString(loc)
-      if (locStr) {
-        await clockOut(locStr, null)
-        savedLocation = true
-      } else {
+      beginWeakSignalWatch()
+      try {
+        const loc = await getLocation()
+        locationOut.value = loc
+        const locStr = locationString(loc)
+        if (locStr) {
+          await clockOut(locStr, null)
+          savedLocation = true
+        } else {
+          await clockOut(undefined, null)
+        }
+      } catch {
         await clockOut(undefined, null)
       }
-    } catch {
-      await clockOut(undefined, null)
+    } finally {
+      endWeakSignalWatch()
     }
     if (isClockedIn.value) return
     step.value = 'idle'
@@ -1318,13 +1349,18 @@ watch(step, async (s, prev) => {
           facialScanSuccess.value = true
           const out = clockOutOutputToSave.value
           try {
-            const loc = await getLocation()
-            locationOut.value = loc
-            const locStr = locationString(loc)
-            if (locStr) await clockOut(locStr, out)
-            else await clockOut(undefined, out)
-          } catch {
-            await clockOut(undefined, out)
+            beginWeakSignalWatch()
+            try {
+              const loc = await getLocation()
+              locationOut.value = loc
+              const locStr = locationString(loc)
+              if (locStr) await clockOut(locStr, out)
+              else await clockOut(undefined, out)
+            } catch {
+              await clockOut(undefined, out)
+            }
+          } finally {
+            endWeakSignalWatch()
           }
           setTimeout(() => {
             closeLivenessRealtime()
@@ -1572,6 +1608,7 @@ async function submitWfhClockIn() {
   wfhPhotoUploading.value = true
   wfhPhotoError.value = null
   locationError.value = null
+  beginWeakSignalWatch()
   try {
     const loc = locationIn.value ?? (await getLocation())
     const picturePath = await uploadWfhPhoto()
@@ -1589,6 +1626,7 @@ async function submitWfhClockIn() {
     locationError.value = msg
     step.value = 'wfh_photo'
   } finally {
+    endWeakSignalWatch()
     wfhPhotoUploading.value = false
   }
 }
@@ -1649,7 +1687,12 @@ async function selectModalityAndStart(mod: WorkModality) {
       await syncEmployeeIsregisteredFromFaceBucket()
       await startLivenessVerification()
     } else {
-      await clockIn('office', { locationIn: locationString(locationIn.value!) })
+      try {
+        beginWeakSignalWatch()
+        await clockIn('office', { locationIn: locationString(locationIn.value!) })
+      } finally {
+        endWeakSignalWatch()
+      }
       step.value = 'clocked_in'
       locationIn.value = null
     }
@@ -1732,38 +1775,43 @@ async function startLivenessVerification() {
 
 async function onFacialClockInVerified() {
   facialScanSuccess.value = true
-  let locStr: string | undefined = locationString(locationIn.value) ?? undefined
-  if (workModality.value === 'office' && !locStr) {
-    try {
-      const loc = await getLocation()
-      locationIn.value = loc
-      locStr = locationString(loc) ?? undefined
-    } catch {
-      locationError.value = 'Location required to clock in'
-      facialScanSuccess.value = false
-      return
+  beginWeakSignalWatch()
+  try {
+    let locStr: string | undefined = locationString(locationIn.value) ?? undefined
+    if (workModality.value === 'office' && !locStr) {
+      try {
+        const loc = await getLocation()
+        locationIn.value = loc
+        locStr = locationString(loc) ?? undefined
+      } catch {
+        locationError.value = 'Location required to clock in'
+        facialScanSuccess.value = false
+        return
+      }
     }
+    const branchLocation =
+      workModality.value === 'office'
+        ? officeGeofences.value[0]?.name?.trim() || selectedBranch.value?.id
+        : undefined
+    await clockIn(workModality.value, {
+      locationIn: locStr,
+      facialStatus: 'verified',
+      branchLocation,
+      facialVerificationId: livenessVerificationId.value ?? undefined,
+    })
+    // Match WFH: enter clocked-in state immediately so the live timer is visible (not hidden under step==='facial').
+    step.value = 'clocked_in'
+    closeLivenessRealtime()
+    await fetchToday()
+    setTimeout(() => {
+      facialScanSuccess.value = false
+      locationIn.value = null
+      fetchToday()
+      // keep livenessVerificationId for clock-out facial scan
+    }, 1800)
+  } finally {
+    endWeakSignalWatch()
   }
-  const branchLocation =
-    workModality.value === 'office'
-      ? officeGeofences.value[0]?.name?.trim() || selectedBranch.value?.id
-      : undefined
-  await clockIn(workModality.value, {
-    locationIn: locStr,
-    facialStatus: 'verified',
-    branchLocation,
-    facialVerificationId: livenessVerificationId.value ?? undefined,
-  })
-  // Match WFH: enter clocked-in state immediately so the live timer is visible (not hidden under step==='facial').
-  step.value = 'clocked_in'
-  closeLivenessRealtime()
-  await fetchToday()
-  setTimeout(() => {
-    facialScanSuccess.value = false
-    locationIn.value = null
-    fetchToday()
-    // keep livenessVerificationId for clock-out facial scan
-  }, 1800)
 }
 
 async function cancelFacialModal() {
@@ -1837,18 +1885,22 @@ function beginOfficeClockOut() {
       clockOutLoading.value = true
       ;(async () => {
         try {
-          const loc = await getLocation()
-          locationOut.value = loc
-          const locStr = locationString(loc)!
-          await clockOut(locStr, null)
-          step.value = 'idle'
-          locationOut.value = null
-          clearClockOutOutputState()
-        } catch {
-          await clockOut(undefined, null)
-          step.value = 'idle'
-          clearClockOutOutputState()
+          beginWeakSignalWatch()
+          try {
+            const loc = await getLocation()
+            locationOut.value = loc
+            const locStr = locationString(loc)!
+            await clockOut(locStr, null)
+            step.value = 'idle'
+            locationOut.value = null
+            clearClockOutOutputState()
+          } catch {
+            await clockOut(undefined, null)
+            step.value = 'idle'
+            clearClockOutOutputState()
+          }
         } finally {
+          endWeakSignalWatch()
           clockOutLoading.value = false
         }
       })()
@@ -1880,6 +1932,7 @@ async function executeWfhClockOut() {
   clockOutLoading.value = true
   locationError.value = null
   locationOut.value = null
+  beginWeakSignalWatch()
   try {
     const loc = await getLocation()
     locationOut.value = loc
@@ -1897,6 +1950,7 @@ async function executeWfhClockOut() {
     step.value = 'idle'
     clearClockOutOutputState()
   } finally {
+    endWeakSignalWatch()
     clockOutLoading.value = false
   }
 }
@@ -1904,12 +1958,17 @@ async function executeWfhClockOut() {
 function confirmClockOutOutside() {
   const loc = locationString(locationOut.value)
   if (!loc) return
-  clockOut(loc, clockOutOutputToSave.value).then(() => {
-    step.value = 'idle'
-    clockOutConfirm.value = null
-    locationOut.value = null
-    clearClockOutOutputState()
-  })
+  beginWeakSignalWatch()
+  clockOut(loc, clockOutOutputToSave.value)
+    .then(() => {
+      step.value = 'idle'
+      clockOutConfirm.value = null
+      locationOut.value = null
+      clearClockOutOutputState()
+    })
+    .finally(() => {
+      endWeakSignalWatch()
+    })
 }
 
 function cancelClockOutConfirm() {
@@ -1991,6 +2050,26 @@ async function handleCancelFacial() {
 
 <template>
   <div class="timeclock-page">
+    <Teleport to="body">
+      <div
+        v-if="weakSignalModalOpen"
+        class="weak-signal-modal"
+        role="alertdialog"
+        aria-labelledby="weak-signal-title"
+        aria-describedby="weak-signal-desc"
+      >
+        <div class="weak-signal-modal__panel">
+          <p id="weak-signal-title" class="weak-signal-modal__title">Connection is slow or lost</p>
+          <p id="weak-signal-desc" class="weak-signal-modal__desc">
+            Clock-in or clock-out is taking longer than usual. Check your Wi‑Fi or mobile signal and
+            wait—do not leave this page until it finishes or you may need to try again.
+          </p>
+          <button type="button" class="weak-signal-modal__dismiss" @click="dismissWeakSignalModal">
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </Teleport>
     <div class="timeclock-layout">
       <!-- Left: Hero timeclock -->
       <div class="hero-section">
@@ -3936,5 +4015,61 @@ body.dark-mode .timeclock-page .today-activity-modality {
 .liveness-cancel-spinner {
   border-color: rgba(148, 163, 184, 0.3);
   border-top-color: #94a3b8;
+}
+</style>
+
+<style>
+/* Weak-signal banner: teleported to body — unscoped so styles always apply. */
+.weak-signal-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2147483000;
+  display: flex;
+  justify-content: center;
+  padding: 0.75rem 1rem;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.weak-signal-modal__panel {
+  pointer-events: auto;
+  max-width: min(40rem, calc(100% - 2rem));
+  width: 100%;
+  padding: 0.875rem 1rem;
+  border-radius: 0 0 12px 12px;
+  background: rgba(15, 23, 42, 0.96);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-top: none;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.weak-signal-modal__title {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fecaca;
+}
+
+.weak-signal-modal__desc {
+  margin: 0 0 0.65rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: #e2e8f0;
+}
+
+.weak-signal-modal__dismiss {
+  font-size: 0.8125rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+  cursor: pointer;
+}
+
+.weak-signal-modal__dismiss:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 </style>
