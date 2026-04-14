@@ -48,6 +48,11 @@ const geoTableLoading = ref(false)
 const geoOfficeSavingId = ref<string | null>(null)
 const geoDeletingId = ref<string | null>(null)
 const geoLocating = ref(false)
+const geoAddressQuery = ref('')
+const geoSearching = ref(false)
+const geoSearchError = ref<string | null>(null)
+/** True only after "Add new location" — pin + save-new apply; cleared on cancel or after save. */
+const geoAddingNew = ref(false)
 
 interface PositionRow {
   position_id: string
@@ -80,6 +85,33 @@ async function load() {
   rows.value = (data ?? []) as PositionRow[]
 }
 
+async function forwardGeocodeAddress(query: string): Promise<{ lat: number; lng: number } | null> {
+  const q = query.trim()
+  if (!q) return null
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`,
+      {
+        headers: {
+          Accept: 'application/json',
+          'Accept-Language': 'en',
+          'User-Agent': 'TimeWorthAdmin/1.0',
+        },
+      },
+    )
+    if (!res.ok) return null
+    const data = (await res.json()) as Array<{ lat?: string; lon?: string }>
+    const first = data[0]
+    if (!first?.lat || !first?.lon) return null
+    const lat = parseFloat(first.lat)
+    const lng = parseFloat(first.lon)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+    return { lat, lng }
+  } catch {
+    return null
+  }
+}
+
 async function reverseGeocodeAddress(lat: number, lng: number): Promise<string> {
   try {
     const res = await fetch(
@@ -95,6 +127,7 @@ async function reverseGeocodeAddress(lat: number, lng: number): Promise<string> 
 }
 
 async function loadGeofence() {
+  geoAddingNew.value = false
   const previousMapRowId = geoRowId.value
   geoLoading.value = true
   geoTableLoading.value = true
@@ -140,6 +173,7 @@ async function loadGeofence() {
 }
 
 function startNewGeofenceOnMap() {
+  geoAddingNew.value = true
   geoRowId.value = null
   geoLat.value = DEFAULT_GEO.lat
   geoLng.value = DEFAULT_GEO.lng
@@ -147,7 +181,13 @@ function startNewGeofenceOnMap() {
   initOrRefreshGeoMap()
 }
 
+function cancelNewGeofenceOnMap() {
+  geoAddingNew.value = false
+  void loadGeofence()
+}
+
 function editGeofenceOnMap(r: GeolocationRow) {
+  geoAddingNew.value = false
   if (geoRowId.value === r.id) {
     // Deselect if already selected
     geoRowId.value = null
@@ -240,6 +280,17 @@ function teardownGeoMap() {
   geoMap = null
 }
 
+function newGeofenceMarkerIcon(): L.DivIcon {
+  const pinSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/><path d="M19.5 10.5c0 7.125-7.125 11.25-7.5 11.25S4.5 17.625 4.5 10.5a7.5 7.5 0 1 1 15 0Z"/></svg>'
+  return L.divIcon({
+    className: 'geo-new-geofence-marker',
+    html: `<div class="geo-new-geofence-marker-inner">${pinSvg}</div>`,
+    iconSize: [40, 44],
+    iconAnchor: [20, 44],
+  })
+}
+
 function updateGeoCircle() {
   if (!geoMap) return
   geoCircle?.remove()
@@ -266,15 +317,11 @@ function initOrRefreshGeoMap() {
       maxZoom: 20,
     }).addTo(geoMap)
     geoMap.on('click', (e: L.LeafletMouseEvent) => {
-      // Deselect if clicking on the same location
-      if (geoRowId.value) {
-        geoRowId.value = null
-        geoLat.value = DEFAULT_GEO.lat
-        geoLng.value = DEFAULT_GEO.lng
-        geoRadiusMeters.value = 200
-        placeGeoMarker()
-        updateGeoCircle()
-      }
+      if (!geoAddingNew.value) return
+      geoLat.value = e.latlng.lat
+      geoLng.value = e.latlng.lng
+      placeGeoMarker()
+      updateGeoCircle()
     })
   } else {
     geoMap.setView([geoLat.value, geoLng.value], geoMap.getZoom())
@@ -310,8 +357,11 @@ function initOrRefreshGeoMap() {
       geoOfficeMarkers.push(circle)
     }
   })
-  // Show selected marker if any
+  // Show editing marker when updating a row or adding a new geofence
   if (geoRowId.value) {
+    placeGeoMarker()
+    updateGeoCircle()
+  } else if (geoAddingNew.value) {
     placeGeoMarker()
     updateGeoCircle()
   } else {
@@ -325,7 +375,12 @@ function initOrRefreshGeoMap() {
 function placeGeoMarker() {
   if (!geoMap) return
   geoMarker?.remove()
-  geoMarker = L.marker([geoLat.value, geoLng.value], { draggable: true }).addTo(geoMap)
+  const isNewGeofence = geoAddingNew.value && !geoRowId.value
+  const icon = isNewGeofence ? newGeofenceMarkerIcon() : undefined
+  geoMarker = L.marker([geoLat.value, geoLng.value], {
+    draggable: true,
+    ...(icon ? { icon } : {}),
+  }).addTo(geoMap)
   geoMarker.on('dragend', () => {
     const ll = geoMarker?.getLatLng()
     if (!ll) return
@@ -335,7 +390,41 @@ function placeGeoMarker() {
   })
 }
 
+async function searchAddressOnMap() {
+  const q = geoAddressQuery.value.trim()
+  if (!q) {
+    geoSearchError.value = 'Enter an address or place name.'
+    return
+  }
+  geoSearchError.value = null
+  geoSearching.value = true
+  try {
+    const coords = await forwardGeocodeAddress(q)
+    if (!coords) {
+      geoSearchError.value = 'No matching location found. Try a different search.'
+      return
+    }
+    geoRowId.value = null
+    geoAddingNew.value = true
+    geoLat.value = coords.lat
+    geoLng.value = coords.lng
+    if (geoMap) {
+      geoMap.setView([coords.lat, coords.lng], 17, { animate: true, duration: 0.35 })
+    }
+    placeGeoMarker()
+    updateGeoCircle()
+  } catch (e) {
+    geoSearchError.value = e instanceof Error ? e.message : 'Address search failed.'
+  } finally {
+    geoSearching.value = false
+  }
+}
+
 function recenterMapOnCurrentLocation() {
+  if (!geoAddingNew.value && !geoRowId.value) {
+    geoError.value = 'Click “Add new location” or select a saved geofence in the table first.'
+    return
+  }
   if (!navigator.geolocation) {
     geoError.value = 'Geolocation is not supported in this browser.'
     return
@@ -362,11 +451,16 @@ function recenterMapOnCurrentLocation() {
 }
 
 watch(geoRadiusMeters, () => {
+  if (!geoRowId.value && !geoAddingNew.value) return
   updateGeoCircle()
 })
 
 async function saveGeofence() {
   geoError.value = null
+  if (!geoRowId.value && !geoAddingNew.value) {
+    geoError.value = 'Use “Add new location” to create a geofence, or select one in the table.'
+    return
+  }
   geoSaving.value = true
   const lat = geoLat.value
   const lng = geoLng.value
@@ -386,7 +480,7 @@ async function saveGeofence() {
         })
         .eq('id', geoRowId.value)
       if (uErr) throw uErr
-    } else {
+    } else if (geoAddingNew.value) {
       const { data: ins, error: iErr } = await supabase
         .from('geolocation')
         .insert({
@@ -579,31 +673,19 @@ watch(activeSection, async (s) => {
           <h2 id="geofence-panel-title" class="sys-config-panel-title">Geofence</h2>
           <p class="muted sys-config-panel-lead">
             Define where attendance may be validated. Multiple rows can exist; only one may be
-            marked as the office geofence (<code class="code-inline">geolocation_status</code>).
-            Search applies to the saved list below.
+            marked as the office geofence.
           </p>
-
-          <div class="sys-config-search" role="search">
-            <MagnifyingGlassIcon class="sys-config-search-icon" aria-hidden="true" />
-            <input
-              v-model="geofenceSearch"
-              type="search"
-              class="sys-config-search-input"
-              placeholder="Search saved geofences by name or coordinates…"
-              aria-label="Search geofences"
-              autocomplete="off"
-            />
-          </div>
 
           <p v-if="geoError" class="banner-error">{{ geoError }}</p>
 
           <article class="config-item">
             <h3 class="config-item-title">Geofence center and radius</h3>
-            <p class="config-item-key">geolocation.center · geolocation.radius_meters</p>
             <p class="config-item-desc">
-              Click the map or drag the pin to set the center. Use
-              <strong>Current location</strong> to jump to your device GPS, then adjust radius and
-              save.
+              Select a saved geofence in the table to edit it, or click
+              <strong>Add new location</strong> or run an <strong>address search</strong> to start a
+              new geofence (map pin and cancel appear). Click the map or drag the pin to adjust. Use
+              <strong>Current location</strong> to move the pin when editing or adding. Save when
+              ready; <strong>Cancel</strong> exits add mode without saving.
             </p>
             <div class="config-item-control">
               <div v-if="geoLoading" class="loading-state">Loading map…</div>
@@ -612,8 +694,29 @@ watch(activeSection, async (s) => {
                   ref="geoMapContainer"
                   class="geofence-map"
                   role="application"
-                  aria-label="Map: click to set geofence center"
+                  :aria-label="
+                    geoAddingNew
+                      ? 'Map: click or drag to set new geofence center'
+                      : 'Map: geofence preview'
+                  "
                 />
+                <button
+                  type="button"
+                  class="btn-add-location geo-map-add-btn"
+                  title="Start a new geofence — pin appears on the map"
+                  @click="startNewGeofenceOnMap"
+                >
+                  Add new location
+                </button>
+                <button
+                  v-if="geoAddingNew"
+                  type="button"
+                  class="geo-cancel-add-btn"
+                  title="Exit add mode without saving"
+                  @click="cancelNewGeofenceOnMap"
+                >
+                  Cancel
+                </button>
                 <button
                   type="button"
                   class="geo-locate-btn"
@@ -624,6 +727,33 @@ watch(activeSection, async (s) => {
                   {{ geoLocating ? 'Locating…' : 'Current location' }}
                 </button>
               </div>
+              <div v-if="!geoLoading" class="sys-config-search geo-map-address-search" role="search">
+                <MapPinIcon
+                  v-if="geoAddingNew"
+                  class="sys-config-search-icon geo-map-address-pin-icon"
+                  aria-hidden="true"
+                />
+                <MagnifyingGlassIcon v-else class="sys-config-search-icon" aria-hidden="true" />
+                <input
+                  v-model="geoAddressQuery"
+                  type="search"
+                  class="sys-config-search-input"
+                  placeholder="Search address — starts a new geofence at that place"
+                  aria-label="Search address to place a new geofence on the map"
+                  autocomplete="street-address"
+                  @input="geoSearchError = null"
+                  @keydown.enter.prevent="searchAddressOnMap"
+                />
+                <button
+                  type="button"
+                  class="geo-address-search-go"
+                  :disabled="geoSearching"
+                  @click="searchAddressOnMap"
+                >
+                  {{ geoSearching ? 'Searching…' : 'Search' }}
+                </button>
+              </div>
+              <p v-if="geoSearchError" class="geo-address-search-error" role="alert">{{ geoSearchError }}</p>
               <div v-if="!geoLoading" class="geofence-controls">
                 <label class="radius-label">
                   <span>Radius (meters)</span>
@@ -640,42 +770,42 @@ watch(activeSection, async (s) => {
                 <div class="geo-coords muted" aria-live="polite">
                   {{ geoLat.toFixed(6) }}, {{ geoLng.toFixed(6) }}
                 </div>
-                <p class="geo-mode-hint muted" aria-live="polite">
-                  {{
-                    geoRowId
-                      ? 'Table: row highlighted = updating this location.'
-                      : 'Adding a new location — no row highlighted.'
-                  }}
-                </p>
                 <button
                   type="button"
                   class="btn-primary"
-                  :disabled="geoSaving"
+                  :disabled="geoSaving || (!geoRowId && !geoAddingNew)"
                   @click="saveGeofence"
                 >
-                  {{ geoSaving ? 'Saving…' : geoRowId ? 'Update geofence' : 'Save new geofence' }}
+                  {{
+                    geoSaving
+                      ? 'Saving…'
+                      : geoRowId
+                        ? 'Update geofence'
+                        : 'Save new geofence'
+                  }}
                 </button>
               </div>
             </div>
-            <p class="config-item-note">
-              Saving reverse-geocodes the center for the row label. Office designation is managed in
-              the table setting.
-            </p>
           </article>
 
           <article class="config-item">
             <h3 class="config-item-title">Saved geofences</h3>
-            <p class="config-item-key">geolocation.records</p>
             <p class="config-item-desc">
               Select a row to load it on the map. Mark one row as the office geofence, or clear the
               office flag.
             </p>
+            <div class="sys-config-search" role="search">
+              <MagnifyingGlassIcon class="sys-config-search-icon" aria-hidden="true" />
+              <input
+                v-model="geofenceSearch"
+                type="search"
+                class="sys-config-search-input"
+                placeholder="Search saved geofences by name or coordinates…"
+                aria-label="Search geofences"
+                autocomplete="off"
+              />
+            </div>
             <div class="config-item-control">
-              <div class="geo-table-header">
-                <button type="button" class="btn-add-location" @click="startNewGeofenceOnMap">
-                  Add new location
-                </button>
-              </div>
               <div v-if="geoTableLoading && !geoRows.length" class="loading-state muted">
                 Loading list…
               </div>
@@ -749,14 +879,6 @@ watch(activeSection, async (s) => {
                       <td class="td-actions geo-actions" @click.stop>
                         <button
                           type="button"
-                          class="btn-mini"
-                          :disabled="geoOfficeSavingId !== null || geoDeletingId !== null"
-                          @click="editGeofenceOnMap(g)"
-                        >
-                          Edit on map
-                        </button>
-                        <button
-                          type="button"
                           class="btn-mini btn-mini-accent"
                           :disabled="geoOfficeSavingId !== null || geoDeletingId !== null"
                           @click="setOfficeGeofence(g.id, !g.geolocation_status)"
@@ -799,9 +921,6 @@ watch(activeSection, async (s) => {
                 No geofences match your search.
               </p>
             </div>
-            <p class="config-item-note">
-              The current office row is the one with geolocation_status true in the database.
-            </p>
           </article>
         </section>
 
@@ -1404,6 +1523,34 @@ watch(activeSection, async (s) => {
     height: 400px;
   }
 }
+.geo-map-add-btn {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  z-index: 1001;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+.geo-cancel-add-btn {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  z-index: 1001;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: rgba(15, 23, 42, 0.92);
+  color: var(--text-primary);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition:
+    background 0.2s,
+    opacity 0.2s;
+}
+.geo-cancel-add-btn:hover {
+  background: var(--bg-hover);
+}
 .geo-locate-btn {
   position: absolute;
   top: 10px;
@@ -1429,6 +1576,51 @@ watch(activeSection, async (s) => {
   opacity: 0.65;
   cursor: wait;
 }
+.geo-map-address-search {
+  max-width: none;
+  margin-bottom: 0.75rem;
+}
+.geo-map-address-pin-icon {
+  color: var(--accent);
+}
+.geo-new-geofence-marker {
+  background: transparent !important;
+  border: none !important;
+}
+.geo-new-geofence-marker-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  filter: drop-shadow(0 2px 6px rgba(14, 165, 233, 0.35));
+}
+.geo-address-search-go {
+  flex-shrink: 0;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--accent);
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
+.geo-address-search-go:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.2);
+  color: var(--text-primary);
+}
+.geo-address-search-go:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+.geo-address-search-error {
+  margin: -0.35rem 0 0.85rem;
+  font-size: 0.8125rem;
+  color: var(--error, #f87171);
+}
 .geofence-controls {
   display: flex;
   flex-wrap: wrap;
@@ -1452,14 +1644,6 @@ watch(activeSection, async (s) => {
   font-variant-numeric: tabular-nums;
 }
 
-.geo-table-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
 .btn-add-location {
   padding: 0.45rem 0.9rem;
   font-size: 0.875rem;
@@ -1476,12 +1660,6 @@ watch(activeSection, async (s) => {
 .btn-add-location:hover {
   background: rgba(56, 189, 248, 0.2);
   color: var(--text-primary);
-}
-.geo-mode-hint {
-  width: 100%;
-  margin: 0;
-  font-size: 0.8125rem;
-  flex-basis: 100%;
 }
 .geo-table-scroll {
   max-height: 420px;
@@ -1706,6 +1884,20 @@ watch(activeSection, async (s) => {
     border-radius: 8px;
   }
 
+  .geo-map-add-btn {
+    bottom: 8px;
+    right: 8px;
+    padding: 0.35rem 0.55rem;
+    font-size: 0.75rem;
+  }
+
+  .geo-cancel-add-btn {
+    bottom: 8px;
+    left: 8px;
+    padding: 0.35rem 0.55rem;
+    font-size: 0.75rem;
+  }
+
   .geo-locate-btn {
     top: 8px;
     right: 8px;
@@ -1715,16 +1907,6 @@ watch(activeSection, async (s) => {
 
   .geofence-controls {
     gap: 0.65rem;
-  }
-
-  .geo-table-header {
-    margin-bottom: 0.5rem;
-    gap: 0.5rem;
-  }
-
-  .btn-add-location {
-    padding: 0.38rem 0.75rem;
-    font-size: 0.8125rem;
   }
 
   .geo-table-scroll {

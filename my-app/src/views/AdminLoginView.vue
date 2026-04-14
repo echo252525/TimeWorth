@@ -142,7 +142,7 @@ async function onSubmit() {
             />
           </div>
           <div class="field">
-            <label for="admin-login-password">PASSWORD (Must be at least 6 characters) <span class="required-asterisk">*</span></label>
+            <label for="admin-login-password">PASSWORD <span class="required-asterisk">*</span></label>
             <div class="input-with-icon">
               <input
                 id="admin-login-password"
