@@ -148,23 +148,82 @@ const autoFacialClockOutSavedLocation = ref(false)
 const livenessLoading = ref(false)
 const livenessError = ref<string | null>(null)
 const clockOutLoading = ref(false)
-/** Shown when clock-in/out Supabase calls exceed threshold (weak Wi‑Fi / signal). */
+/** Shown when the browser reports offline or a slow/weak network (Network Information API). */
 const weakSignalModalOpen = ref(false)
-let weakSignalTimer: number | null = null
-/** Shorter in dev so you can verify UI; production uses 10s (slow requests only). */
-const CLOCK_ACTION_WEAK_SIGNAL_MS = import.meta.env.DEV ? 3_000 : 10_000
+let weakSignalWatchActive = false
+let weakSignalPollId: number | null = null
+let weakSignalOfflineHandler: (() => void) | null = null
+let weakSignalConnectionChangeHandler: (() => void) | null = null
+
+const WEAK_SIGNAL_POLL_MS = 400
+
+/** Subset of the Network Information API (see MDN `navigator.connection`). */
+interface NetworkConnectionLike {
+  readonly effectiveType: string
+  readonly rtt: number
+  readonly downlink: number
+  addEventListener(type: 'change', listener: () => void): void
+  removeEventListener(type: 'change', listener: () => void): void
+}
+
+function getNetworkConnection(): NetworkConnectionLike | null {
+  const nav = navigator as Navigator & { connection?: NetworkConnectionLike }
+  return nav.connection ?? null
+}
+
+/** Uses effectiveType, RTT, and downlink when available — not a fixed delay. */
+function isNetworkConnectionWeak(): boolean {
+  if (!navigator.onLine) return true
+  const c = getNetworkConnection()
+  if (!c) return false
+  const et = c.effectiveType
+  if (et === 'slow-2g' || et === '2g') return true
+  if (et === '3g') return true
+  if (et === '4g') {
+    if (typeof c.rtt === 'number' && c.rtt > 0 && c.rtt >= 500) return true
+    if (typeof c.downlink === 'number' && c.downlink > 0 && c.downlink < 1.0) return true
+    return false
+  }
+  if (typeof c.rtt === 'number' && c.rtt > 0 && c.rtt >= 600) return true
+  if (typeof c.downlink === 'number' && c.downlink > 0 && c.downlink < 0.4) return true
+  return false
+}
+
+function maybeOpenWeakSignalFromNetwork() {
+  if (!weakSignalWatchActive) return
+  if (isNetworkConnectionWeak()) weakSignalModalOpen.value = true
+}
 
 function beginWeakSignalWatch() {
   endWeakSignalWatch()
-  weakSignalTimer = window.setTimeout(() => {
-    weakSignalModalOpen.value = true
-  }, CLOCK_ACTION_WEAK_SIGNAL_MS)
+  weakSignalWatchActive = true
+  maybeOpenWeakSignalFromNetwork()
+  weakSignalPollId = window.setInterval(maybeOpenWeakSignalFromNetwork, WEAK_SIGNAL_POLL_MS)
+  weakSignalOfflineHandler = () => {
+    if (weakSignalWatchActive) weakSignalModalOpen.value = true
+  }
+  window.addEventListener('offline', weakSignalOfflineHandler)
+  const conn = getNetworkConnection()
+  if (conn) {
+    weakSignalConnectionChangeHandler = () => maybeOpenWeakSignalFromNetwork()
+    conn.addEventListener('change', weakSignalConnectionChangeHandler)
+  }
 }
 
 function endWeakSignalWatch() {
-  if (weakSignalTimer != null) {
-    clearTimeout(weakSignalTimer)
-    weakSignalTimer = null
+  weakSignalWatchActive = false
+  if (weakSignalPollId != null) {
+    clearInterval(weakSignalPollId)
+    weakSignalPollId = null
+  }
+  if (weakSignalOfflineHandler) {
+    window.removeEventListener('offline', weakSignalOfflineHandler)
+    weakSignalOfflineHandler = null
+  }
+  const conn = getNetworkConnection()
+  if (conn && weakSignalConnectionChangeHandler) {
+    conn.removeEventListener('change', weakSignalConnectionChangeHandler)
+    weakSignalConnectionChangeHandler = null
   }
   weakSignalModalOpen.value = false
 }
@@ -2061,8 +2120,8 @@ async function handleCancelFacial() {
         <div class="weak-signal-modal__panel">
           <p id="weak-signal-title" class="weak-signal-modal__title">Connection is slow or lost</p>
           <p id="weak-signal-desc" class="weak-signal-modal__desc">
-            Clock-in or clock-out is taking longer than usual. Check your Wi‑Fi or mobile signal and
-            wait—do not leave this page until it finishes or you may need to try again.
+            Your network looks slow or unavailable. Check your Wi‑Fi or mobile signal and wait—do not
+            leave this page until it finishes or you may need to try again.
           </p>
           <button type="button" class="weak-signal-modal__dismiss" @click="dismissWeakSignalModal">
             Dismiss
