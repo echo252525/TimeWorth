@@ -1719,42 +1719,42 @@ async function selectModalityAndStart(mod: WorkModality) {
       return
     }
   }
-  step.value = 'getting_location'
+  beginWeakSignalWatch()
   try {
-    const loc = userLoc.value ?? locationIn.value ?? (await getLocation())
-    if (!loc) return
-    locationIn.value = loc
-    nextTick(() => updateMapView())
-  } catch (e) {
-    locationError.value = e instanceof Error ? e.message : 'Location failed'
-    step.value = 'choose_modality'
-    return
-  }
-  if (mod === 'office' && officeGeofences.value.length) {
-    // Find the geofence the user is inside
-    const insideGeofence = officeGeofences.value.find(
-      (g) =>
-        distanceMeters(locationIn.value!, { lat: g.latitude, lng: g.longitude }) <= g.radius_meters,
-    )
-    if (!insideGeofence) {
-      locationError.value =
-        'You must be within the office geofence to clock in. Move closer and try again.'
+    step.value = 'getting_location'
+    try {
+      const loc = userLoc.value ?? locationIn.value ?? (await getLocation())
+      if (!loc) return
+      locationIn.value = loc
+      nextTick(() => updateMapView())
+    } catch (e) {
+      locationError.value = e instanceof Error ? e.message : 'Location failed'
       step.value = 'choose_modality'
       return
     }
-    if (insideGeofence.have_facial) {
-      await syncEmployeeIsregisteredFromFaceBucket()
-      await startLivenessVerification()
-    } else {
-      try {
-        beginWeakSignalWatch()
-        await clockIn('office', { locationIn: locationString(locationIn.value!) })
-      } finally {
-        endWeakSignalWatch()
+    if (mod === 'office' && officeGeofences.value.length) {
+      // Find the geofence the user is inside
+      const insideGeofence = officeGeofences.value.find(
+        (g) =>
+          distanceMeters(locationIn.value!, { lat: g.latitude, lng: g.longitude }) <= g.radius_meters,
+      )
+      if (!insideGeofence) {
+        locationError.value =
+          'You must be within the office geofence to clock in. Move closer and try again.'
+        step.value = 'choose_modality'
+        return
       }
-      step.value = 'clocked_in'
-      locationIn.value = null
+      if (insideGeofence.have_facial) {
+        await syncEmployeeIsregisteredFromFaceBucket()
+        await startLivenessVerification()
+      } else {
+        await clockIn('office', { locationIn: locationString(locationIn.value!) })
+        step.value = 'clocked_in'
+        locationIn.value = null
+      }
     }
+  } finally {
+    endWeakSignalWatch()
   }
 }
 

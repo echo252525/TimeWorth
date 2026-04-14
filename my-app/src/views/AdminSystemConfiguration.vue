@@ -280,15 +280,19 @@ function teardownGeoMap() {
   geoMap = null
 }
 
-function newGeofenceMarkerIcon(): L.DivIcon {
-  const pinSvg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/><path d="M19.5 10.5c0 7.125-7.125 11.25-7.5 11.25S4.5 17.625 4.5 10.5a7.5 7.5 0 1 1 15 0Z"/></svg>'
+/** SVG pin only — avoids Leaflet default image URLs that break in production bundles. */
+function geoDraggablePinDivIcon(strokeColor: string): L.DivIcon {
+  const pinSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/><path d="M19.5 10.5c0 7.125-7.125 11.25-7.5 11.25S4.5 17.625 4.5 10.5a7.5 7.5 0 1 1 15 0Z"/></svg>`
   return L.divIcon({
-    className: 'geo-new-geofence-marker',
-    html: `<div class="geo-new-geofence-marker-inner">${pinSvg}</div>`,
+    className: 'geo-draggable-pin-marker',
+    html: `<div class="geo-draggable-pin-marker-inner">${pinSvg}</div>`,
     iconSize: [40, 44],
     iconAnchor: [20, 44],
   })
+}
+
+function newGeofenceMarkerIcon(): L.DivIcon {
+  return geoDraggablePinDivIcon('#0ea5e9')
 }
 
 function updateGeoCircle() {
@@ -376,10 +380,10 @@ function placeGeoMarker() {
   if (!geoMap) return
   geoMarker?.remove()
   const isNewGeofence = geoAddingNew.value && !geoRowId.value
-  const icon = isNewGeofence ? newGeofenceMarkerIcon() : undefined
+  const icon = isNewGeofence ? newGeofenceMarkerIcon() : geoDraggablePinDivIcon('#334155')
   geoMarker = L.marker([geoLat.value, geoLng.value], {
     draggable: true,
-    ...(icon ? { icon } : {}),
+    icon,
   }).addTo(geoMap)
   geoMarker.on('dragend', () => {
     const ll = geoMarker?.getLatLng()
@@ -1583,16 +1587,16 @@ watch(activeSection, async (s) => {
 .geo-map-address-pin-icon {
   color: var(--accent);
 }
-.geo-new-geofence-marker {
+.geo-draggable-pin-marker {
   background: transparent !important;
   border: none !important;
 }
-.geo-new-geofence-marker-inner {
+.geo-draggable-pin-marker-inner {
   display: flex;
   align-items: center;
   justify-content: center;
   line-height: 0;
-  filter: drop-shadow(0 2px 6px rgba(14, 165, 233, 0.35));
+  filter: drop-shadow(0 2px 6px rgba(15, 23, 42, 0.25));
 }
 .geo-address-search-go {
   flex-shrink: 0;
