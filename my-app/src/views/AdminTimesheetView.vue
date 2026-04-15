@@ -261,6 +261,48 @@ const paginatedHistoryRows = computed(() => {
   return list.slice(start, start + HISTORY_ENTRIES_PER_PAGE)
 })
 
+/** Nager.Date public holidays cache (date key: YYYY-MM-DD). */
+const holidayDateKeys = ref<Record<string, true>>({})
+const loadedHolidayYears = ref(new Set<number>())
+
+function historyDateKeyFromClockIn(clockIn: string | null): string {
+  if (!clockIn) return ''
+  return getLocalDateString(new Date(storedToRealInstant(clockIn)))
+}
+
+function isHistoryHolidayRow(row: AttendanceRow): boolean {
+  const key = historyDateKeyFromClockIn(row.clock_in)
+  return !!(key && holidayDateKeys.value[key])
+}
+
+async function syncAdminTimesheetHolidays() {
+  const years = new Set<number>()
+  for (const r of historyRows.value) {
+    const key = historyDateKeyFromClockIn(r.clock_in)
+    if (!key) continue
+    const y = Number(key.slice(0, 4))
+    if (Number.isFinite(y)) years.add(y)
+  }
+  for (const y of years) {
+    if (loadedHolidayYears.value.has(y)) continue
+    try {
+      const res = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${y}/PH`)
+      if (res.ok) {
+        const data = (await res.json()) as Array<{ date: string }>
+        const next = { ...holidayDateKeys.value }
+        for (const h of data) {
+          if (h?.date) next[h.date] = true
+        }
+        holidayDateKeys.value = next
+      }
+    } catch {
+      // Keep existing UI/functionality when holiday API is unavailable.
+    } finally {
+      loadedHolidayYears.value = new Set([...loadedHolidayYears.value, y])
+    }
+  }
+}
+
 const detailAttendanceRow = ref<AttendanceRow | null>(null)
 const detailMapEl = ref<HTMLElement | null>(null)
 let detailMapInstance: L.Map | null = null
@@ -1508,6 +1550,14 @@ watch(
   { deep: true }
 )
 
+watch(
+  historyRows,
+  () => {
+    void syncAdminTimesheetHolidays()
+  },
+  { immediate: true }
+)
+
 watch([sortedFilteredHistoryRows, modalityFilter], () => {
   historyDayPage.value = 1
 })
@@ -1998,10 +2048,15 @@ onUnmounted(() => {
                   :key="r.attendance_id"
                   type="button"
                   class="admin-ts-entry-row"
+                  :class="{ 'admin-ts-entry-row--holiday': isHistoryHolidayRow(r) }"
                   role="row"
                   @click="openAttendanceDetail(r)"
                 >
-                  <span class="admin-ts-entry-cell" role="cell">{{ formatLocalDateFromStored(r.clock_in) }}</span>
+                  <span
+                    class="admin-ts-entry-cell"
+                    :class="{ 'admin-ts-entry-cell--holiday': isHistoryHolidayRow(r) }"
+                    role="cell"
+                  >{{ formatLocalDateFromStored(r.clock_in) }}</span>
                   <span class="admin-ts-entry-cell" role="cell">{{ formatTime12hApmFromStored(r.clock_in) }}</span>
                   <span class="admin-ts-entry-cell" role="cell">{{ formatClockOutWithNextDay(r.clock_in, r.clock_out) }}</span>
                 </button>
@@ -2931,9 +2986,35 @@ onUnmounted(() => {
   background: rgba(148, 163, 184, 0.12);
 }
 
+/* Holiday row — same idea as TimesheetView: theme tints on the full row; entire selector in :global()
+   so Vue scoped CSS does not break body.* + component class combos. */
+:global(body.light-mode .admin-ts-page .admin-ts-entry-row.admin-ts-entry-row--holiday) {
+  background-color: rgba(162, 28, 175, 0.1);
+  border-left: 3px solid #a21caf;
+}
+:global(body.dark-mode .admin-ts-page .admin-ts-entry-row.admin-ts-entry-row--holiday) {
+  background-color: rgba(147, 51, 234, 0.22);
+  border-left: 3px solid #c084fc;
+}
+:global(body.light-mode .admin-ts-page .admin-ts-entry-row.admin-ts-entry-row--holiday:hover) {
+  background-color: rgba(162, 28, 175, 0.15);
+}
+:global(body.dark-mode .admin-ts-page .admin-ts-entry-row.admin-ts-entry-row--holiday:hover) {
+  background-color: rgba(147, 51, 234, 0.28);
+}
+
 .admin-ts-entry-cell {
   font-size: 0.8125rem;
   word-break: break-word;
+}
+
+:global(body.light-mode .admin-ts-page .admin-ts-entry-cell--holiday) {
+  color: #a21caf;
+  font-weight: 600;
+}
+:global(body.dark-mode .admin-ts-page .admin-ts-entry-cell--holiday) {
+  color: #e879f9;
+  font-weight: 600;
 }
 
 .admin-wfh-photo {

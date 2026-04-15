@@ -1208,6 +1208,66 @@
     return Array.from(dateSet).sort().reverse() // Most recent first
   })
 
+  /** Public holidays from Nager.Date (https://date.nager.at) — country via VITE_HOLIDAY_COUNTRY_CODE, default PH */
+  const holidayDateKeys = ref<Record<string, true>>({})
+  const holidayLabels = ref<Record<string, string>>({})
+  const loadedHolidayYears = ref(new Set<number>())
+
+  async function syncHolidaysForVisibleDates() {
+    const country =
+      (import.meta.env.VITE_HOLIDAY_COUNTRY_CODE as string | undefined)?.trim() || 'PH'
+    const years = new Set<number>()
+    for (const d of allDates.value) {
+      const y = Number(d.slice(0, 4))
+      if (Number.isFinite(y)) years.add(y)
+    }
+    for (const y of years) {
+      if (loadedHolidayYears.value.has(y)) continue
+      try {
+        const res = await fetch(
+          `https://date.nager.at/api/v3/PublicHolidays/${y}/${encodeURIComponent(country)}`,
+        )
+        if (res.ok) {
+          const data = (await res.json()) as Array<{
+            date: string
+            localName?: string
+            name?: string
+          }>
+          const nextKeys = { ...holidayDateKeys.value }
+          const nextLabels = { ...holidayLabels.value }
+          for (const h of data) {
+            if (!h.date) continue
+            nextKeys[h.date] = true
+            nextLabels[h.date] = h.localName?.trim() || h.name?.trim() || 'Holiday'
+          }
+          holidayDateKeys.value = nextKeys
+          holidayLabels.value = nextLabels
+        }
+      } catch {
+        /* ignore — table still works without holiday styling */
+      } finally {
+        loadedHolidayYears.value = new Set([...loadedHolidayYears.value, y])
+      }
+    }
+  }
+
+  watch(
+    allDates,
+    () => {
+      void syncHolidaysForVisibleDates()
+    },
+    { immediate: true },
+  )
+
+  function isHolidayDateKey(dateKey: string): boolean {
+    return !!holidayDateKeys.value[dateKey]
+  }
+
+  function holidayTooltip(dateKey: string): string | undefined {
+    const label = holidayLabels.value[dateKey]
+    return label ? `Public holiday: ${label}` : undefined
+  }
+
   const weekDays = computed(() => allDates.value.map(dateKey => ({ dateKey })))
 
   const tableRows = computed(() => {
@@ -1885,10 +1945,18 @@
             <template v-for="row in tableRows" :key="row.dateKey">
               <tr 
                 class="ts-row" 
-                :class="{ 'ts-row-multiple': row.hasMultipleEntries, 'ts-row-clickable': row.hasMultipleEntries }"
+                :class="{ 
+                  'ts-row-multiple': row.hasMultipleEntries, 
+                  'ts-row-clickable': row.hasMultipleEntries,
+                  'ts-row--holiday': isHolidayDateKey(row.dateKey),
+                }"
                 @click="row.hasMultipleEntries && toggleRowExpansion(row.dateKey)"
               >
-                <td class="ts-date">
+                <td
+                  class="ts-date"
+                  :class="{ 'ts-date--holiday': isHolidayDateKey(row.dateKey) }"
+                  :title="holidayTooltip(row.dateKey)"
+                >
                   <div class="ts-date-content">
                     {{ row.dateKey }}
                     <span v-if="row.hasMultipleEntries" class="expand-icon" :class="{ 'expanded': expandedRow === row.dateKey }">▼</span>
@@ -1959,7 +2027,10 @@
                 </td>
               </tr>
               <template v-if="row.hasMultipleEntries && expandedRow === row.dateKey">
-                <tr class="ts-subrow ts-subrow--header">
+                <tr
+                  class="ts-subrow ts-subrow--header"
+                  :class="{ 'ts-subrow--holiday': isHolidayDateKey(row.dateKey) }"
+                >
                   <td :colspan="timesheetColCount" class="ts-subrow-header-cell">
                     All Clock Entries ({{ row.entryCount }})
                   </td>
@@ -1968,8 +2039,13 @@
                   v-for="(entry, idx) in row.entries"
                   :key="`session-${entry.attendance_id || idx}`"
                   class="ts-subrow"
+                  :class="{ 'ts-subrow--holiday': isHolidayDateKey(row.dateKey) }"
                 >
-                  <td class="ts-date ts-subrow-date">
+                  <td
+                    class="ts-date ts-subrow-date"
+                    :class="{ 'ts-date--holiday': isHolidayDateKey(row.dateKey) }"
+                    :title="holidayTooltip(row.dateKey)"
+                  >
                     <div class="ts-date-content">
                       <span>{{ row.dateKey }}</span>
                       <span class="ts-subrow-session">Session {{ idx + 1 }}</span>
@@ -2501,6 +2577,17 @@
   border-bottom: none;
 }
 .ts-date { font-weight: 500; }
+.ts-table td.ts-date--holiday {
+  color: #a21caf;
+  font-weight: 600;
+}
+:global(body.dark-mode .ts-table td.ts-date--holiday) {
+  color: #e879f9;
+}
+.ts-table td.ts-date--holiday .ts-date-content {
+  color: inherit;
+}
+
 .ts-date-content {
   display: flex;
   align-items: center;
@@ -2537,6 +2624,34 @@
 .ts-row-clickable:hover {
   background: rgba(59, 130, 246, 0.08);
 }
+
+/* Holiday: full-row td tint. Entire selector must be inside :global(...) — otherwise Vue scoped
+   CSS compiles :global(body.dark-mode) + scoped classes into broken rules that only target body. */
+:global(body.light-mode .data-table.ts-table .ts-row.ts-row--holiday > td) {
+  background-color: rgba(162, 28, 175, 0.1);
+}
+:global(body.dark-mode .data-table.ts-table .ts-row.ts-row--holiday > td) {
+  background-color: rgba(147, 51, 234, 0.22);
+}
+:global(body.light-mode .data-table.ts-table .ts-row.ts-row--holiday.ts-row-clickable:hover > td) {
+  background-color: rgba(162, 28, 175, 0.15);
+}
+:global(body.dark-mode .data-table.ts-table .ts-row.ts-row--holiday.ts-row-clickable:hover > td) {
+  background-color: rgba(147, 51, 234, 0.28);
+}
+:global(body.light-mode .data-table.ts-table .ts-row.ts-row-multiple.ts-row--holiday > td) {
+  background-color: rgba(162, 28, 175, 0.11);
+}
+:global(body.dark-mode .data-table.ts-table .ts-row.ts-row-multiple.ts-row--holiday > td) {
+  background-color: rgba(147, 51, 234, 0.24);
+}
+:global(body.light-mode .data-table.ts-table .ts-row.ts-row-multiple.ts-row--holiday.ts-row-clickable:hover > td) {
+  background-color: rgba(162, 28, 175, 0.16);
+}
+:global(body.dark-mode .data-table.ts-table .ts-row.ts-row-multiple.ts-row--holiday.ts-row-clickable:hover > td) {
+  background-color: rgba(147, 51, 234, 0.3);
+}
+
 .ts-row-expanded {
   background: rgba(59, 130, 246, 0.03);
 }
@@ -2628,6 +2743,19 @@
 
 .ts-subrow {
   background: color-mix(in srgb, var(--bg-secondary) 65%, transparent);
+}
+
+:global(body.light-mode .data-table.ts-table .ts-subrow.ts-subrow--holiday > td) {
+  background-color: rgba(162, 28, 175, 0.11);
+}
+:global(body.dark-mode .data-table.ts-table .ts-subrow.ts-subrow--holiday > td) {
+  background-color: rgba(147, 51, 234, 0.22);
+}
+:global(body.light-mode .data-table.ts-table .ts-subrow.ts-subrow--header.ts-subrow--holiday > td) {
+  background-color: rgba(162, 28, 175, 0.12);
+}
+:global(body.dark-mode .data-table.ts-table .ts-subrow.ts-subrow--header.ts-subrow--holiday > td) {
+  background-color: rgba(147, 51, 234, 0.24);
 }
 
 .ts-subrow-date .ts-date-content {

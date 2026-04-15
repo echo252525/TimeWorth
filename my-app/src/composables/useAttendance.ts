@@ -91,6 +91,61 @@ const error = ref<string | null>(null)
 const todayRecord = computed(() => todayRecords.value.find(r => !r.clock_out) ?? null)
 const completedToday = computed(() => todayRecords.value.filter(r => r.clock_out))
 const OPEN_ROW_FETCH_GRACE_MS = 15000
+const SERVER_TIME_RESYNC_MS = 60 * 1000
+const SERVER_TIME_TICK_SYNC_EVERY = 30
+let serverNowBaseMs = 0
+let serverNowPerfMs = 0
+let serverTimeSynced = false
+let serverTimeLastSyncAtMs = 0
+let serverTimeSyncPromise: Promise<void> | null = null
+
+function getTrustedNowMs(): number {
+  if (serverTimeSynced) return serverNowBaseMs + (performance.now() - serverNowPerfMs)
+  return Date.now()
+}
+
+async function syncServerTimeNow(): Promise<void> {
+  if (serverTimeSyncPromise) return serverTimeSyncPromise
+  serverTimeSyncPromise = (async () => {
+    try {
+      const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
+      const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
+      if (!url || !key) return
+      const t0 = performance.now()
+      const res = await fetch(`${url}/rest/v1/`, {
+        method: 'GET',
+        headers: { apikey: key, Accept: 'application/json' },
+        cache: 'no-store'
+      })
+      const dateHdr = res.headers.get('date')
+      if (!dateHdr) return
+      const serverMs = Date.parse(dateHdr)
+      if (!Number.isFinite(serverMs)) return
+      const t1 = performance.now()
+      // Approximate "now" at response receipt by adding half round-trip.
+      const approxNowMs = serverMs + Math.max(0, (t1 - t0) / 2)
+      serverNowBaseMs = approxNowMs
+      serverNowPerfMs = t1
+      serverTimeSynced = true
+      serverTimeLastSyncAtMs = Date.now()
+    } catch {
+      // Keep flow unchanged; fallback remains device time when sync is unavailable.
+    } finally {
+      serverTimeSyncPromise = null
+    }
+  })()
+  return serverTimeSyncPromise
+}
+
+async function ensureServerTimeSynced(force = false): Promise<void> {
+  if (
+    force ||
+    !serverTimeSynced ||
+    Date.now() - serverTimeLastSyncAtMs >= SERVER_TIME_RESYNC_MS
+  ) {
+    await syncServerTimeNow()
+  }
+}
 
 /** Persist as `H:MM:SS` so all clients can parse totals consistently (matches clock-out + edit approval). */
 function msToInterval(ms: number): string {
@@ -242,8 +297,8 @@ function getLocalDayRange(localDateStr: string): { start: string; end: string } 
  * local calendar date (avoids off-by-one-day when viewing in UTC). Example: 07:30 March 16 local
  * → "2025-03-16T07:30:00.000Z" so the stored date is March 16.
  */
-function getNowAsLocalDateTimeZ(): string {
-  const d = new Date()
+function getNowAsLocalDateTimeZ(nowMs = getTrustedNowMs()): string {
+  const d = new Date(nowMs)
   const y = d.getFullYear()
   const m = (d.getMonth() + 1).toString().padStart(2, '0')
   const day = d.getDate().toString().padStart(2, '0')
@@ -317,6 +372,7 @@ export function useAttendance() {
   /** Tracks local calendar day while the live timer runs so we refetch when midnight passes (tab stays open). */
   let lastTrackedLocalDate = getLocalDateString(new Date())
   let tickInterval: ReturnType<typeof setInterval> | null = null
+  let tickCountSinceServerSync = 0
   function startTick() {
     if (tickInterval) {
       console.debug('[useAttendance] startTick skipped; interval already running', {
@@ -324,13 +380,22 @@ export function useAttendance() {
       })
       return
     }
-    tick.value = Date.now()
+    tick.value = getTrustedNowMs()
+    tickCountSinceServerSync = 0
+    void ensureServerTimeSynced()
     console.debug('[useAttendance] startTick', {
       attendanceId: todayRecord.value?.attendance_id ?? null,
       clockIn: todayRecord.value?.clock_in ?? null,
       tick: tick.value
     })
-    tickInterval = setInterval(() => { tick.value = Date.now() }, 1000)
+    tickInterval = setInterval(() => {
+      tick.value = getTrustedNowMs()
+      tickCountSinceServerSync += 1
+      if (tickCountSinceServerSync >= SERVER_TIME_TICK_SYNC_EVERY) {
+        tickCountSinceServerSync = 0
+        void ensureServerTimeSynced()
+      }
+    }, 1000)
   }
   function stopTick() {
     if (tickInterval) {
@@ -375,7 +440,7 @@ export function useAttendance() {
   const elapsedDisplay = computed(() => {
     const r = todayRecord.value
     if (!r?.clock_in || r.clock_out) return '0h 0m 0s'
-    const now = tick.value || Date.now()
+    const now = tick.value || getTrustedNowMs()
     const start = storedToRealInstant(r.clock_in)
     let lunchMs = 0
     if (r.lunch_break_start) {
@@ -388,7 +453,7 @@ export function useAttendance() {
   const lunchElapsedDisplay = computed(() => {
     const r = todayRecord.value
     if (!r?.lunch_break_start || r.lunch_break_end) return '0h 0m 0s'
-    const now = tick.value || Date.now()
+    const now = tick.value || getTrustedNowMs()
     const start = storedToRealInstant(r.lunch_break_start)
     return formatMs(Math.max(0, now - start))
   })
@@ -472,6 +537,7 @@ export function useAttendance() {
     if (!userId.value) return
     isLoading.value = true
     error.value = null
+    await ensureServerTimeSynced()
     const now = getNowAsLocalDateTimeZ()
     const { data, error: err } = await supabase
       .from('attendance')
@@ -497,6 +563,7 @@ export function useAttendance() {
     if (!todayRecord.value?.attendance_id || usedLunchBreak.value) return
     isLoading.value = true
     error.value = null
+    await ensureServerTimeSynced()
     const now = getNowAsLocalDateTimeZ()
     const { data, error: err } = await supabase
       .from('attendance')
@@ -514,6 +581,7 @@ export function useAttendance() {
     if (!todayRecord.value?.attendance_id) return
     isLoading.value = true
     error.value = null
+    await ensureServerTimeSynced()
     const now = getNowAsLocalDateTimeZ()
     const { data, error: err } = await supabase
       .from('attendance')
@@ -531,9 +599,11 @@ export function useAttendance() {
     if (!todayRecord.value?.attendance_id) return
     isLoading.value = true
     error.value = null
-    const now = getNowAsLocalDateTimeZ()
+    await ensureServerTimeSynced()
+    const nowMs = getTrustedNowMs()
+    const now = getNowAsLocalDateTimeZ(nowMs)
     const ci = storedToRealInstant(todayRecord.value.clock_in!)
-    const co = Date.now()
+    const co = nowMs
     let lunchMs = 0
     if (todayRecord.value.lunch_break_start && todayRecord.value.lunch_break_end)
       lunchMs = storedToRealInstant(todayRecord.value.lunch_break_end) - storedToRealInstant(todayRecord.value.lunch_break_start)
