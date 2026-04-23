@@ -226,6 +226,8 @@
 
   /** Latest edit-request status per attendance_id for the current user */
   const editRequestStatusMap = ref<Record<string, 'pending' | 'approved' | 'rejected'>>({})
+  /** Reviewer display label keyed by attendance_id for approved/rejected requests. */
+  const editRequestReviewerMap = ref<Record<string, string>>({})
 
   const EDIT_APPROVED_SEEN_KEY = 'tw:timesheet:edit-approved-seen:v1'
   const EDIT_REJECTED_SEEN_KEY = 'tw:timesheet:edit-rejected-seen:v1'
@@ -590,11 +592,12 @@
       )
       if (!ids.length) {
         editRequestStatusMap.value = {}
+        editRequestReviewerMap.value = {}
         return
       }
       const { data, error: reqErr } = await supabase
         .from('attendance_edit_requests')
-        .select('attendance_id, status, created_at')
+        .select('attendance_id, status, created_at, reviewed_by')
         .eq('requested_by', user.value.id)
         .in('attendance_id', ids)
         .order('created_at', { ascending: false })
@@ -603,18 +606,45 @@
         return
       }
       const map: Record<string, 'pending' | 'approved' | 'rejected'> = {}
+      const reviewerMap: Record<string, string> = {}
+      const reviewerIds = Array.from(
+        new Set(
+          ((data ?? []) as Array<{ reviewed_by: string | null }>)
+            .map((r) => r.reviewed_by)
+            .filter((id): id is string => Boolean(id))
+        )
+      )
+      const reviewerNameById: Record<string, string> = {}
+      if (reviewerIds.length) {
+        const [{ data: adminRows }, { data: employeeRows }] = await Promise.all([
+          supabase.from('admin').select('id, name').in('id', reviewerIds),
+          supabase.from('employee').select('id, name').in('id', reviewerIds)
+        ])
+        for (const r of (adminRows ?? []) as Array<{ id: string; name: string | null }>) {
+          reviewerNameById[r.id] = (r.name ?? '').trim() || r.id
+        }
+        for (const r of (employeeRows ?? []) as Array<{ id: string; name: string | null }>) {
+          if (!reviewerNameById[r.id]) reviewerNameById[r.id] = (r.name ?? '').trim() || r.id
+        }
+      }
       const normalize = (s: string): 'pending' | 'approved' | 'rejected' | null => {
         if (s === 'pending' || s === 'approved' || s === 'rejected') return s
         if (s === 'declined') return 'rejected'
         return null
       }
-      for (const row of (data ?? []) as { attendance_id: string | null; status: string }[]) {
+      for (const row of (data ?? []) as { attendance_id: string | null; status: string; reviewed_by: string | null }[]) {
         const aid = row.attendance_id
         if (!aid || map[aid] !== undefined) continue
         const st = normalize(row.status)
-        if (st) map[aid] = st
+        if (st) {
+          map[aid] = st
+          if ((st === 'approved' || st === 'rejected') && row.reviewed_by) {
+            reviewerMap[aid] = reviewerNameById[row.reviewed_by] || row.reviewed_by
+          }
+        }
       }
       editRequestStatusMap.value = map
+      editRequestReviewerMap.value = reviewerMap
       await maybeNotifyApprovedEditRequests()
       await maybeNotifyRejectedEditRequests()
     } catch (e) {
@@ -1195,7 +1225,7 @@
   /** Colspan for expanded detail row (all columns after Date). */
   const timesheetColCount = computed(() => {
     const timeCols = showTimes.value ? (showBreaks.value ? 5 : 3) : 0
-    return 1 + timeCols + 5
+    return 1 + timeCols + 6
   })
 
   // Get all unique dates from filtered rows (local date for correct grouping)
@@ -1643,6 +1673,35 @@
     return editStatusForEntry(entry) === 'pending'
   }
 
+  function reviewedByForEntry(entry: AttendanceRow): string {
+    const id = entry.attendance_id
+    if (!id) return '—'
+    const st = editRequestStatusMap.value[id]
+    if (st === 'pending') return 'Pending'
+    if (st === 'approved' || st === 'rejected') return editRequestReviewerMap.value[id] || '—'
+    return '—'
+  }
+
+  function reviewedByForEntries(entries: AttendanceRow[]): string {
+    let hasPending = false
+    const uniqueReviewers = new Set<string>()
+    for (const entry of entries) {
+      const st = editStatusForEntry(entry)
+      if (st === 'pending') {
+        hasPending = true
+        continue
+      }
+      if (st === 'approved' || st === 'rejected') {
+        const label = reviewedByForEntry(entry)
+        if (label !== '—') uniqueReviewers.add(label)
+      }
+    }
+    if (uniqueReviewers.size === 1) return Array.from(uniqueReviewers)[0]
+    if (uniqueReviewers.size > 1) return 'Multiple reviewers'
+    if (hasPending) return 'Pending'
+    return '—'
+  }
+
   function editButtonTitleForEntry(entry: AttendanceRow, dateKey: string): string {
     const st = editStatusForEntry(entry)
     if (st === 'pending') return 'Edit request pending'
@@ -1758,6 +1817,9 @@
         ...editRequestStatusMap.value,
         [target.attendance_id]: 'pending'
       }
+      const nextReviewerMap = { ...editRequestReviewerMap.value }
+      delete nextReviewerMap[target.attendance_id]
+      editRequestReviewerMap.value = nextReviewerMap
 
       closeEditModal()
     } catch (e) {
@@ -1938,6 +2000,7 @@
               <th scope="col">Output</th>
               <th scope="col">Photo</th>
               <th scope="col">Edit</th>
+              <th scope="col">Reviewed By</th>
             </tr>
           </thead>
           <tbody>
@@ -2025,6 +2088,7 @@
                   </span>
                   <span v-else class="td-muted">—</span>
                 </td>
+                <td class="ts-cell td-muted">{{ reviewedByForEntries(row.entries) }}</td>
               </tr>
               <template v-if="row.hasMultipleEntries && expandedRow === row.dateKey">
                 <tr
@@ -2095,6 +2159,7 @@
                       </button>
                     </div>
                   </td>
+                  <td class="ts-cell td-muted">{{ reviewedByForEntry(entry) }}</td>
                 </tr>
               </template>
             </template>

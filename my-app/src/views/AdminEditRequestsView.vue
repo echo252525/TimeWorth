@@ -41,6 +41,7 @@ interface EditRequestRow {
   updated_at: string | null
   requester_name?: string
   requester_email?: string
+  reviewed_by_name?: string
 }
 
 const rows = ref<EditRequestRow[]>([])
@@ -152,11 +153,25 @@ function normalizeToStoredWallTimeZ(isoOrNull: string | null): string | null {
   return `${year}-${month}-${day}T${hours}:${mins}:${secs}.000Z`
 }
 
-async function getReviewerEmployeeId(): Promise<string | null> {
+async function getReviewerId(): Promise<string | null> {
   const uid = user.value?.id
   if (!uid) return null
-  const { data } = await supabase.from('employee').select('id').eq('id', uid).maybeSingle()
-  return data?.id ?? null
+  // Prefer admin identity for reviewed_by; fallback to employee/uid to avoid null reviewer.
+  const { data: adminData, error: adminErr } = await supabase
+    .from('admin')
+    .select('id')
+    .eq('id', uid)
+    .maybeSingle()
+  if (!adminErr && adminData?.id) return adminData.id
+
+  const { data: employeeData, error: employeeErr } = await supabase
+    .from('employee')
+    .select('id')
+    .eq('id', uid)
+    .maybeSingle()
+  if (!employeeErr && employeeData?.id) return employeeData.id
+
+  return uid
 }
 
 async function load() {
@@ -173,22 +188,35 @@ async function load() {
     return
   }
   const list = (data ?? []) as EditRequestRow[]
-  const ids = [...new Set(list.map((r) => r.requested_by).filter(Boolean))]
+  const requesterIds = [...new Set(list.map((r) => r.requested_by).filter(Boolean))]
+  const reviewerIds = [...new Set(list.map((r) => r.reviewed_by).filter((id): id is string => Boolean(id)))]
+  const employeeIds = [...new Set([...requesterIds, ...reviewerIds])]
   const empMap: Record<string, { name: string; email: string }> = {}
-  if (ids.length) {
-    const { data: emps, error: empErr } = await supabase.from('employee').select('id, name, email').in('id', ids)
-    if (!empErr && emps) {
-      for (const e of emps) {
-        empMap[e.id] = { name: e.name, email: e.email }
-      }
+  const adminMap: Record<string, { name: string; email: string }> = {}
+  const [empRes, adminRes] = await Promise.all([
+    supabase.from('employee').select('id, name, email').in('id', employeeIds.length ? employeeIds : ['']),
+    supabase.from('admin').select('id, name, email').in('id', reviewerIds.length ? reviewerIds : [''])
+  ])
+  if (!empRes.error && empRes.data) {
+    for (const e of empRes.data) {
+      empMap[e.id] = { name: e.name, email: e.email }
+    }
+  }
+  if (!adminRes.error && adminRes.data) {
+    for (const a of adminRes.data) {
+      adminMap[a.id] = { name: a.name, email: a.email }
     }
   }
   rows.value = list.map((r) => {
     const e = empMap[r.requested_by]
+    const reviewedByName = r.reviewed_by
+      ? adminMap[r.reviewed_by]?.name || empMap[r.reviewed_by]?.name || r.reviewed_by
+      : undefined
     return {
       ...r,
       requester_name: e?.name ?? '—',
-      requester_email: e?.email ?? '—'
+      requester_email: e?.email ?? '—',
+      reviewed_by_name: reviewedByName
     }
   })
 }
@@ -235,7 +263,7 @@ async function approve(row: EditRequestRow) {
     processingId.value = null
     return
   }
-  const reviewed_by = await getReviewerEmployeeId()
+  const reviewed_by = await getReviewerId()
   const reviewed_at = new Date().toISOString()
   const { error: reqErr } = await supabase
     .from('attendance_edit_requests')
@@ -248,15 +276,16 @@ async function approve(row: EditRequestRow) {
   }
   row.status = 'approved'
   row.reviewed_by = reviewed_by
+  row.reviewed_by_name = user.value?.email ?? row.reviewed_by_name
   row.reviewed_at = reviewed_at
   processingId.value = null
 }
 
-async function decline(row: EditRequestRow) {
+async function reject(row: EditRequestRow) {
   if (row.status !== 'pending' || processingId.value) return
   processingId.value = row.id
   error.value = null
-  const reviewed_by = await getReviewerEmployeeId()
+  const reviewed_by = await getReviewerId()
   const reviewed_at = new Date().toISOString()
   const { error: reqErr } = await supabase
     .from('attendance_edit_requests')
@@ -269,6 +298,7 @@ async function decline(row: EditRequestRow) {
   }
   row.status = 'rejected'
   row.reviewed_by = reviewed_by
+  row.reviewed_by_name = user.value?.email ?? row.reviewed_by_name
   row.reviewed_at = reviewed_at
   processingId.value = null
 }
@@ -277,6 +307,11 @@ function statusClass(s: EditStatus): string {
   if (s === 'pending') return 'status-pill--pending'
   if (s === 'approved') return 'status-pill--approved'
   return 'status-pill--rejected'
+}
+
+function reviewedByLabel(row: EditRequestRow): string {
+  if (row.status === 'pending') return '—'
+  return row.reviewed_by_name || row.reviewed_by || '—'
 }
 
 onMounted(() => {
@@ -384,6 +419,7 @@ onUnmounted(() => {
               <th scope="col">Requested lunch (start → end)</th>
               <th scope="col">Modality</th>
               <th scope="col">Reason</th>
+              <th scope="col">Reviewed by</th>
               <th scope="col" class="th-actions">Actions</th>
             </tr>
           </thead>
@@ -408,6 +444,7 @@ onUnmounted(() => {
                 <span v-else>—</span>
               </td>
               <td class="td-muted cell-reason">{{ r.reason || '—' }}</td>
+              <td class="td-muted cell-compact">{{ reviewedByLabel(r) }}</td>
               <td class="td-actions">
                 <template v-if="r.status === 'pending'">
                   <button
@@ -422,9 +459,9 @@ onUnmounted(() => {
                     type="button"
                     class="btn-decline"
                     :disabled="processingId !== null"
-                    @click="decline(r)"
+                    @click="reject(r)"
                   >
-                    {{ processingId === r.id ? '…' : 'Decline' }}
+                    {{ processingId === r.id ? '…' : 'Reject' }}
                   </button>
                 </template>
                 <span v-else class="td-muted">—</span>
